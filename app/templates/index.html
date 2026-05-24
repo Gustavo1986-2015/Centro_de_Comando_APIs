@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Centro de Comando en Vivo</title>
+    <title>Centro de Comando APIs | Assistcargo</title>
     <!-- Fuente limpia y moderna -->
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap" rel="stylesheet">
     <style>
@@ -124,7 +124,6 @@
             box-shadow: 0 10px 20px rgba(0,0,0,0.2);
         }
 
-        /* Acento verde vibrante superior en las tarjetas */
         .card::before {
             content: '';
             position: absolute;
@@ -136,7 +135,7 @@
         }
 
         .card.failed::before {
-            background: #EF4444; /* Rojo para fallos */
+            background: #EF4444;
         }
 
         .card-title {
@@ -224,7 +223,7 @@
         .sidebar {
             position: fixed;
             top: 0;
-            left: -300px; /* Oculto por defecto */
+            left: -300px;
             width: 300px;
             height: 100vh;
             background-color: var(--color-black);
@@ -254,12 +253,12 @@
             letter-spacing: 0.5px;
         }
 
-        .sidebar ul li:hover {
+        .sidebar ul li:hover, .sidebar ul li.active-tab {
             background-color: rgba(16, 185, 129, 0.1);
             color: var(--color-green-bright);
         }
 
-        /* Overlay oscuro para cuando se abre el sidebar */
+        /* Overlay oscuro */
         .overlay {
             position: fixed;
             top: 0;
@@ -279,6 +278,72 @@
             opacity: 1;
         }
 
+        /* Form elements para Configuración */
+        .form-group {
+            margin-bottom: 1rem;
+        }
+        .form-group label {
+            display: block;
+            margin-bottom: 0.5rem;
+            color: var(--color-gray);
+            font-size: 0.85rem;
+            text-transform: uppercase;
+        }
+        .form-control {
+            width: 100%;
+            padding: 0.75rem;
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid var(--card-border);
+            border-radius: 6px;
+            color: white;
+            font-family: inherit;
+        }
+        .form-control:focus {
+            outline: none;
+            border-color: var(--color-green-vibrant);
+        }
+        .btn-save {
+            background: var(--color-green-vibrant);
+            color: var(--color-black);
+            border: none;
+            padding: 0.75rem 1.5rem;
+            border-radius: 6px;
+            font-weight: 700;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        .btn-save:hover {
+            background: var(--color-green-bright);
+        }
+
+        /* Toggle switch */
+        .switch {
+            position: relative;
+            display: inline-block;
+            width: 50px;
+            height: 24px;
+        }
+        .switch input { opacity: 0; width: 0; height: 0; }
+        .slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background-color: #EF4444;
+            transition: .4s;
+            border-radius: 24px;
+        }
+        .slider:before {
+            position: absolute;
+            content: "";
+            height: 16px; width: 16px;
+            left: 4px; bottom: 4px;
+            background-color: white;
+            transition: .4s;
+            border-radius: 50%;
+        }
+        input:checked + .slider { background-color: var(--color-green-vibrant); }
+        input:checked + .slider:before { transform: translateX(26px); }
+
     </style>
 </head>
 <body>
@@ -287,10 +352,9 @@
     <div class="overlay" id="overlay" onclick="toggleMenu()"></div>
     <nav class="sidebar" id="sidebar">
         <ul>
-            <li>Dashboard Principal</li>
-            <li style="color: var(--color-gray)">Configuración (Próximamente)</li>
+            <li id="tab-dashboard" class="active-tab" onclick="switchView('dashboard')">Dashboard Principal</li>
+            <li id="tab-config" onclick="switchView('config')">Configuración Global</li>
             <li style="color: var(--color-gray)">Logs de Auditoría (Próximamente)</li>
-            <li style="color: var(--color-gray)">Gestión de Proveedores (Próximamente)</li>
         </ul>
     </nav>
 
@@ -303,7 +367,8 @@
         </div>
     </header>
 
-    <main>
+    <!-- VISTA DASHBOARD -->
+    <main id="view-dashboard">
         <div class="stats-grid">
             <div class="card" title="Eventos recibidos en la cola local que aún no han sido transmitidos a Recurso Confiable.">
                 <div class="card-title">En Cola (Pendientes)</div>
@@ -320,7 +385,7 @@
         </div>
 
         <div class="recent-section">
-            <h2>Última Actividad</h2>
+            <h2>Última Actividad Global</h2>
             <div class="table-container">
                 <table>
                     <thead>
@@ -338,12 +403,62 @@
         </div>
     </main>
 
+    <!-- VISTA CONFIGURACIÓN -->
+    <main id="view-config" style="display: none;">
+        <div class="recent-section">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
+                <h2>Configuración de Proveedores (APIs)</h2>
+                <button class="btn-save" onclick="saveConfig()">Guardar Cambios</button>
+            </div>
+            
+            <div class="table-container">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Proveedor</th>
+                            <th>Entorno</th>
+                            <th>Activo (Worker)</th>
+                            <th>RC Usuario</th>
+                            <th>RC Password</th>
+                            <th>Purga (min)</th>
+                        </tr>
+                    </thead>
+                    <tbody id="config-table-body">
+                        <!-- Config se inyecta via JS -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </main>
+
     <footer style="text-align: center; padding: 1.5rem; border-top: 1px solid var(--card-border); color: var(--color-gray); font-size: 0.85rem; font-weight: 300;">
         Desarrollado por Area de Integraciones GPS Assistcargo | Gustavo Gómez & Roberto Herrera &reg;
     </footer>
 
     <script>
-        // Actualización Reactiva de Datos
+        let currentConfigs = [];
+        let statsInterval;
+
+        // Vistas
+        function switchView(view) {
+            document.getElementById('view-dashboard').style.display = view === 'dashboard' ? 'flex' : 'none';
+            document.getElementById('view-config').style.display = view === 'config' ? 'flex' : 'none';
+            
+            document.getElementById('tab-dashboard').classList.toggle('active-tab', view === 'dashboard');
+            document.getElementById('tab-config').classList.toggle('active-tab', view === 'config');
+            
+            toggleMenu(); // Cierra el menú al elegir
+
+            if (view === 'config') {
+                loadConfig();
+                clearInterval(statsInterval);
+            } else {
+                fetchStats();
+                statsInterval = setInterval(fetchStats, 2000);
+            }
+        }
+
+        // Dashboard Stats
         async function fetchStats() {
             try {
                 const response = await fetch('/api/stats');
@@ -370,7 +485,7 @@
             if (el.textContent !== String(newValue)) {
                 el.textContent = newValue;
                 el.classList.remove('value-update');
-                void el.offsetWidth; // trigger reflow
+                void el.offsetWidth;
                 el.classList.add('value-update');
             }
         }
@@ -395,7 +510,62 @@
             });
         }
 
-        // Función para Menú Lateral
+        // Configuración
+        async function loadConfig() {
+            try {
+                const res = await fetch('/api/config');
+                currentConfigs = await res.json();
+                const tbody = document.getElementById('config-table-body');
+                tbody.innerHTML = '';
+
+                currentConfigs.forEach((c, idx) => {
+                    const tr = document.createElement('tr');
+                    tr.innerHTML = `
+                        <td style="font-weight:bold; color:var(--color-white)">${c.provider_name}</td>
+                        <td><span class="badge ${c.env === 'PROD' ? 'sent' : 'pending'}">${c.env}</span></td>
+                        <td>
+                            <label class="switch">
+                                <input type="checkbox" id="active_${idx}" ${c.is_active ? 'checked' : ''}>
+                                <span class="slider"></span>
+                            </label>
+                        </td>
+                        <td><input class="form-control" type="text" id="user_${idx}" value="${c.rc_user}"></td>
+                        <td><input class="form-control" type="password" id="pass_${idx}" value="${c.rc_password}"></td>
+                        <td><input class="form-control" type="number" id="purge_${idx}" value="${c.purge_interval_min}" style="width: 80px;"></td>
+                    `;
+                    tbody.appendChild(tr);
+                });
+            } catch(e) {
+                console.error("Error al cargar config", e);
+            }
+        }
+
+        async function saveConfig() {
+            const updates = currentConfigs.map((c, idx) => ({
+                id: c.id,
+                is_active: document.getElementById(`active_${idx}`).checked,
+                rc_user: document.getElementById(`user_${idx}`).value,
+                rc_password: document.getElementById(`pass_${idx}`).value,
+                purge_interval_min: parseInt(document.getElementById(`purge_${idx}`).value) || 15
+            }));
+
+            try {
+                const res = await fetch('/api/config', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(updates)
+                });
+                if(res.ok) {
+                    alert('¡Configuración guardada exitosamente!');
+                    loadConfig(); // reload
+                } else {
+                    alert('Error al guardar');
+                }
+            } catch(e) {
+                console.error("Error guardando config", e);
+            }
+        }
+
         function toggleMenu() {
             const sidebar = document.getElementById('sidebar');
             const overlay = document.getElementById('overlay');
@@ -403,7 +573,6 @@
             
             if (sidebar.classList.contains('active')) {
                 overlay.style.display = 'block';
-                // Trigger reflow para la animación
                 setTimeout(() => overlay.classList.add('active'), 10);
             } else {
                 overlay.classList.remove('active');
@@ -411,9 +580,9 @@
             }
         }
 
-        // Ejecutar inicialmente y luego cada 2 segundos
+        // Inicio
         fetchStats();
-        setInterval(fetchStats, 2000);
+        statsInterval = setInterval(fetchStats, 2000);
     </script>
 </body>
 </html>

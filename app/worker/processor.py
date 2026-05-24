@@ -8,14 +8,20 @@ from app.models.db_models import NormalizedRCEvent
 from app.schemas.canonical import RCCanonicalModel
 from app.services.rc_soap import rc_client
 
+from app.models.config_models import ProviderConfig
+
 logger = logging.getLogger(__name__)
 
-# Configuraciones activas por proveedor y entorno
-# (Luego se leerá de system_config.db)
-ACTIVE_PROVIDERS = [
-    {"name": "schmitz", "env": "prod"},
-    {"name": "schmitz", "env": "test"}
-]
+def get_active_providers():
+    db = get_session("system_config", "global")
+    try:
+        configs = db.query(ProviderConfig).filter(ProviderConfig.is_active == True).all()
+        return [{"name": c.provider_name, "env": c.env, "purge_min": c.purge_interval_min} for c in configs]
+    except Exception as e:
+        logger.error(f"Error reading config: {e}")
+        return []
+    finally:
+        db.close()
 
 async def process_provider_events(provider: str, env: str):
     """Procesa pendientes de un único proveedor y entorno."""
@@ -73,11 +79,12 @@ async def process_provider_events(provider: str, env: str):
 async def process_pending_events():
     """Ejecuta el procesamiento concurrente (en paralelo) de todas las APIs activas."""
     tasks = []
-    for p in ACTIVE_PROVIDERS:
+    active = get_active_providers()
+    for p in active:
         tasks.append(process_provider_events(p["name"], p["env"]))
     
-    # asyncio.gather dispara todas las tareas al mismo tiempo y espera que terminen
-    await asyncio.gather(*tasks)
+    if tasks:
+        await asyncio.gather(*tasks)
 
 
 async def purge_provider_events(provider: str, env: str):
@@ -100,14 +107,17 @@ async def purge_provider_events(provider: str, env: str):
 async def purge_processed_events():
     """Ejecuta la purga concurrente de todas las APIs."""
     tasks = []
-    for p in ACTIVE_PROVIDERS:
+    active = get_active_providers()
+    for p in active:
         tasks.append(purge_provider_events(p["name"], p["env"]))
         
-    await asyncio.gather(*tasks)
+    if tasks:
+        await asyncio.gather(*tasks)
 
 async def worker_loop():
-    logger.info("Iniciando Worker Background de Telemática (Modo Concurrente)...")
+    logger.info("Iniciando Worker Background de Telemática (Modo Concurrente con Configuración Dinámica)...")
     loop_count = 0
+    # Por defecto comprobamos purgas seguido, pero la purga real dependerá de config
     purge_interval = 180 
     
     while True:

@@ -6,10 +6,19 @@ from datetime import datetime, date
 
 from app.database import get_session
 from app.models.db_models import NormalizedRCEvent
-from app.worker.processor import ACTIVE_PROVIDERS
+from app.models.config_models import ProviderConfig
+from pydantic import BaseModel
+from typing import List
 
 router = APIRouter(tags=["Dashboard"])
 templates = Jinja2Templates(directory="app/templates")
+
+class ConfigUpdate(BaseModel):
+    id: int
+    is_active: bool
+    rc_user: str
+    rc_password: str
+    purge_interval_min: int
 
 @router.get("/dashboard", response_class=HTMLResponse)
 async def get_dashboard(request: Request):
@@ -29,9 +38,22 @@ async def get_stats():
     total_failed = 0
     recent_events_global = []
 
-    for p in ACTIVE_PROVIDERS:
-        provider_name = p["name"]
-        provider_env = p["env"]
+    # Obtener proveedores directamente desde la BD de configuración
+    config_db = get_session("system_config", "global")
+    try:
+        providers = config_db.query(ProviderConfig).all()
+        # Si aún no hay configuraciones (primer arranque), usar los predeterminados
+        if not providers:
+            providers = [
+                ProviderConfig(provider_name="schmitz", env="prod"),
+                ProviderConfig(provider_name="schmitz", env="test")
+            ]
+    finally:
+        config_db.close()
+
+    for p in providers:
+        provider_name = p.provider_name
+        provider_env = p.env
         
         db = get_session(provider_name, provider_env)
         try:
@@ -71,6 +93,46 @@ async def get_stats():
     return {
         "pending": total_pending,
         "sent": total_sent,
-        "failed": total_failed,
         "recent": recent_list
     }
+
+@router.get("/api/config")
+async def get_all_configs():
+    db = get_session("system_config", "global")
+    try:
+        configs = db.query(ProviderConfig).all()
+        # Inicializar si está vacío (auto-poblado en el primer inicio)
+        if not configs:
+            c1 = ProviderConfig(provider_name="schmitz", env="prod")
+            c2 = ProviderConfig(provider_name="schmitz", env="test")
+            db.add_all([c1, c2])
+            db.commit()
+            configs = db.query(ProviderConfig).all()
+            
+        return [{
+            "id": c.id,
+            "provider_name": c.provider_name.upper(),
+            "env": c.env.upper(),
+            "is_active": c.is_active,
+            "rc_user": c.rc_user,
+            "rc_password": c.rc_password,
+            "purge_interval_min": c.purge_interval_min
+        } for c in configs]
+    finally:
+        db.close()
+
+@router.post("/api/config")
+async def update_configs(updates: List[ConfigUpdate]):
+    db = get_session("system_config", "global")
+    try:
+        for u in updates:
+            conf = db.query(ProviderConfig).filter(ProviderConfig.id == u.id).first()
+            if conf:
+                conf.is_active = u.is_active
+                conf.rc_user = u.rc_user
+                conf.rc_password = u.rc_password
+                conf.purge_interval_min = u.purge_interval_min
+        db.commit()
+        return {"status": "ok"}
+    finally:
+        db.close()
