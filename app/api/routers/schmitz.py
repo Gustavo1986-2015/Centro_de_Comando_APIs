@@ -2,7 +2,7 @@ from fastapi import APIRouter, Request, Depends, status
 from sqlalchemy.orm import Session
 import json
 
-from app.database import get_db
+from app.database import get_db_provider
 from app.models.db_models import NormalizedRCEvent
 from app.providers.schmitz.mapper import map_schmitz_payload
 from app.core.auditor import audit_event
@@ -10,7 +10,7 @@ from app.core.auditor import audit_event
 router = APIRouter(prefix="/schmitz", tags=["Schmitz"])
 
 @router.post("/webhook", status_code=status.HTTP_202_ACCEPTED)
-async def schmitz_webhook(request: Request, db: Session = Depends(get_db)):
+async def schmitz_webhook(request: Request, db: Session = Depends(get_db_provider("schmitz"))):
     """
     Endpoint receptor para webhooks de Schmitz Cargobull.
     Recibe el payload, lo adapta, lo guarda en auditoría dinámica y lo encola en SQLite.

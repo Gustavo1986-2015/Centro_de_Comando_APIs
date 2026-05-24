@@ -1,12 +1,12 @@
-from fastapi import APIRouter, Request, Depends
+from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
-from sqlalchemy import func
 from datetime import datetime, date
 
-from app.database import get_db
+from app.database import get_session
 from app.models.db_models import NormalizedRCEvent
+from app.worker.processor import ACTIVE_PROVIDERS
 
 router = APIRouter(tags=["Dashboard"])
 templates = Jinja2Templates(directory="app/templates")
@@ -17,37 +17,48 @@ async def get_dashboard(request: Request):
     return templates.TemplateResponse("index.html", {"request": request})
 
 @router.get("/api/stats")
-async def get_stats(db: Session = Depends(get_db)):
+async def get_stats():
     """
-    Retorna las estadísticas en tiempo real para el Dashboard.
-    Cuenta pendientes, enviados (hoy) y fallidos (hoy).
+    Retorna las estadísticas en tiempo real sumando los datos de
+    TODAS las bases de datos SQLite de los distintos proveedores.
     """
     today_start = datetime.combine(date.today(), datetime.min.time())
     
-    # Eventos en cola (pending) sin importar la fecha
-    pending_count = db.query(NormalizedRCEvent).filter(
-        NormalizedRCEvent.status == "pending"
-    ).count()
+    total_pending = 0
+    total_sent = 0
+    total_failed = 0
+    recent_events_global = []
 
-    # Eventos enviados hoy
-    sent_count = db.query(NormalizedRCEvent).filter(
-        NormalizedRCEvent.status == "sent",
-        NormalizedRCEvent.created_at >= today_start
-    ).count()
+    for provider in ACTIVE_PROVIDERS:
+        db = get_session(provider)
+        try:
+            total_pending += db.query(NormalizedRCEvent).filter(NormalizedRCEvent.status == "pending").count()
+            
+            total_sent += db.query(NormalizedRCEvent).filter(
+                NormalizedRCEvent.status == "sent",
+                NormalizedRCEvent.created_at >= today_start
+            ).count()
+            
+            total_failed += db.query(NormalizedRCEvent).filter(
+                NormalizedRCEvent.status == "failed",
+                NormalizedRCEvent.created_at >= today_start
+            ).count()
 
-    # Eventos fallidos hoy
-    failed_count = db.query(NormalizedRCEvent).filter(
-        NormalizedRCEvent.status == "failed",
-        NormalizedRCEvent.created_at >= today_start
-    ).count()
+            # Obtener los 5 más recientes de esta BD particular
+            recent = db.query(NormalizedRCEvent).order_by(
+                NormalizedRCEvent.updated_at.desc()
+            ).limit(5).all()
+            
+            recent_events_global.extend(recent)
+        finally:
+            db.close()
 
-    # Últimos 5 eventos procesados
-    recent_events = db.query(NormalizedRCEvent).order_by(
-        NormalizedRCEvent.updated_at.desc()
-    ).limit(5).all()
+    # Ordenar los recientes de todas las BDs y quedarnos con los 5 últimos absolutos
+    recent_events_global.sort(key=lambda x: x.updated_at or x.created_at, reverse=True)
+    recent_events_global = recent_events_global[:5]
 
     recent_list = []
-    for ev in recent_events:
+    for ev in recent_events_global:
         recent_list.append({
             "chassis": ev.chassis_number,
             "status": ev.status,
@@ -55,8 +66,8 @@ async def get_stats(db: Session = Depends(get_db)):
         })
 
     return {
-        "pending": pending_count,
-        "sent": sent_count,
-        "failed": failed_count,
+        "pending": total_pending,
+        "sent": total_sent,
+        "failed": total_failed,
         "recent": recent_list
     }
