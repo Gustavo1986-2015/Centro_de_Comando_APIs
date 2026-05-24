@@ -1,0 +1,330 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Centro de Comando en Vivo</title>
+    <!-- Fuente limpia y moderna -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --color-black: #0F1115;
+            --color-bg: #1A1D24;
+            --color-green-bright: #00FF66;
+            --color-green-vibrant: #10B981;
+            --color-white: #FFFFFF;
+            --color-gray: #8F95B2;
+            --card-bg: rgba(255, 255, 255, 0.03);
+            --card-border: rgba(255, 255, 255, 0.08);
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: 'Inter', sans-serif;
+        }
+
+        body {
+            background-color: var(--color-bg);
+            color: var(--color-white);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        /* Top Bar */
+        header {
+            background-color: var(--color-black);
+            padding: 1rem 2rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid var(--card-border);
+        }
+
+        .logo-container {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .hamburger {
+            color: var(--color-green-bright);
+            font-size: 1.5rem;
+            cursor: pointer;
+            transition: transform 0.3s ease;
+        }
+        
+        .hamburger:hover {
+            transform: scale(1.1);
+        }
+
+        .title {
+            font-weight: 700;
+            font-size: 1.25rem;
+            letter-spacing: 0.5px;
+        }
+
+        .status-indicator {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 0.9rem;
+            color: var(--color-gray);
+        }
+
+        .pulse {
+            width: 10px;
+            height: 10px;
+            background-color: var(--color-green-bright);
+            border-radius: 50%;
+            animation: pulsing 2s infinite;
+        }
+
+        @keyframes pulsing {
+            0% { box-shadow: 0 0 0 0 rgba(0, 255, 102, 0.4); }
+            70% { box-shadow: 0 0 0 10px rgba(0, 255, 102, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(0, 255, 102, 0); }
+        }
+
+        /* Main Content */
+        main {
+            padding: 2rem;
+            flex-grow: 1;
+            display: flex;
+            flex-direction: column;
+            gap: 2rem;
+            max-width: 1200px;
+            margin: 0 auto;
+            width: 100%;
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 1.5rem;
+        }
+
+        /* Tarjetas Clave */
+        .card {
+            background: var(--card-bg);
+            border: 1px solid var(--card-border);
+            border-radius: 12px;
+            padding: 1.5rem;
+            backdrop-filter: blur(10px);
+            transition: transform 0.3s ease, box-shadow 0.3s ease;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 10px 20px rgba(0,0,0,0.2);
+        }
+
+        /* Acento verde vibrante superior en las tarjetas */
+        .card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 4px;
+            background: linear-gradient(90deg, var(--color-green-vibrant), var(--color-green-bright));
+        }
+
+        .card.failed::before {
+            background: #EF4444; /* Rojo para fallos */
+        }
+
+        .card-title {
+            font-size: 0.9rem;
+            color: var(--color-gray);
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-bottom: 0.5rem;
+            font-weight: 600;
+        }
+
+        .card-value {
+            font-size: 3.5rem;
+            font-weight: 700;
+            color: var(--color-white);
+            line-height: 1;
+            transition: color 0.3s;
+        }
+
+        /* Tabla de Eventos Recientes */
+        .recent-section {
+            background: var(--card-bg);
+            border: 1px solid var(--card-border);
+            border-radius: 12px;
+            padding: 1.5rem;
+        }
+
+        .recent-section h2 {
+            font-size: 1.2rem;
+            margin-bottom: 1rem;
+            color: var(--color-white);
+            font-weight: 600;
+        }
+
+        .table-container {
+            overflow-x: auto;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        th, td {
+            padding: 1rem;
+            text-align: left;
+            border-bottom: 1px solid var(--card-border);
+        }
+
+        th {
+            color: var(--color-gray);
+            font-weight: 600;
+            font-size: 0.85rem;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        td {
+            font-size: 0.95rem;
+        }
+
+        .badge {
+            padding: 0.25rem 0.75rem;
+            border-radius: 20px;
+            font-size: 0.8rem;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+
+        .badge.pending { background: rgba(245, 158, 11, 0.1); color: #F59E0B; }
+        .badge.sent { background: rgba(16, 185, 129, 0.1); color: var(--color-green-vibrant); }
+        .badge.failed { background: rgba(239, 68, 68, 0.1); color: #EF4444; }
+
+        /* Animación para el cambio de valores */
+        .value-update {
+            animation: highlight 1s ease-out;
+        }
+
+        @keyframes highlight {
+            0% { color: var(--color-green-bright); transform: scale(1.05); }
+            100% { color: var(--color-white); transform: scale(1); }
+        }
+
+    </style>
+</head>
+<body>
+
+    <header>
+        <div class="logo-container">
+            <div class="hamburger">☰</div>
+            <div class="title">HUB TELEMÁTICO</div>
+        </div>
+        <div class="status-indicator">
+            <span id="sync-status">Conectado y Escuchando</span>
+            <div class="pulse"></div>
+        </div>
+    </header>
+
+    <main>
+        <div class="stats-grid">
+            <div class="card">
+                <div class="card-title">En Cola (Pendientes)</div>
+                <div class="card-value" id="val-pending">0</div>
+            </div>
+            <div class="card">
+                <div class="card-title">Enviados (Hoy)</div>
+                <div class="card-value" id="val-sent">0</div>
+            </div>
+            <div class="card failed">
+                <div class="card-title">Fallidos (Hoy)</div>
+                <div class="card-value" id="val-failed">0</div>
+            </div>
+        </div>
+
+        <div class="recent-section">
+            <h2>Última Actividad</h2>
+            <div class="table-container">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Chasis / Patente</th>
+                            <th>Estado</th>
+                            <th>Hora (Actualización)</th>
+                        </tr>
+                    </thead>
+                    <tbody id="recent-table-body">
+                        <!-- Las filas se insertan vía JS -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </main>
+
+    <script>
+        // Actualización Reactiva de Datos
+        async function fetchStats() {
+            try {
+                const response = await fetch('/api/stats');
+                if (!response.ok) throw new Error('Network response was not ok');
+                const data = await response.json();
+                
+                updateValue('val-pending', data.pending);
+                updateValue('val-sent', data.sent);
+                updateValue('val-failed', data.failed);
+
+                updateTable(data.recent);
+
+                document.getElementById('sync-status').textContent = 'Conectado y Escuchando';
+                document.querySelector('.pulse').style.backgroundColor = 'var(--color-green-bright)';
+            } catch (error) {
+                console.error('Error fetching stats:', error);
+                document.getElementById('sync-status').textContent = 'Pérdida de Conexión';
+                document.querySelector('.pulse').style.backgroundColor = '#EF4444';
+            }
+        }
+
+        function updateValue(elementId, newValue) {
+            const el = document.getElementById(elementId);
+            if (el.textContent !== String(newValue)) {
+                el.textContent = newValue;
+                el.classList.remove('value-update');
+                void el.offsetWidth; // trigger reflow
+                el.classList.add('value-update');
+            }
+        }
+
+        function updateTable(recentItems) {
+            const tbody = document.getElementById('recent-table-body');
+            tbody.innerHTML = '';
+            
+            if (recentItems.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="3" style="text-align:center; color: var(--color-gray)">No hay actividad reciente.</td></tr>';
+                return;
+            }
+
+            recentItems.forEach(item => {
+                const tr = document.createElement('tr');
+                tr.innerHTML = `
+                    <td>${item.chassis || 'Desconocido'}</td>
+                    <td><span class="badge ${item.status}">${item.status.toUpperCase()}</span></td>
+                    <td>${item.time}</td>
+                `;
+                tbody.appendChild(tr);
+            });
+        }
+
+        // Ejecutar inicialmente y luego cada 2 segundos
+        fetchStats();
+        setInterval(fetchStats, 2000);
+    </script>
+</body>
+</html>
