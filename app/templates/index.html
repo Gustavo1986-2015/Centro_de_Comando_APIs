@@ -225,10 +225,10 @@
 
     <header>
         <div class="logo-container">
-            <div class="hamburger">☰</div>
-            <div class="title">HUB TELEMÁTICO</div>
+            <div class="hamburger" title="Menú de Opciones">☰</div>
+            <div class="title" title="Panel principal del Hub Telemático">Centro_de_Comando_APIs | Assistcargo</div>
         </div>
-        <div class="status-indicator">
+        <div class="status-indicator" title="Estado del servicio de escucha en vivo">
             <span id="sync-status">Conectado y Escuchando</span>
             <div class="pulse"></div>
         </div>
@@ -236,15 +236,15 @@
 
     <main>
         <div class="stats-grid">
-            <div class="card">
+            <div class="card" title="Eventos recibidos en la cola local que aún no han sido transmitidos a Recurso Confiable.">
                 <div class="card-title">En Cola (Pendientes)</div>
                 <div class="card-value" id="val-pending">0</div>
             </div>
-            <div class="card">
+            <div class="card" title="Cantidad de eventos de todos los proveedores que fueron enviados exitosamente a Recurso Confiable durante el día de hoy.">
                 <div class="card-title">Enviados (Hoy)</div>
                 <div class="card-value" id="val-sent">0</div>
             </div>
-            <div class="card failed">
+            <div class="card failed" title="Cantidad de eventos que presentaron algún error técnico al intentar enviarse a Recurso Confiable hoy.">
                 <div class="card-title">Fallidos (Hoy)</div>
                 <div class="card-value" id="val-failed">0</div>
             </div>
@@ -268,6 +268,10 @@
             </div>
         </div>
     </main>
+
+    <footer style="text-align: center; padding: 1.5rem; border-top: 1px solid var(--card-border); color: var(--color-gray); font-size: 0.85rem; font-weight: 300;">
+        Desarrollado por Area de Integraciones GPS Assistcargo | Gustavo Gómez & Roberto Herrera &reg;
+    </footer>
 
     <script>
         // Actualización Reactiva de Datos
