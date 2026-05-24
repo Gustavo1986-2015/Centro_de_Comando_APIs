@@ -1,0 +1,28 @@
+# Entornos Virtuales
+venv/
+env/
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Bases de Datos locales
+*.db
+*.sqlite3
+
+# Auditoría y Logs
+audit/
+*.log
+*.jsonl
+
+# IDEs
+.vscode/
+.idea/
+
+# PyInstaller
+build/
+dist/
+*.spec
