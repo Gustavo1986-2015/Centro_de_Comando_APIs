@@ -1,40 +1,42 @@
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, declarative_base
+from fastapi import Query
 import os
 
 Base = declarative_base()
 
-# Almacenamiento en caché de engines y sessionmakers por proveedor
 _engines = {}
 _sessions = {}
 
-def get_engine(provider: str):
-    """Devuelve (y crea si no existe) el motor SQLite para el proveedor dado."""
-    if provider not in _engines:
+def get_engine(provider: str, env: str = "prod"):
+    """Devuelve (y crea si no existe) el motor SQLite para el proveedor y entorno dados."""
+    key = f"{provider}_{env}"
+    if key not in _engines:
         os.makedirs("db", exist_ok=True)
-        url = f"sqlite:///./db/{provider}.db"
+        url = f"sqlite:///./db/{key}.db"
         engine = create_engine(url, connect_args={"check_same_thread": False})
         
-        # Crear tablas si no existen en esta base de datos específica
+        # Crear tablas
         Base.metadata.create_all(bind=engine)
         
-        _engines[provider] = engine
-        _sessions[provider] = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+        _engines[key] = engine
+        _sessions[key] = sessionmaker(autocommit=False, autoflush=False, bind=engine)
         
-    return _engines[provider]
+    return _engines[key]
 
-def get_session(provider: str):
-    """Devuelve una nueva sesión para la BD del proveedor."""
-    get_engine(provider) # Asegurarse de que el engine está inicializado
-    return _sessions[provider]()
+def get_session(provider: str, env: str = "prod"):
+    """Devuelve una nueva sesión para la BD del proveedor/entorno."""
+    key = f"{provider}_{env}"
+    get_engine(provider, env)
+    return _sessions[key]()
 
 def get_db_provider(provider: str):
     """
     Fábrica de dependencias para FastAPI.
-    Ejemplo de uso: Depends(get_db_provider("schmitz"))
+    Lee automáticamente el query param ?env= (por defecto 'prod').
     """
-    def _get_db():
-        db = get_session(provider)
+    def _get_db(env: str = Query("prod", description="Entorno: test o prod")):
+        db = get_session(provider, env)
         try:
             yield db
         finally:

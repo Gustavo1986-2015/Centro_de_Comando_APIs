@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Request, Depends, status
+from fastapi import APIRouter, Request, Depends, status, Query
 from sqlalchemy.orm import Session
 import json
 
@@ -10,7 +10,11 @@ from app.core.auditor import audit_event
 router = APIRouter(prefix="/schmitz", tags=["Schmitz"])
 
 @router.post("/webhook", status_code=status.HTTP_202_ACCEPTED)
-async def schmitz_webhook(request: Request, db: Session = Depends(get_db_provider("schmitz"))):
+async def schmitz_webhook(
+    request: Request, 
+    db: Session = Depends(get_db_provider("schmitz")),
+    env: str = Query("prod", description="Entorno: test o prod")
+):
     """
     Endpoint receptor para webhooks de Schmitz Cargobull.
     Recibe el payload, lo adapta, lo guarda en auditoría dinámica y lo encola en SQLite.
@@ -24,7 +28,7 @@ async def schmitz_webhook(request: Request, db: Session = Depends(get_db_provide
 
     # 1. Auditoría de evento crudo
     # Guardamos en auditoría (.jsonl rotativo)
-    audit_event(provider="schmitz", payload=payload)
+    audit_event(provider=f"schmitz_{env}", payload=payload)
 
     # 2. Mapeo a Canonical Model
     canonical_data = map_schmitz_payload(payload)

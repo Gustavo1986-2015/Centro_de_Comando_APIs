@@ -10,95 +10,103 @@ from app.services.rc_soap import rc_client
 
 logger = logging.getLogger(__name__)
 
-# Lista de APIs activas (luego puede moverse a un archivo de configuración)
-ACTIVE_PROVIDERS = ["schmitz"]
+# Configuraciones activas por proveedor y entorno
+# (Luego se leerá de system_config.db)
+ACTIVE_PROVIDERS = [
+    {"name": "schmitz", "env": "prod"},
+    {"name": "schmitz", "env": "test"}
+]
+
+async def process_provider_events(provider: str, env: str):
+    """Procesa pendientes de un único proveedor y entorno."""
+    db: Session = get_session(provider, env)
+    try:
+        pendings = db.query(NormalizedRCEvent).filter(NormalizedRCEvent.status == "pending").limit(50).all()
+        
+        if not pendings:
+            return
+
+        for db_event in pendings:
+            try:
+                canonical_event = RCCanonicalModel(
+                    chassis_number=db_event.chassis_number,
+                    latitude=db_event.latitude,
+                    longitude=db_event.longitude,
+                    speed=db_event.speed,
+                    code=db_event.code,
+                    date=db_event.date.replace(tzinfo=timezone.utc) if db_event.date else None,
+                    altitude=db_event.altitude,
+                    battery=db_event.battery,
+                    course=db_event.course,
+                    humidity=db_event.humidity,
+                    ignition=db_event.ignition,
+                    odometer=db_event.odometer,
+                    temperature=db_event.temperature,
+                    serial_number=db_event.serial_number,
+                    shipment=db_event.shipment,
+                    vehicle_type=db_event.vehicle_type,
+                    vehicle_brand=db_event.vehicle_brand,
+                    vehicle_model=db_event.vehicle_model
+                )
+
+                # Si es test, podríamos NO enviar a RC realmente, o enviarlo a un endpoint de test
+                # Por ahora, usamos el comportamiento normal
+                success = await rc_client.send_event(canonical_event)
+                
+                if success:
+                    db_event.status = "sent"
+                else:
+                    db_event.status = "failed"
+                    
+            except Exception as e:
+                logger.error(f"Error procesando evento {db_event.id} en {provider}_{env}: {str(e)}")
+                db_event.status = "failed"
+
+        db.commit()
+
+    except Exception as e:
+        logger.error(f"Error general en process_provider_events para {provider}_{env}: {str(e)}")
+        db.rollback()
+    finally:
+        db.close()
 
 async def process_pending_events():
-    """
-    Extrae eventos en estado 'pending' de cada base de datos SQLite y los envía a RC.
-    """
-    for provider in ACTIVE_PROVIDERS:
-        db: Session = get_session(provider)
-        try:
-            # Tomar un lote de pendientes (ej. 50 para no ahogar la DB)
-            pendings = db.query(NormalizedRCEvent).filter(NormalizedRCEvent.status == "pending").limit(50).all()
-            
-            if not pendings:
-                continue
+    """Ejecuta el procesamiento concurrente (en paralelo) de todas las APIs activas."""
+    tasks = []
+    for p in ACTIVE_PROVIDERS:
+        tasks.append(process_provider_events(p["name"], p["env"]))
+    
+    # asyncio.gather dispara todas las tareas al mismo tiempo y espera que terminen
+    await asyncio.gather(*tasks)
 
-            for db_event in pendings:
-                try:
-                    # Reconstruir modelo canónico desde la DB
-                    canonical_event = RCCanonicalModel(
-                        chassis_number=db_event.chassis_number,
-                        latitude=db_event.latitude,
-                        longitude=db_event.longitude,
-                        speed=db_event.speed,
-                        code=db_event.code,
-                        date=db_event.date.replace(tzinfo=timezone.utc) if db_event.date else None,
-                        altitude=db_event.altitude,
-                        battery=db_event.battery,
-                        course=db_event.course,
-                        humidity=db_event.humidity,
-                        ignition=db_event.ignition,
-                        odometer=db_event.odometer,
-                        temperature=db_event.temperature,
-                        serial_number=db_event.serial_number,
-                        shipment=db_event.shipment,
-                        vehicle_type=db_event.vehicle_type,
-                        vehicle_brand=db_event.vehicle_brand,
-                        vehicle_model=db_event.vehicle_model
-                    )
 
-                    # Enviar a RC
-                    success = await rc_client.send_event(canonical_event)
-                    
-                    if success:
-                        db_event.status = "sent"
-                    else:
-                        db_event.status = "failed"
-                        
-                except Exception as e:
-                    logger.error(f"Error procesando evento {db_event.id} en API {provider}: {str(e)}")
-                    db_event.status = "failed"
-
-            # Guardar cambios (commits) en la BD de este proveedor
-            db.commit()
-
-        except Exception as e:
-            logger.error(f"Error general en process_pending_events para {provider}: {str(e)}")
-            db.rollback()
-        finally:
-            db.close()
+async def purge_provider_events(provider: str, env: str):
+    """Purga una BD individual."""
+    db: Session = get_session(provider, env)
+    try:
+        deleted_count = db.query(NormalizedRCEvent).filter(
+            NormalizedRCEvent.status.in_(["sent", "failed"])
+        ).delete(synchronize_session=False)
+        
+        db.commit()
+        if deleted_count > 0:
+            logger.info(f"Purga Automática completada para {provider}_{env}: {deleted_count} eliminados.")
+    except Exception as e:
+        logger.error(f"Error en purga para {provider}_{env}: {str(e)}")
+        db.rollback()
+    finally:
+        db.close()
 
 async def purge_processed_events():
-    """
-    Purga física (DELETE) de registros procesados en cada DB.
-    """
-    for provider in ACTIVE_PROVIDERS:
-        db: Session = get_session(provider)
-        try:
-            deleted_count = db.query(NormalizedRCEvent).filter(
-                NormalizedRCEvent.status.in_(["sent", "failed"])
-            ).delete(synchronize_session=False)
-            
-            db.commit()
-            if deleted_count > 0:
-                logger.info(f"Purga Automática completada para {provider}: {deleted_count} registros eliminados físicamente.")
-
-        except Exception as e:
-            logger.error(f"Error en purga para {provider}: {str(e)}")
-            db.rollback()
-        finally:
-            db.close()
+    """Ejecuta la purga concurrente de todas las APIs."""
+    tasks = []
+    for p in ACTIVE_PROVIDERS:
+        tasks.append(purge_provider_events(p["name"], p["env"]))
+        
+    await asyncio.gather(*tasks)
 
 async def worker_loop():
-    """
-    Bucle principal del worker background.
-    """
-    logger.info("Iniciando Worker Background de Telemática...")
-    
-    # Llevar la cuenta para saber cuándo purgar (cada 15 min)
+    logger.info("Iniciando Worker Background de Telemática (Modo Concurrente)...")
     loop_count = 0
     purge_interval = 180 
     
@@ -112,6 +120,6 @@ async def worker_loop():
                 loop_count = 0
                 
         except Exception as e:
-            logger.error(f"Error fatal en el loop del worker: {str(e)}")
+            logger.error(f"Error fatal en el loop concurrente del worker: {str(e)}")
             
-        await asyncio.sleep(5)  # Esperar 5 segundos antes de buscar más pendientes
+        await asyncio.sleep(5)

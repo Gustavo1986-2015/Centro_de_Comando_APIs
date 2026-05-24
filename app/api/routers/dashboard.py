@@ -29,8 +29,11 @@ async def get_stats():
     total_failed = 0
     recent_events_global = []
 
-    for provider in ACTIVE_PROVIDERS:
-        db = get_session(provider)
+    for p in ACTIVE_PROVIDERS:
+        provider_name = p["name"]
+        provider_env = p["env"]
+        
+        db = get_session(provider_name, provider_env)
         try:
             total_pending += db.query(NormalizedRCEvent).filter(NormalizedRCEvent.status == "pending").count()
             
