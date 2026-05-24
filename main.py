@@ -1,13 +1,8 @@
 from fastapi import FastAPI
-from fastapi.staticfiles import StaticFiles
 import asyncio
 
-from app.database import engine, Base
 from app.api.routers import schmitz, dashboard
 from app.worker.processor import worker_loop
-
-# Crear tablas
-Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="Centro de Comando en Vivo - Telemática")
 

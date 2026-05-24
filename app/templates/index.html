@@ -354,7 +354,7 @@
         <ul>
             <li id="tab-dashboard" class="active-tab" onclick="switchView('dashboard')">Dashboard Principal</li>
             <li id="tab-config" onclick="switchView('config')">Configuración Global</li>
-            <li style="color: var(--color-gray)">Logs de Auditoría (Próximamente)</li>
+            <li id="tab-logs" onclick="switchView('logs')">Logs de Auditoría Dinámica</li>
         </ul>
     </nav>
 
@@ -431,6 +431,31 @@
         </div>
     </main>
 
+    <!-- VISTA LOGS DE AUDITORÍA -->
+    <main id="view-logs" style="display: none;">
+        <div class="recent-section">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
+                <h2>Auditoría Dinámica (Raw Payload)</h2>
+                <button class="btn-save" onclick="loadLogs()" style="background: var(--color-gray); color: var(--color-white)">Actualizar Logs</button>
+            </div>
+            
+            <div class="table-container">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Fecha/Hora</th>
+                            <th>Proveedor/Entorno</th>
+                            <th>Payload JSON</th>
+                        </tr>
+                    </thead>
+                    <tbody id="logs-table-body">
+                        <!-- Logs se inyectan via JS -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </main>
+
     <footer style="text-align: center; padding: 1.5rem; border-top: 1px solid var(--card-border); color: var(--color-gray); font-size: 0.85rem; font-weight: 300;">
         Desarrollado por Area de Integraciones GPS Assistcargo | Gustavo Gómez & Roberto Herrera &reg;
     </footer>
@@ -443,15 +468,20 @@
         function switchView(view) {
             document.getElementById('view-dashboard').style.display = view === 'dashboard' ? 'flex' : 'none';
             document.getElementById('view-config').style.display = view === 'config' ? 'flex' : 'none';
+            document.getElementById('view-logs').style.display = view === 'logs' ? 'flex' : 'none';
             
             document.getElementById('tab-dashboard').classList.toggle('active-tab', view === 'dashboard');
             document.getElementById('tab-config').classList.toggle('active-tab', view === 'config');
+            document.getElementById('tab-logs').classList.toggle('active-tab', view === 'logs');
             
             toggleMenu(); // Cierra el menú al elegir
 
+            clearInterval(statsInterval);
+            
             if (view === 'config') {
                 loadConfig();
-                clearInterval(statsInterval);
+            } else if (view === 'logs') {
+                loadLogs();
             } else {
                 fetchStats();
                 statsInterval = setInterval(fetchStats, 2000);
@@ -563,6 +593,34 @@
                 }
             } catch(e) {
                 console.error("Error guardando config", e);
+            }
+        }
+
+        // Auditoría
+        async function loadLogs() {
+            try {
+                const res = await fetch('/api/logs');
+                const logs = await res.json();
+                const tbody = document.getElementById('logs-table-body');
+                tbody.innerHTML = '';
+
+                if (logs.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="3" style="text-align:center; color: var(--color-gray)">No hay logs de auditoría disponibles aún.</td></tr>';
+                    return;
+                }
+
+                logs.forEach(log => {
+                    const tr = document.createElement('tr');
+                    const payloadStr = JSON.stringify(log.payload, null, 2);
+                    tr.innerHTML = `
+                        <td style="white-space: nowrap; font-size: 0.85rem">${log.timestamp.replace('T', ' ')}</td>
+                        <td><span class="badge pending">${log.provider.toUpperCase()}</span></td>
+                        <td><pre style="background: rgba(0,0,0,0.5); padding: 10px; border-radius: 6px; font-size: 0.75rem; color: var(--color-green-bright); max-height: 100px; overflow-y: auto; margin:0;">${payloadStr}</pre></td>
+                    `;
+                    tbody.appendChild(tr);
+                });
+            } catch(e) {
+                console.error("Error cargando logs", e);
             }
         }
 

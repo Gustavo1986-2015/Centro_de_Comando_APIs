@@ -3,6 +3,9 @@ from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
 from datetime import datetime, date
+import os
+import glob
+import json
 
 from app.database import get_session
 from app.models.db_models import NormalizedRCEvent
@@ -136,3 +139,28 @@ async def update_configs(updates: List[ConfigUpdate]):
         return {"status": "ok"}
     finally:
         db.close()
+
+@router.get("/api/logs")
+async def get_audit_logs():
+    """Devuelve los últimos 50 registros de auditoría de los archivos .jsonl"""
+    logs_dir = "logs"
+    if not os.path.exists(logs_dir):
+        return []
+    
+    files = glob.glob(f"{logs_dir}/*.jsonl")
+    all_lines = []
+    
+    for f in files:
+        with open(f, 'r', encoding='utf-8') as file:
+            for line in file:
+                try:
+                    data = json.loads(line)
+                    data["_file"] = os.path.basename(f)
+                    all_lines.append(data)
+                except Exception:
+                    pass
+
+    # Ordenar por timestamp descendente
+    all_lines.sort(key=lambda x: x.get("timestamp", ""), reverse=True)
+    return all_lines[:50]
+
