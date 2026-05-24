@@ -37,23 +37,20 @@
         header {
             background-color: var(--color-black);
             padding: 1rem 2rem;
-            display: flex;
-            justify-content: space-between;
+            display: grid;
+            grid-template-columns: 1fr auto 1fr;
             align-items: center;
             border-bottom: 1px solid var(--card-border);
-        }
-
-        .logo-container {
-            display: flex;
-            align-items: center;
-            gap: 12px;
+            position: relative;
+            z-index: 100;
         }
 
         .hamburger {
             color: var(--color-green-bright);
-            font-size: 1.5rem;
+            font-size: 1.8rem;
             cursor: pointer;
             transition: transform 0.3s ease;
+            justify-self: start;
         }
         
         .hamburger:hover {
@@ -62,13 +59,17 @@
 
         .title {
             font-weight: 700;
-            font-size: 1.25rem;
+            font-size: 1.8rem; /* Grande */
             letter-spacing: 0.5px;
+            color: var(--color-green-vibrant); /* Color verde Assistcargo */
+            text-align: center;
+            white-space: nowrap;
         }
 
         .status-indicator {
             display: flex;
             align-items: center;
+            justify-content: flex-end;
             gap: 8px;
             font-size: 0.9rem;
             color: var(--color-gray);
@@ -219,15 +220,83 @@
             100% { color: var(--color-white); transform: scale(1); }
         }
 
+        /* Sidebar Menu */
+        .sidebar {
+            position: fixed;
+            top: 0;
+            left: -300px; /* Oculto por defecto */
+            width: 300px;
+            height: 100vh;
+            background-color: var(--color-black);
+            border-right: 1px solid var(--card-border);
+            transition: left 0.3s ease;
+            z-index: 200;
+            padding-top: 5rem;
+            box-shadow: 5px 0 15px rgba(0,0,0,0.5);
+        }
+
+        .sidebar.active {
+            left: 0;
+        }
+
+        .sidebar ul {
+            list-style: none;
+            padding: 0;
+        }
+
+        .sidebar ul li {
+            padding: 1.2rem 2rem;
+            border-bottom: 1px solid var(--card-border);
+            color: var(--color-white);
+            cursor: pointer;
+            transition: background-color 0.2s, color 0.2s;
+            font-weight: 600;
+            letter-spacing: 0.5px;
+        }
+
+        .sidebar ul li:hover {
+            background-color: rgba(16, 185, 129, 0.1);
+            color: var(--color-green-bright);
+        }
+
+        /* Overlay oscuro para cuando se abre el sidebar */
+        .overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100vh;
+            background: rgba(0,0,0,0.5);
+            backdrop-filter: blur(2px);
+            z-index: 150;
+            display: none;
+            opacity: 0;
+            transition: opacity 0.3s ease;
+        }
+
+        .overlay.active {
+            display: block;
+            opacity: 1;
+        }
+
     </style>
 </head>
 <body>
 
+    <!-- Sidebar & Overlay -->
+    <div class="overlay" id="overlay" onclick="toggleMenu()"></div>
+    <nav class="sidebar" id="sidebar">
+        <ul>
+            <li>Dashboard Principal</li>
+            <li style="color: var(--color-gray)">Configuración (Próximamente)</li>
+            <li style="color: var(--color-gray)">Logs de Auditoría (Próximamente)</li>
+            <li style="color: var(--color-gray)">Gestión de Proveedores (Próximamente)</li>
+        </ul>
+    </nav>
+
     <header>
-        <div class="logo-container">
-            <div class="hamburger" title="Menú de Opciones">☰</div>
-            <div class="title" title="Panel principal del Hub Telemático">Centro_de_Comando_APIs | Assistcargo</div>
-        </div>
+        <div class="hamburger" title="Menú de Opciones" onclick="toggleMenu()">☰</div>
+        <div class="title" title="Panel principal del Hub Telemático">Centro de Comando APIs | Assistcargo</div>
         <div class="status-indicator" title="Estado del servicio de escucha en vivo">
             <span id="sync-status">Conectado y Escuchando</span>
             <div class="pulse"></div>
@@ -324,6 +393,22 @@
                 `;
                 tbody.appendChild(tr);
             });
+        }
+
+        // Función para Menú Lateral
+        function toggleMenu() {
+            const sidebar = document.getElementById('sidebar');
+            const overlay = document.getElementById('overlay');
+            sidebar.classList.toggle('active');
+            
+            if (sidebar.classList.contains('active')) {
+                overlay.style.display = 'block';
+                // Trigger reflow para la animación
+                setTimeout(() => overlay.classList.add('active'), 10);
+            } else {
+                overlay.classList.remove('active');
+                setTimeout(() => overlay.style.display = 'none', 300);
+            }
         }
 
         // Ejecutar inicialmente y luego cada 2 segundos
