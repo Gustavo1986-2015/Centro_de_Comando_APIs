@@ -23,11 +23,13 @@ El servidor incluye una interfaz web interactiva (Vanilla JS, CSS Premium, sin f
    ```bash
    pip install fastapi uvicorn sqlalchemy pydantic zeep
    ```
-2. Ejecutar el servidor web (con recarga automática):
+2. Configurar entorno seguro:
+   Copia el archivo `.env.example` y renómbralo a `.env`. Coloca allí tus credenciales reales (este archivo es ignorado por git por seguridad).
+3. Ejecutar el servidor web (con recarga automática):
    ```bash
    uvicorn main:app --port 8000 --reload
    ```
-3. Abrir el panel de control: [http://localhost:8000/dashboard](http://localhost:8000/dashboard)
+4. Abrir el panel de control: [http://localhost:8000/dashboard](http://localhost:8000/dashboard)
 
 ## 🌐 Despliegue en Producción (Servidor Windows / AWS)
 *Esta sección detalla cómo mantener el sistema vivo 24/7 sin consolas abiertas.*

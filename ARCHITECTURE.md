@@ -20,9 +20,9 @@ Cuando en cualquier parte del código llamas a la función `get_session("nombre_
 - **`auditor.py`**: Su función `audit_event()` toma el JSON puro recibido y lo escribe en la carpeta `/audit`. Implementa rotación diaria de archivos (JSONL) para que el disco duro no se llene.
 - **`sender.py`**: Intermediario entre la Base de Datos local y Recurso Confiable.
 
-### Carpeta `app/database.py` (Magia Multi-DB)
-- Mantiene en memoria diccionarios (`_engines`, `_sessions`) para reciclar conexiones abiertas.
-- Instancia las bases de datos de SQLite al vuelo dependiendo del proveedor que se le pida.
+### Carpeta `app/database.py` y el directorio `db/` (Magia Multi-DB)
+- **Directorio `db/`**: Aquí viven todos los archivos SQLite. Esto incluye `telematics_hub.db` (configuración global) y las bases de datos dinámicas generadas por proveedor (ej. `schmitz_test.db`). Mantener todo aquí asegura que el directorio raíz del proyecto permanezca limpio.
+- **`app/database.py`**: Mantiene en memoria diccionarios (`_engines`, `_sessions`) para reciclar conexiones abiertas. Instancia las bases de datos de SQLite al vuelo dependiendo del proveedor que se le pida.
 
 ### Carpeta `app/models/` y `app/schemas/`
 - **`db_models.py`**: Define la estructura de SQLite (Tabla `NormalizedRCEvent`).
@@ -49,7 +49,25 @@ Por lo tanto, no importa si un dato llega porque el proveedor nos lo envió (Web
 
 ---
 
-## 4. Configuración en Producción (Cloudflare Tunnels)
+## 5. El archivo `.env` (Credenciales Push vs Pull)
+
+El archivo `.env` en la raíz del proyecto (basado en la plantilla `.env.example`) es la **única** bóveda de secretos del sistema. Jamás se debe escribir una contraseña en el código fuente de los `.py`.
+
+Dependiendo de la arquitectura de la API, las credenciales se manejan distinto:
+
+### APIs PULL (CronJobs)
+Cuando el Hub debe ir a buscar datos proactivamente (Ej. Samsara, Geotab), requerimos almacenar **Tokens de Salida**.
+- **Ejemplo en `.env`:** `SAMSARA_API_TOKEN=xxx`
+- **Uso:** El `Worker` asíncrono lee esta variable y arma las cabeceras (Headers) de la petición GET saliente.
+
+### APIs PUSH (Webhooks)
+Cuando los proveedores nos envían datos a nuestra URL (Ej. Schmitz), debemos blindar nuestros endpoints para que no cualquiera nos inyecte basura.
+- **Ejemplo en `.env`:** `SCHMITZ_INBOUND_SECRET=yyy`
+- **Uso:** En `app/providers/schmitz/router.py`, verificamos que el request entrante posea esa clave secreta en sus cabeceras (ej. `x-api-key`) antes de procesar el JSON.
+
+---
+
+## 6. Configuración en Producción (Cloudflare Tunnels)
 
 Para evitar exponer puertos de la máquina virtual (VM) en AWS y maximizar la seguridad (Zero Trust), se recomienda el uso de **Cloudflare Tunnels** (`cloudflared`).
 
@@ -62,7 +80,7 @@ Ambas URLs convergen en la misma aplicación interna, pero obligan a los proveed
 
 ---
 
-## 5. ¿Cómo agregar una Nueva API en el futuro? (Guía Paso a Paso)
+## 7. ¿Cómo agregar una Nueva API en el futuro? (Guía Paso a Paso)
 
 Supongamos que Assistcargo firma con un proveedor llamado **"Samsara"**.
 
