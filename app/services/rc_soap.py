@@ -1,6 +1,6 @@
 import httpx
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from xml.etree import ElementTree as ET
 from app.schemas.canonical import RCCanonicalModel
 
