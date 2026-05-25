@@ -23,75 +23,67 @@ class RCSOAPClient:
         self.endpoint = endpoint
         self._token = None
         self._token_expires_at = None
+        self._zeep_client = None
 
-    async def _authenticate(self):
-        """Simula la obtención del token SOAP (válido por 24h)."""
-        logger.info("Autenticando contra Recurso Confiable...")
-        # Simulación de respuesta
-        self._token = "mock_token_12345"
+    def _get_zeep_client(self):
+        if not self._zeep_client:
+            from zeep import Client
+            wsdl = self.endpoint + "?wsdl"
+            self._zeep_client = Client(wsdl)
+        return self._zeep_client
+
+    def _authenticate_sync(self):
+        """Autentica contra RC de forma síncrona usando Zeep."""
+        logger.info("Autenticando contra Recurso Confiable (Zeep)...")
+        client = self._get_zeep_client()
+        res = client.service.GetUserToken(self.username, self.password)
+        
+        if not res or 'token' not in res:
+            raise Exception("Respuesta inválida al solicitar token SOAP a RC")
+            
+        self._token = res['token']
         # Renovar 30 minutos antes de expirar (23.5 horas desde ahora)
         self._token_expires_at = datetime.now() + timedelta(hours=23, minutes=30)
-        logger.info(f"Token obtenido exitosamente. Expira a las: {self._token_expires_at}")
+        logger.info(f"Token real obtenido exitosamente. Expira a las: {self._token_expires_at}")
 
-    async def get_token(self) -> str:
+    def _get_token_sync(self) -> str:
         """Devuelve el token en caché, o lo renueva si expiró."""
         if not self._token or not self._token_expires_at or datetime.now() >= self._token_expires_at:
-            await self._authenticate()
+            self._authenticate_sync()
         return self._token
 
-    def _build_xml(self, token: str, event: RCCanonicalModel) -> str:
-        """Construye el XML estricto para RC."""
-        asset = event.chassis_number or ""
-        altitude = event.altitude if event.altitude is not None else "0"
-        battery = event.battery if event.battery is not None else "0"
-        code = event.code or "1"
-        direction = event.course if event.course is not None else "0"
+    def _send_sync(self, event: RCCanonicalModel):
+        """Ejecuta la llamada SOAP síncrona."""
+        token = self._get_token_sync()
+        client = self._get_zeep_client()
         
-        if event.date:
-            date_str = event.date.strftime("%Y-%m-%dT%H:%M:%S")
-        else:
-            date_str = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
-            
-        humidity = event.humidity if event.humidity is not None else "0"
-        ignition = "true" if event.ignition else "false"
-        latitude = event.latitude if event.latitude is not None else "0"
-        longitude = event.longitude if event.longitude is not None else "0"
-        odometer = event.odometer if event.odometer is not None else "0"
-        serialNumber = event.serial_number or ""
-        shipment = event.shipment or ""
-        speed = event.speed if event.speed is not None else "0"
-        temperature = event.temperature if event.temperature is not None else "0"
-        vehicleType = event.vehicle_type or ""
-        vehicleBrand = event.vehicle_brand or ""
-        vehicleModel = event.vehicle_model or ""
-
-        xml = f"""<tem:events>
-<iron:Event>
-<iron:altitude>{altitude}</iron:altitude>
-<iron:asset>{asset}</iron:asset>
-<iron:battery>{battery}</iron:battery>
-<iron:code>{code}</iron:code>
-<iron:customer>
-<iron:id></iron:id>
-<iron:name></iron:name>
-</iron:customer>
-<iron:date>{date_str}</iron:date>
-<iron:direction>{direction}</iron:direction>
-<iron:humidity>{humidity}</iron:humidity>
-<iron:ignition>{ignition}</iron:ignition>
-<iron:latitude>{latitude}</iron:latitude>
-<iron:longitude>{longitude}</iron:longitude>
-<iron:odometer>{odometer}</iron:odometer>
-<iron:serialNumber>{serialNumber}</iron:serialNumber>
-<iron:shipment>{shipment}</iron:shipment>
-<iron:speed>{speed}</iron:speed>
-<iron:temperature>{temperature}</iron:temperature>
-<iron:vehicleType>{vehicleType}</iron:vehicleType>
-<iron:vehicleBrand>{vehicleBrand}</iron:vehicleBrand>
-<iron:vehicleModel>{vehicleModel}</iron:vehicleModel>
-</iron:Event>
-</tem:events>"""
-        return xml
+        # Mapeo a diccionario plano soportado por Zeep
+        event_dict = {
+            'altitude': str(event.altitude) if event.altitude is not None else "0",
+            'asset': event.chassis_number or "",
+            'battery': str(event.battery) if event.battery is not None else "0",
+            'code': event.code or "1",
+            'course': str(event.course) if event.course is not None else "0",
+            'customer': {'id': '', 'name': ''},
+            'date': event.date if event.date else datetime.now(),
+            'direction': str(event.course) if event.course is not None else "0",
+            'humidity': str(event.humidity) if event.humidity is not None else "0",
+            'ignition': "true" if event.ignition else "false",
+            'latitude': str(event.latitude) if event.latitude is not None else "0",
+            'longitude': str(event.longitude) if event.longitude is not None else "0",
+            'odometer': str(event.odometer) if event.odometer is not None else "0",
+            'serialNumber': event.serial_number or "",
+            'shipment': event.shipment or "",
+            'speed': str(event.speed) if event.speed is not None else "0",
+            'temperature': str(event.temperature) if event.temperature is not None else "0",
+            'vehicleType': event.vehicle_type or "",
+            'vehicleBrand': event.vehicle_brand or "",
+            'vehicleModel': event.vehicle_model or ""
+        }
+        
+        # Enviar
+        res = client.service.GPSAssetTracking(token, [event_dict])
+        return res
 
     async def send_event(self, event: RCCanonicalModel):
         """
@@ -99,34 +91,30 @@ class RCSOAPClient:
         Devuelve (success: bool, job_id: str, raw_response: str)
         """
         try:
-            token = await self.get_token()
-            xml_payload = self._build_xml(token, event)
-            
-            headers = {
-                "Content-Type": "text/xml; charset=utf-8",
-                "SOAPAction": '"http://rc-mock-url.com/soap/ReportEvent"'
-            }
-
             if RC_USE_MOCK:
                 # Simulación de éxito internamente (Sin conectarse a internet)
                 mock_job_id = f"job_mock_{int(datetime.now().timestamp())}"
                 mock_json_response = f'{{"timestamp": "{datetime.now(timezone.utc).isoformat()}", "level": "INFO", "event_type": "batch_sent", "status": "success", "job_id": "{mock_job_id}"}}'
                 return True, mock_job_id, mock_json_response
             else:
-                # Llamada Real a Producción (Recurso Confiable)
-                async with httpx.AsyncClient() as client:
-                    response = await client.post(self.endpoint, content=xml_payload, headers=headers, timeout=10.0)
-                    response.raise_for_status()
+                import asyncio
+                # Delegar la llamada SOAP bloqueante a un thread separado para no congelar FastAPI
+                res = await asyncio.to_thread(self._send_sync, event)
+                
+                raw_response = str(res)
+                
+                # Intentar parsear un ID de la respuesta
+                job_id = "rc_prod_id"
+                if isinstance(res, list) and len(res) > 0 and hasattr(res[0], '__getitem__') and "idJob" in res[0] and res[0]["idJob"]:
+                    job_id = str(res[0]["idJob"])
+                elif isinstance(res, dict) and "idJob" in res and res["idJob"]:
+                    job_id = str(res["idJob"])
+                elif isinstance(res, dict) and "job_id" in res:
+                    job_id = res["job_id"]
+                else:
+                    job_id = f"rc_job_{int(datetime.now().timestamp())}"
                     
-                    raw_response = response.text
-                    try:
-                        # RC devuelve un JSON con el job_id como en el ejemplo provisto
-                        data = json.loads(raw_response)
-                        job_id = data.get("job_id") or data.get("batch", {}).get("job_id") or "unknown_id"
-                        return True, job_id, raw_response
-                    except json.JSONDecodeError:
-                        # Fallback si por alguna razón RC devuelve XML o texto plano
-                        return True, "xml_or_text_response", raw_response
+                return True, job_id, raw_response
 
         except Exception as e:
             logger.error(f"Error al enviar evento a RC: {str(e)}")
