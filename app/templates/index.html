@@ -391,8 +391,10 @@
                 <table>
                     <thead>
                         <tr>
+                            <th>Proveedor</th>
                             <th>Chasis / Patente</th>
                             <th>Estado</th>
+                            <th>Velocidad / Coords</th>
                             <th>Hora (Actualización)</th>
                         </tr>
                     </thead>
@@ -573,8 +575,10 @@
             recentItems.forEach(item => {
                 const tr = document.createElement('tr');
                 tr.innerHTML = `
+                    <td style="font-weight: bold">${item.provider} <span style="font-size: 0.7em; color: var(--color-gray)">(${item.env})</span></td>
                     <td>${item.chassis || 'Desconocido'}</td>
                     <td><span class="badge ${item.status}">${item.status.toUpperCase()}</span></td>
+                    <td style="font-size: 0.85rem; color: var(--color-gray)">${item.speed !== null ? item.speed : 0} km/h<br>${item.coords || ''}</td>
                     <td>${item.time}</td>
                 `;
                 tbody.appendChild(tr);

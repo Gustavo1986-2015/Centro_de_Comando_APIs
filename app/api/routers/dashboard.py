@@ -77,6 +77,11 @@ async def get_stats():
                 NormalizedRCEvent.updated_at.desc()
             ).limit(5).all()
             
+            for r in recent:
+                # Inyectar dinámicamente estos atributos para la lectura posterior
+                r.provider_name = provider_name
+                r.env = provider_env
+                
             recent_events_global.extend(recent)
         finally:
             db.close()
@@ -90,7 +95,11 @@ async def get_stats():
         recent_list.append({
             "chassis": ev.chassis_number,
             "status": ev.status,
-            "time": ev.updated_at.strftime("%H:%M:%S") if ev.updated_at else ""
+            "time": ev.updated_at.strftime("%H:%M:%S") if ev.updated_at else "N/A",
+            "provider": ev.provider_name.upper() if hasattr(ev, 'provider_name') else "N/A",
+            "env": ev.env.upper() if hasattr(ev, 'env') else "N/A",
+            "speed": ev.speed if hasattr(ev, 'speed') else 0,
+            "coords": f"{ev.latitude}, {ev.longitude}" if hasattr(ev, 'latitude') and ev.latitude else "Sin GPS"
         })
 
     return {
@@ -143,20 +152,29 @@ async def update_configs(updates: List[ConfigUpdate]):
 @router.get("/api/logs")
 async def get_audit_logs():
     """Devuelve los últimos 50 registros de auditoría de los archivos .jsonl"""
-    logs_dir = "logs"
-    if not os.path.exists(logs_dir):
+    audit_dir = "audit"
+    if not os.path.exists(audit_dir):
         return []
     
-    files = glob.glob(f"{logs_dir}/*.jsonl")
+    # Busca en todos los subdirectorios
+    files = glob.glob(f"{audit_dir}/**/*.jsonl", recursive=True)
     all_lines = []
     
     for f in files:
+        provider_name = os.path.basename(os.path.dirname(f))
         with open(f, 'r', encoding='utf-8') as file:
             for line in file:
                 try:
                     data = json.loads(line)
-                    data["_file"] = os.path.basename(f)
-                    all_lines.append(data)
+                    # Compatibilidad con formato nuevo y viejo
+                    if "payload" in data and "timestamp" in data:
+                        all_lines.append(data)
+                    else:
+                        all_lines.append({
+                            "timestamp": "Formato Antiguo",
+                            "provider": provider_name,
+                            "payload": data
+                        })
                 except Exception:
                     pass
 

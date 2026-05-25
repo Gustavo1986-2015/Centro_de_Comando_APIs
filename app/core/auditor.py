@@ -2,6 +2,7 @@ import os
 import logging
 from logging.handlers import TimedRotatingFileHandler
 import json
+from datetime import datetime, timezone
 
 # Directorio raíz para auditoría
 AUDIT_DIR = "audit"
@@ -63,6 +64,14 @@ def audit_event(provider: str, payload: dict):
     Guarda un evento en el archivo de auditoría del proveedor en formato JSONL.
     """
     logger = setup_provider_logger(provider)
+    
+    # Envolver el payload con metadatos útiles
+    audit_record = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "provider": provider,
+        "payload": payload
+    }
+    
     # Convertir a JSON string, asegurar que sea una sola línea
-    json_str = json.dumps(payload, ensure_ascii=False)
+    json_str = json.dumps(audit_record, ensure_ascii=False)
     logger.info(json_str)
