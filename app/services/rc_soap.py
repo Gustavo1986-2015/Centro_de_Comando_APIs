@@ -30,35 +30,63 @@ class RCSOAPClient:
         return self._token
 
     def _build_xml(self, token: str, event: RCCanonicalModel) -> str:
-        """Construye el XML omitiendo valores nulos."""
-        # Se asume una estructura base, el formato real dependerá del WSDL de RC.
-        root = ET.Element("soap:Envelope", {"xmlns:soap": "http://schemas.xmlsoap.org/soap/envelope/"})
-        body = ET.SubElement(root, "soap:Body")
-        report = ET.SubElement(body, "ReportEvent")
+        """Construye el XML estricto para RC."""
+        asset = event.chassis_number or ""
+        altitude = event.altitude if event.altitude is not None else "0"
+        battery = event.battery if event.battery is not None else "0"
+        code = event.code or "1"
+        direction = event.course if event.course is not None else "0"
         
-        ET.SubElement(report, "Token").text = token
-        
-        # Agregar dinámicamente solo si no es nulo
-        event_dict = event.model_dump(exclude_none=True)
-        for key, value in event_dict.items():
-            if value is not None:
-                # Convertir fechas a ISO string
-                if isinstance(value, datetime):
-                    value_str = value.isoformat()
-                else:
-                    value_str = str(value)
-                    
-                # RC suele usar prefijos como iron: o CamelCase
-                # Para el ejemplo usamos el nombre tal cual
-                ET.SubElement(report, key).text = value_str
+        if event.date:
+            date_str = event.date.strftime("%Y-%m-%dT%H:%M:%S")
+        else:
+            date_str = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
+            
+        humidity = event.humidity if event.humidity is not None else "0"
+        ignition = "true" if event.ignition else "false"
+        latitude = event.latitude if event.latitude is not None else "0"
+        longitude = event.longitude if event.longitude is not None else "0"
+        odometer = event.odometer if event.odometer is not None else "0"
+        serialNumber = event.serial_number or ""
+        shipment = event.shipment or ""
+        speed = event.speed if event.speed is not None else "0"
+        temperature = event.temperature if event.temperature is not None else "0"
+        vehicleType = event.vehicle_type or ""
+        vehicleBrand = event.vehicle_brand or ""
+        vehicleModel = event.vehicle_model or ""
 
-        # Convertir a string
-        return ET.tostring(root, encoding="utf-8").decode("utf-8")
+        xml = f"""<tem:events>
+<iron:Event>
+<iron:altitude>{altitude}</iron:altitude>
+<iron:asset>{asset}</iron:asset>
+<iron:battery>{battery}</iron:battery>
+<iron:code>{code}</iron:code>
+<iron:customer>
+<iron:id></iron:id>
+<iron:name></iron:name>
+</iron:customer>
+<iron:date>{date_str}</iron:date>
+<iron:direction>{direction}</iron:direction>
+<iron:humidity>{humidity}</iron:humidity>
+<iron:ignition>{ignition}</iron:ignition>
+<iron:latitude>{latitude}</iron:latitude>
+<iron:longitude>{longitude}</iron:longitude>
+<iron:odometer>{odometer}</iron:odometer>
+<iron:serialNumber>{serialNumber}</iron:serialNumber>
+<iron:shipment>{shipment}</iron:shipment>
+<iron:speed>{speed}</iron:speed>
+<iron:temperature>{temperature}</iron:temperature>
+<iron:vehicleType>{vehicleType}</iron:vehicleType>
+<iron:vehicleBrand>{vehicleBrand}</iron:vehicleBrand>
+<iron:vehicleModel>{vehicleModel}</iron:vehicleModel>
+</iron:Event>
+</tem:events>"""
+        return xml
 
-    async def send_event(self, event: RCCanonicalModel) -> bool:
+    async def send_event(self, event: RCCanonicalModel):
         """
         Envía el evento a RC.
-        Devuelve True si fue exitoso, False en caso contrario.
+        Devuelve (success: bool, job_id: str, raw_response: str)
         """
         try:
             token = await self.get_token()
@@ -69,17 +97,20 @@ class RCSOAPClient:
                 "SOAPAction": '"http://rc-mock-url.com/soap/ReportEvent"'
             }
 
-            # En producción, descomentar la llamada real
+            # En producción, descomentar la llamada real y extraer el job_id del XML/JSON
             # async with httpx.AsyncClient() as client:
             #     response = await client.post(self.endpoint, content=xml_payload, headers=headers, timeout=10.0)
             #     response.raise_for_status()
+            #     raw_response = response.text
             
-            # Simulación de éxito
-            # logger.info(f"Evento {event.chassis_number} enviado a RC con éxito.")
-            return True
+            # Simulación de éxito simulando la respuesta JSON que provee RC internamente
+            mock_job_id = f"job_mock_{int(datetime.now().timestamp())}"
+            mock_json_response = f'{{"timestamp": "{datetime.now(timezone.utc).isoformat()}", "level": "INFO", "event_type": "batch_sent", "status": "success", "job_id": "{mock_job_id}"}}'
+            
+            return True, mock_job_id, mock_json_response
 
         except Exception as e:
             logger.error(f"Error al enviar evento a RC: {str(e)}")
-            return False
+            return False, None, str(e)
 
 rc_client = RCSOAPClient()

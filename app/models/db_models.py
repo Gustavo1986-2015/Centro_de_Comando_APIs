@@ -13,6 +13,8 @@ class NormalizedRCEvent(Base):
     provider = Column(String, index=True)  # Ej. 'schmitz'
     status = Column(String, default="pending", index=True) # pending, sent, failed
     raw_data = Column(Text) # JSON crudo almacenado como texto
+    rc_response = Column(Text, nullable=True) # Respuesta de Recurso Confiable
+    job_id = Column(String, nullable=True, index=True) # ID de acuse de recibo
 
     # Datos normalizados (RC Canonical Model)
     chassis_number = Column(String, index=True)

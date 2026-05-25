@@ -109,7 +109,31 @@ async def get_stats():
             "odometer": getattr(ev, 'odometer', None),
             "humidity": getattr(ev, 'humidity', None),
             "shipment": getattr(ev, 'shipment', None),
-            "serial": getattr(ev, 'serial_number', None)
+            "serial": getattr(ev, 'serial_number', None),
+            "job_id": getattr(ev, 'job_id', None),
+            
+            # Exportación estructurada idéntica a Recurso Confiable
+            "rc_format": {
+                "asset": ev.chassis_number,
+                "altitude": getattr(ev, 'altitude', 0) or 0,
+                "battery": getattr(ev, 'battery', 0) or 0,
+                "code": getattr(ev, 'code', "1") or "1",
+                "customer": {"id": "", "name": ""},
+                "date": ev.date.strftime("%Y-%m-%dT%H:%M:%S") if getattr(ev, 'date') else "",
+                "direction": getattr(ev, 'course', 0) or 0,
+                "humidity": getattr(ev, 'humidity', 0) or 0,
+                "ignition": "true" if getattr(ev, 'ignition') else "false",
+                "latitude": getattr(ev, 'latitude', 0) or 0,
+                "longitude": getattr(ev, 'longitude', 0) or 0,
+                "odometer": getattr(ev, 'odometer', 0) or 0,
+                "serialNumber": getattr(ev, 'serial_number', "") or "",
+                "shipment": getattr(ev, 'shipment', "") or "",
+                "speed": getattr(ev, 'speed', 0) or 0,
+                "temperature": getattr(ev, 'temperature', 0) or 0,
+                "vehicleType": getattr(ev, 'vehicle_type', "") or "",
+                "vehicleBrand": getattr(ev, 'vehicle_brand', "") or "",
+                "vehicleModel": getattr(ev, 'vehicle_model', "") or ""
+            }
         })
 
     return {

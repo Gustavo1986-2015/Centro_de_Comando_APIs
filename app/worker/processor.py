@@ -57,8 +57,11 @@ async def process_provider_events(provider: str, env: str):
 
                 # Si es test, podríamos NO enviar a RC realmente, o enviarlo a un endpoint de test
                 # Por ahora, usamos el comportamiento normal
-                success = await rc_client.send_event(canonical_event)
+                success, job_id, rc_response = await rc_client.send_event(canonical_event)
                 
+                db_event.rc_response = rc_response
+                db_event.job_id = job_id
+
                 if success:
                     db_event.status = "sent"
                 else:
