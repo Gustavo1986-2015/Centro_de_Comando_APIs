@@ -62,8 +62,15 @@ Cuando el Hub debe ir a buscar datos proactivamente (Ej. Samsara, Geotab), reque
 
 ### APIs PUSH (Webhooks)
 Cuando los proveedores nos envían datos a nuestra URL (Ej. Schmitz), debemos blindar nuestros endpoints para que no cualquiera nos inyecte basura.
-- **Ejemplo en `.env`:** `SCHMITZ_INBOUND_SECRET=yyy`
-- **Uso:** En `app/providers/schmitz/router.py`, verificamos que el request entrante posea esa clave secreta en sus cabeceras (ej. `x-api-key`) antes de procesar el JSON.
+Existen dos métodos estándar en la industria para asegurar estos endpoints:
+
+1. **API Keys (El método simple):**
+   - **Ejemplo en `.env`:** `SCHMITZ_INBOUND_SECRET=Schmitz_2026_UltraSecreta`
+   - **Mecánica:** Acuerdas con el proveedor que en cada petición HTTP adjunten un Header (ej. `x-api-key: Schmitz_2026_UltraSecreta`). En `router.py`, rechazas cualquier petición que no traiga ese Header exacto.
+
+2. **Firmas HMAC (El método bancario/criptográfico):**
+   - **Ejemplo en `.env`:** `GENERIC_WEBHOOK_SECRET=clave_para_validar_firmas`
+   - **Mecánica:** Algunos proveedores de alto nivel no envían la clave por internet. En su lugar, usan la clave secreta para "licuar" (hashear mediante SHA-256) el JSON que te van a enviar, generando una "Firma" alfanumérica única (Ej. `x-signature: a8f4b...`). Cuando tu Hub recibe el JSON, usa la misma clave local para intentar generar la firma; si ambas firmas coinciden, significa que nadie alteró el JSON en el camino y el proveedor es auténtico.
 
 ---
 
