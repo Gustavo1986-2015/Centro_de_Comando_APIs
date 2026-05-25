@@ -490,9 +490,9 @@
                 <input type="text" class="form-control" value="TEST (Modo Seguro)" disabled style="opacity: 0.7;">
             </div>
 
-            <div class="form-group">
+            <div class="form-group" style="width: 100%;">
                 <label title="Pega aquí el contenido del archivo .json que deseas simular">Payload JSON (Raw Data)</label>
-                <textarea id="sim-payload" class="form-control" rows="12" placeholder='{\n  "ejemplo": "pega tu JSON aquí"\n}' style="font-family: monospace; font-size: 0.85rem; resize: vertical;"></textarea>
+                <textarea id="sim-payload" class="form-control" rows="22" placeholder='{\n  "ejemplo": "pega tu JSON aquí"\n}' style="font-family: monospace; font-size: 0.85rem; resize: vertical; width: 100%;"></textarea>
             </div>
 
             <button class="btn-save" onclick="sendSimulation()" title="Disparar la petición contra tu servidor como si fueras el proveedor externo">🚀 Disparar Webhook</button>
@@ -692,7 +692,7 @@
                                 <span style="color:var(--color-gray); font-size:0.8rem;">JSON Raw Data</span>
                                 <a href="data:text/json;charset=utf-8,${encodedPayload}" download="payload_${log.provider}_${cleanDate}.json" style="color: var(--color-green-bright); text-decoration: none; font-size: 0.8rem; border: 1px solid var(--color-green-bright); padding: 2px 8px; border-radius: 4px; transition: all 0.2s;">📥 Descargar JSON</a>
                             </div>
-                            <pre style="background: rgba(0,0,0,0.5); padding: 10px; border-radius: 6px; font-size: 0.75rem; color: var(--color-green-bright); max-height: 100px; overflow-y: auto; margin:0;">${payloadStr}</pre>
+                            <pre style="background: rgba(0,0,0,0.5); padding: 15px; border-radius: 6px; font-size: 0.8rem; color: var(--color-green-bright); max-height: 400px; overflow-y: auto; margin:0; white-space: pre-wrap; word-wrap: break-word; width: 100%;">${payloadStr}</pre>
                         </td>
                     `;
                     tbody.appendChild(tr);

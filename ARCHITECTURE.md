@@ -37,7 +37,32 @@ Cuando en cualquier parte del código llamas a la función `get_session("nombre_
 
 ---
 
-## 3. ¿Cómo agregar una Nueva API en el futuro? (Guía Paso a Paso)
+## 3. El Traductor (Mapper) y el Paradigma Push vs Pull
+
+La Base de Datos Dinámica almacena **únicamente el Modelo Canónico** (las 18 columnas universales como `latitude`, `temperature`, `code`, etc.). Jamás guarda los nombres de campos extraños que envían los proveedores.
+
+Por lo tanto, no importa si un dato llega porque el proveedor nos lo envió (Webhooks / PUSH) o porque nosotros corrimos un CronJob para ir a buscarlo (PULL). El flujo es siempre el mismo:
+
+1. **Ingesta Cruda:** Llega el JSON inentendible (ej. `{"pos_x": -34, "temp_door": 12}`). Se guarda intacto en los **Logs de Auditoría** para respaldo.
+2. **El Mapper (La única tarea humana):** Alguien del equipo programa un archivo `mapper.py` exclusivo para este proveedor. Este script hace la traducción: `canonical.latitude = json["pos_x"]`.
+3. **Guardado Transparente:** Se pasa el objeto canónico ya traducido a la base de datos `proveedor_entorno.db`, la cual lo guarda sin hacer preguntas, porque ya viene en el idioma universal que el sistema entiende.
+
+---
+
+## 4. Configuración en Producción (Cloudflare Tunnels)
+
+Para evitar exponer puertos de la máquina virtual (VM) en AWS y maximizar la seguridad (Zero Trust), se recomienda el uso de **Cloudflare Tunnels** (`cloudflared`).
+
+Es **mandatorio** crear dos (2) túneles separados (o dos subdominios enrutados por Cloudflare) para mantener una separación física de los entornos antes de enviar a Recurso Confiable:
+
+- **Túnel PROD:** Ej. `https://prod-hub.assistcargo.com` -> Apuntando al puerto 8000 local. (La URL para el proveedor será: `.../webhook?env=prod`)
+- **Túnel TEST:** Ej. `https://test-hub.assistcargo.com` -> Apuntando al mismo puerto 8000 local. (La URL para el proveedor será: `.../webhook?env=test`)
+
+Ambas URLs convergen en la misma aplicación interna, pero obligan a los proveedores externos (y a las integraciones) a definir claramente a qué subdominio disparan, blindando así los datos productivos.
+
+---
+
+## 5. ¿Cómo agregar una Nueva API en el futuro? (Guía Paso a Paso)
 
 Supongamos que Assistcargo firma con un proveedor llamado **"Samsara"**.
 
