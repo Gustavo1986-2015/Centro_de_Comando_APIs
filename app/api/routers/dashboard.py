@@ -120,7 +120,7 @@ async def get_stats():
                 "battery": getattr(ev, 'battery', 0) or 0,
                 "code": getattr(ev, 'code', "1") or "1",
                 "customer": {"id": "", "name": ""},
-                "date": ev.date.strftime("%Y-%m-%dT%H:%M:%S") if getattr(ev, 'date') else "",
+                "date": ev.date.strftime("%Y-%m-%dT%H:%M:%SZ") if getattr(ev, 'date') and ev.date else "",
                 "direction": getattr(ev, 'course', 0) or 0,
                 "humidity": getattr(ev, 'humidity', 0) or 0,
                 "ignition": "true" if getattr(ev, 'ignition') else "false",
