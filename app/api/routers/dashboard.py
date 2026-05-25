@@ -218,3 +218,18 @@ async def get_audit_logs():
     all_lines.sort(key=lambda x: x.get("timestamp", ""), reverse=True)
     return all_lines[:50]
 
+@router.delete("/api/logs")
+async def clear_audit_logs():
+    """Borra todos los archivos de auditoría jsonl"""
+    audit_dir = "audit"
+    if not os.path.exists(audit_dir):
+        return {"status": "ok"}
+    
+    files = glob.glob(f"{audit_dir}/**/*.jsonl", recursive=True)
+    for f in files:
+        try:
+            os.remove(f)
+        except Exception:
+            pass
+    return {"status": "ok"}
+

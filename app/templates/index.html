@@ -458,7 +458,10 @@
         <div class="recent-section">
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
                 <h2>Auditoría Dinámica (Raw Payload)</h2>
-                <button class="btn-save" onclick="loadLogs()" style="background: var(--color-gray); color: var(--color-white)">Actualizar Logs</button>
+                <div style="display: flex; gap: 1rem;">
+                    <button class="btn-save" onclick="clearLogs()" style="background: rgba(255,255,255,0.1); color: var(--color-white)">🧹 Vaciar</button>
+                    <button class="btn-save" onclick="loadLogs()" style="background: var(--color-gray); color: var(--color-white)">Actualizar Logs</button>
+                </div>
             </div>
             
             <div class="table-container">
