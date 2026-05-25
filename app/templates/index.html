@@ -395,12 +395,12 @@
                 <table>
                     <thead>
                         <tr>
-                            <th>Proveedor</th>
-                            <th>Activo / Patente</th>
-                            <th>Estado & Hora</th>
-                            <th>Localización</th>
-                            <th>Sensores (Telemetría)</th>
-                            <th>Operativa</th>
+                            <th style="white-space: nowrap;">Proveedor</th>
+                            <th style="white-space: nowrap;">Activo / Patente</th>
+                            <th style="white-space: nowrap;">Estado & Hora</th>
+                            <th style="white-space: nowrap;">Localización</th>
+                            <th style="white-space: nowrap;">Sensores (Telemetría)</th>
+                            <th style="white-space: nowrap;">Operativa</th>
                         </tr>
                     </thead>
                     <tbody id="recent-table-body">
@@ -581,42 +581,40 @@
                 const tr = document.createElement('tr');
                 
                 // Formatear Localización
-                let locHtml = `<div style="font-size:0.8rem; color:var(--color-gray)">`;
-                locHtml += `<div>${item.coords}</div>`;
-                locHtml += `<div>Vel: <span style="color:var(--color-white)">${item.speed !== null ? item.speed : 0} km/h</span>`;
-                if(item.course) locHtml += ` | Rumbo: <span style="color:var(--color-white)">${item.course}°</span>`;
-                if(item.altitude) locHtml += ` | Alt: <span style="color:var(--color-white)">${item.altitude}m</span>`;
-                locHtml += `</div></div>`;
+                let locHtml = `<div style="font-size:0.8rem; color:var(--color-gray); line-height: 1.4;">`;
+                locHtml += `<div>Coords: <span style="color:var(--color-white)">${item.coords}</span></div>`;
+                locHtml += `<div>Vel: <span style="color:var(--color-white)">${item.speed !== null ? item.speed : 0} km/h</span> | Rumbo: <span style="color:var(--color-white)">${item.course !== null ? item.course + '°' : '-'}</span></div>`;
+                locHtml += `<div>Alt: <span style="color:var(--color-white)">${item.altitude !== null ? item.altitude + 'm' : '-'}</span></div>`;
+                locHtml += `</div>`;
 
                 // Formatear Telemetría
-                let telHtml = `<div style="font-size:0.8rem; color:var(--color-gray)">`;
-                telHtml += `Ignición: <span style="color:var(--color-white)">${item.ignition}</span><br>`;
-                let sensors = [];
-                if(item.temperature !== null) sensors.push(`Temp: <span style="color:var(--color-white)">${item.temperature}°C</span>`);
-                if(item.battery !== null) sensors.push(`Bat: <span style="color:var(--color-white)">${item.battery}V</span>`);
-                if(item.odometer !== null) sensors.push(`Odom: <span style="color:var(--color-white)">${item.odometer}km</span>`);
-                if(item.humidity !== null) sensors.push(`Hum: <span style="color:var(--color-white)">${item.humidity}%</span>`);
-                if(sensors.length > 0) telHtml += sensors.join(' | ');
-                else telHtml += `<span style="opacity:0.5">Sin sensores extra</span>`;
+                let telHtml = `<div style="font-size:0.8rem; color:var(--color-gray); line-height: 1.4;">`;
+                telHtml += `<div>Ignición: <span style="color:var(--color-white)">${item.ignition}</span></div>`;
+                telHtml += `<div>Temp: <span style="color:var(--color-white)">${item.temperature !== null ? item.temperature + '°C' : '-'}</span> | Bat: <span style="color:var(--color-white)">${item.battery !== null ? item.battery + 'V' : '-'}</span></div>`;
+                telHtml += `<div>Odom: <span style="color:var(--color-white)">${item.odometer !== null ? item.odometer + 'km' : '-'}</span> | Hum: <span style="color:var(--color-white)">${item.humidity !== null ? item.humidity + '%' : '-'}</span></div>`;
                 telHtml += `</div>`;
 
-                // Formatear Operativa
-                let opHtml = `<div style="font-size:0.8rem; color:var(--color-gray)">`;
-                opHtml += `Cod Alarma: <span style="color:var(--color-white)">${item.code}</span>`;
-                if(item.shipment) opHtml += `<br>Carga: <span style="color:var(--color-white)">${item.shipment}</span>`;
-                if(item.serial) opHtml += `<br>Serial: <span style="color:var(--color-white)">${item.serial}</span>`;
+                // Formatear Operativa y Botón de Descarga
+                let opHtml = `<div style="font-size:0.8rem; color:var(--color-gray); line-height: 1.4;">`;
+                opHtml += `<div>Cod Alarma: <span style="color:var(--color-white)">${item.code || '-'}</span></div>`;
+                opHtml += `<div>Carga: <span style="color:var(--color-white)">${item.shipment || '-'}</span> | Serial: <span style="color:var(--color-white)">${item.serial || '-'}</span></div>`;
+                
+                // Exportador JSON
+                const jsonPayload = encodeURIComponent(JSON.stringify(item, null, 2));
+                const safeTime = item.time.replace(/[: ()]/g, '');
+                opHtml += `<div style="margin-top: 6px;"><a href="data:text/json;charset=utf-8,${jsonPayload}" download="evento_${item.chassis}_${safeTime}.json" style="color: var(--color-green-bright); text-decoration: none; font-size: 0.75rem; border: 1px solid var(--color-green-bright); padding: 2px 6px; border-radius: 4px; display: inline-block; transition: all 0.2s;">📥 Exportar JSON</a></div>`;
                 opHtml += `</div>`;
 
                 tr.innerHTML = `
-                    <td style="font-weight: bold">${item.provider} <span style="font-size: 0.7em; color: var(--color-gray)">(${item.env})</span></td>
-                    <td style="font-weight: bold; color:var(--color-green-bright)">${item.chassis || 'Desconocido'}</td>
-                    <td>
+                    <td style="font-weight: bold; white-space: nowrap;">${item.provider} <span style="font-size: 0.7em; color: var(--color-gray)">(${item.env})</span></td>
+                    <td style="font-weight: bold; color:var(--color-green-bright); white-space: nowrap;">${item.chassis || 'Desconocido'}</td>
+                    <td style="white-space: nowrap;">
                         <span class="badge ${item.status}">${item.status.toUpperCase()}</span><br>
                         <span style="font-size:0.75rem; color:var(--color-gray); display:inline-block; margin-top:4px;">${item.time}</span>
                     </td>
-                    <td>${locHtml}</td>
-                    <td>${telHtml}</td>
-                    <td>${opHtml}</td>
+                    <td style="white-space: nowrap;">${locHtml}</td>
+                    <td style="white-space: nowrap;">${telHtml}</td>
+                    <td style="white-space: nowrap;">${opHtml}</td>
                 `;
                 tbody.appendChild(tr);
             });
