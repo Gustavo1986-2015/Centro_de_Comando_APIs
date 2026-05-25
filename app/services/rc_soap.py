@@ -1,13 +1,23 @@
 import httpx
 import logging
+import os
+import json
 from datetime import datetime, timedelta, timezone
 from xml.etree import ElementTree as ET
 from app.schemas.canonical import RCCanonicalModel
+from dotenv import load_dotenv
+
+load_dotenv()
 
 logger = logging.getLogger(__name__)
 
+RC_USERNAME = os.getenv("RC_USERNAME", "demo")
+RC_PASSWORD = os.getenv("RC_PASSWORD", "demo")
+RC_ENDPOINT = os.getenv("RC_ENDPOINT", "http://gps.rcontrol.com.mx/Tracking/wcf/RCService.svc")
+RC_USE_MOCK = os.getenv("RC_USE_MOCK", "True").lower() == "true"
+
 class RCSOAPClient:
-    def __init__(self, username: str = "demo", password: str = "demo", endpoint: str = "http://gps.rcontrol.com.mx/Tracking/wcf/RCService.svc"):
+    def __init__(self, username: str = RC_USERNAME, password: str = RC_PASSWORD, endpoint: str = RC_ENDPOINT):
         self.username = username
         self.password = password
         self.endpoint = endpoint
@@ -97,17 +107,26 @@ class RCSOAPClient:
                 "SOAPAction": '"http://rc-mock-url.com/soap/ReportEvent"'
             }
 
-            # En producción, descomentar la llamada real y extraer el job_id del XML/JSON
-            # async with httpx.AsyncClient() as client:
-            #     response = await client.post(self.endpoint, content=xml_payload, headers=headers, timeout=10.0)
-            #     response.raise_for_status()
-            #     raw_response = response.text
-            
-            # Simulación de éxito simulando la respuesta JSON que provee RC internamente
-            mock_job_id = f"job_mock_{int(datetime.now().timestamp())}"
-            mock_json_response = f'{{"timestamp": "{datetime.now(timezone.utc).isoformat()}", "level": "INFO", "event_type": "batch_sent", "status": "success", "job_id": "{mock_job_id}"}}'
-            
-            return True, mock_job_id, mock_json_response
+            if RC_USE_MOCK:
+                # Simulación de éxito internamente (Sin conectarse a internet)
+                mock_job_id = f"job_mock_{int(datetime.now().timestamp())}"
+                mock_json_response = f'{{"timestamp": "{datetime.now(timezone.utc).isoformat()}", "level": "INFO", "event_type": "batch_sent", "status": "success", "job_id": "{mock_job_id}"}}'
+                return True, mock_job_id, mock_json_response
+            else:
+                # Llamada Real a Producción (Recurso Confiable)
+                async with httpx.AsyncClient() as client:
+                    response = await client.post(self.endpoint, content=xml_payload, headers=headers, timeout=10.0)
+                    response.raise_for_status()
+                    
+                    raw_response = response.text
+                    try:
+                        # RC devuelve un JSON con el job_id como en el ejemplo provisto
+                        data = json.loads(raw_response)
+                        job_id = data.get("job_id") or data.get("batch", {}).get("job_id") or "unknown_id"
+                        return True, job_id, raw_response
+                    except json.JSONDecodeError:
+                        # Fallback si por alguna razón RC devuelve XML o texto plano
+                        return True, "xml_or_text_response", raw_response
 
         except Exception as e:
             logger.error(f"Error al enviar evento a RC: {str(e)}")
