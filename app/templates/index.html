@@ -755,6 +755,16 @@
             }
         }
 
+        async function clearLogs() {
+            if(!confirm("¿Seguro que deseas vaciar todo el historial de auditoría?")) return;
+            try {
+                await fetch('/api/logs', { method: 'DELETE' });
+                await loadLogs();
+            } catch (err) {
+                console.error("Error limpiando logs", err);
+            }
+        }
+
         // Simulador
         async function loadSimulator() {
             try {
