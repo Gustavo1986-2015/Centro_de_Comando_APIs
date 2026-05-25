@@ -29,8 +29,8 @@ def map_schmitz_payload(payload: Dict[str, Any]) -> RCCanonicalModel:
                 return default
         return curr
 
-    # Extraer el ChassisNumber o Plate
-    chassis_number = payload.get("ChassisNumber") or payload.get("Plate", "UNKNOWN")
+    # Asignar como identificador principal la Patente (Plate), ignorando ChassisNumber
+    chassis_number = payload.get("Plate") or payload.get("ChassisNumber", "UNKNOWN")
 
     status_data_0 = get_safe(payload, ["StatusData", 0], {})
     position = get_safe(status_data_0, ["Position"], {})
