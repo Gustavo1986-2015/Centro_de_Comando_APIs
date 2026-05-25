@@ -60,29 +60,33 @@ class RCSOAPClient:
         # Recurso Confiable asume UTC puro siempre, según documentación
         rc_date = event.date if event.date else datetime.now()
         
-        # Mapeo a diccionario plano soportado por Zeep
+        # Mapeo estricto soportado por Zeep usando tipos nativos de Python
         event_dict = {
-            'altitude': str(event.altitude) if event.altitude is not None else "0",
             'asset': event.chassis_number or "",
-            'battery': str(event.battery) if event.battery is not None else "0",
             'code': event.code or "1",
-            'course': str(event.course) if event.course is not None else "0",
             'customer': {'id': '', 'name': ''},
-            'date': rc_date.strftime("%Y-%m-%dT%H:%M:%S"),
+            'date': rc_date, # Zeep lo formatea a xsd:dateTime automáticamente
             'direction': str(event.course) if event.course is not None else "0",
-            'humidity': str(event.humidity) if event.humidity is not None else "0",
-            'ignition': "true" if event.ignition else "false",
-            'latitude': str(event.latitude) if event.latitude is not None else "0",
-            'longitude': str(event.longitude) if event.longitude is not None else "0",
-            'odometer': str(event.odometer) if event.odometer is not None else "0",
-            'serialNumber': event.serial_number or "",
-            'shipment': event.shipment or "",
-            'speed': str(event.speed) if event.speed is not None else "0",
-            'temperature': str(event.temperature) if event.temperature is not None else "0",
-            'vehicleType': event.vehicle_type or "",
-            'vehicleBrand': event.vehicle_brand or "",
-            'vehicleModel': event.vehicle_model or ""
+            'ignition': bool(event.ignition),
+            'latitude': float(event.latitude) if event.latitude is not None else 0.0,
+            'longitude': float(event.longitude) if event.longitude is not None else 0.0,
+            'speed': int(event.speed) if event.speed is not None else 0,
         }
+        
+        if event.altitude is not None:
+            event_dict['altitude'] = int(event.altitude)
+        if event.battery is not None:
+            event_dict['battery'] = int(event.battery)
+        if event.humidity is not None:
+            event_dict['humidity'] = int(event.humidity)
+        if event.odometer is not None:
+            event_dict['odometer'] = int(event.odometer)
+        if event.temperature is not None:
+            event_dict['temperature'] = float(event.temperature)
+        if event.serial_number:
+            event_dict['serialNumber'] = str(event.serial_number)
+        if event.shipment:
+            event_dict['shipment'] = str(event.shipment)
         
         # Enviar
         res = client.service.GPSAssetTracking(token, [event_dict])
