@@ -1,11 +1,26 @@
-from fastapi import APIRouter, Request, Depends, status, Query
+from fastapi import APIRouter, Request, Depends, status, Query, HTTPException, Header
 from sqlalchemy.orm import Session
 import json
+import os
 
 from app.database import get_db_provider
 from app.models.db_models import NormalizedRCEvent
 from app.providers.schmitz.mapper import map_schmitz_payload
 from app.core.auditor import audit_event
+
+# Leer configuracion global
+REQUIRE_SCHMITZ_AUTH = os.getenv("REQUIRE_SCHMITZ_AUTH", "False").lower() == "true"
+SCHMITZ_API_KEY = os.getenv("SCHMITZ_API_KEY", "")
+
+async def verify_api_key(x_api_key: str = Header(None)):
+    """Verifica el API Key entrante si la seguridad está habilitada en .env."""
+    if REQUIRE_SCHMITZ_AUTH:
+        if not x_api_key or x_api_key != SCHMITZ_API_KEY:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid or missing API Key"
+            )
+    return True
 
 router = APIRouter(prefix="/schmitz", tags=["Schmitz"])
 
@@ -13,7 +28,8 @@ router = APIRouter(prefix="/schmitz", tags=["Schmitz"])
 async def schmitz_webhook(
     request: Request, 
     db: Session = Depends(get_db_provider("schmitz")),
-    env: str = Query("prod", description="Entorno: test o prod")
+    env: str = Query("prod", description="Entorno: test o prod"),
+    authorized: bool = Depends(verify_api_key)
 ):
     """
     Endpoint receptor para webhooks de Schmitz Cargobull.
