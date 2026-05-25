@@ -61,8 +61,8 @@ def map_schmitz_payload(payload: Dict[str, Any]) -> RCCanonicalModel:
     ignition = sensor_status.get("IsIgnitionOn")
     
     odometer = ebs.get("Milage") or get_safe(position, ["GPSMilage", "Value"])
-    
-    temperature = temp.get("Temp1") or get_safe(reefer_comp1, ["ReturnAirTemp", "Value"])
+    # Priorizar lectura de temperatura de puerta ("DoorTemp")
+    temperature = temp.get("DoorTemp") or get_safe(payload, ["DoorTemp"])
     
     serial_number = str(payload.get("CtuId")) if payload.get("CtuId") is not None else None
     shipment = str(payload.get("ExternalOrderReference")) if payload.get("ExternalOrderReference") is not None else None
