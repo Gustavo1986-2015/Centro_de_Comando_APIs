@@ -11,6 +11,13 @@ El sistema ha sido diseñado para escalar a más de 15 proveedores simultáneos 
 - **Seguridad Perimetral (Toggle Switch):** Los Webhooks receptores cuentan con validación de "API Keys" mediante cabeceras HTTP, las cuales pueden activarse/desactivarse en caliente desde el archivo `.env` para facilitar pruebas.
 - **Auditoría Dinámica:** Cada payload crudo recibido se guarda instantáneamente en un `.jsonl` rotativo por proveedor, actuando como la "caja negra" del sistema.
 
+### 🛠️ Tecnologías Clave Utilizadas
+- **Python 3.12+** / **FastAPI**: Backend de altísimo rendimiento asíncrono.
+- **Zeep**: Cliente SOAP industrial para integración con Recurso Confiable con validación estricta de WSDL.
+- **SQLAlchemy (SQLite Múltiple)**: Gestión concurrente de bases de datos locales sin cuellos de botella.
+- **Uvicorn**: Servidor ASGI en producción.
+- **HTML5/Vanilla CSS/JS**: Frontend puro sin frameworks pesados, con diseño "Dark Glassmorphism".
+
 ## 🎛️ Dashboard y Panel de Administración
 El servidor incluye una interfaz web interactiva (Vanilla JS, CSS Premium, sin frameworks pesados) para la gestión visual del Hub.
 
