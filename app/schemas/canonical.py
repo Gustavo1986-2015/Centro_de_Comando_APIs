@@ -1,6 +1,7 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from typing import Optional
 from datetime import datetime
+import re
 
 class RCCanonicalModel(BaseModel):
     """
@@ -8,6 +9,18 @@ class RCCanonicalModel(BaseModel):
     Todos los adaptadores de proveedores deben mapear a este esquema.
     """
     chassis_number: str = Field(..., description="ChassisNumber o Plate")
+
+    @field_validator('chassis_number', mode='before')
+    @classmethod
+    def sanitize_asset(cls, v: str) -> str:
+        """
+        Garantiza que el asset enviado a RC siempre esté en MAYÚSCULAS
+        y no contenga guiones, espacios ni caracteres especiales.
+        Ej: 'AB-1234' -> 'AB1234'
+        """
+        if not v:
+            return v
+        return re.sub(r'[^A-Z0-9]', '', str(v).upper())
     latitude: Optional[float] = Field(None, description="Latitud")
     longitude: Optional[float] = Field(None, description="Longitud")
     speed: Optional[float] = Field(None, description="Velocidad")
