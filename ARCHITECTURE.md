@@ -55,10 +55,19 @@ El archivo `.env` en la raíz del proyecto (basado en la plantilla `.env.example
 
 Dependiendo de la arquitectura de la API, las credenciales se manejan distinto:
 
-### APIs PULL (CronJobs)
-Cuando el Hub debe ir a buscar datos proactivamente (Ej. Samsara, Geotab), requerimos almacenar **Tokens de Salida**.
+### APIs PULL (Polling a proveedores externos)
+Para conectarse a los sistemas legacy de la industria (Ej. Recurso Confiable), el `Worker` asíncrono utiliza librerías industriales y de alto rendimiento.
+
+**El caso de Recurso Confiable (SOAP):**
+En lugar de ensamblar strings de XML manualmente (propenso a fallas críticas de deserialización), el Hub utiliza **Zeep** (`zeep.Client`) delegado a hilos nativos (`asyncio.to_thread`).
+1. **Autenticación en tiempo real:** Se invoca `GetUserToken` contra el WSDL productivo y se mantiene el token en memoria.
+2. **Armado determinista:** Al invocar `GPSAssetTracking`, Zeep lee dinámicamente las reglas (WSDL) del proveedor y arma un *SOAP Envelope* criptográficamente perfecto.
+3. **Parseo inteligente:** Extrae nativamente el `idJob` (Acuse de recibo) directamente desde los objetos complejos que devuelve el servidor SOAP, garantizando total trazabilidad.
+
+**APIs REST genéricas (Ej. Samsara, Geotab):**
+Se utiliza la librería asíncrona `httpx`.
 - **Ejemplo en `.env`:** `SAMSARA_API_TOKEN=xxx`
-- **Uso:** El `Worker` asíncrono lee esta variable y arma las cabeceras (Headers) de la petición GET saliente.
+- **Uso:** El `Worker` lee esta variable y arma las cabeceras (Headers) de la petición GET saliente.
 
 ### APIs PUSH (Webhooks) y el Toggle Switch (Seguridad Activable)
 Cuando los proveedores nos envían datos a nuestra URL (Ej. Schmitz), debemos blindar nuestros endpoints para que no cualquiera nos inyecte basura. 

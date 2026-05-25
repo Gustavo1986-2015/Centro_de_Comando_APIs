@@ -139,6 +139,7 @@ async def get_stats():
     return {
         "pending": total_pending,
         "sent": total_sent,
+        "failed": total_failed,
         "recent": recent_list
     }
 
