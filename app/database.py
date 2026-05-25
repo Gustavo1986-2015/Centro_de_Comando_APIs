@@ -8,12 +8,18 @@ Base = declarative_base()
 _engines = {}
 _sessions = {}
 
+def get_db_url(provider: str, env: str) -> str:
+    """Retorna la URL de conexión de SQLite según proveedor y entorno."""
+    os.makedirs("./db", exist_ok=True)
+    if provider == "system_config":
+        return "sqlite:///./db/telematics_hub.db"
+    return f"sqlite:///./db/{provider}_{env}.db"
+
 def get_engine(provider: str, env: str = "prod"):
     """Devuelve (y crea si no existe) el motor SQLite para el proveedor y entorno dados."""
     key = f"{provider}_{env}"
     if key not in _engines:
-        os.makedirs("db", exist_ok=True)
-        url = f"sqlite:///./db/{key}.db"
+        url = get_db_url(provider, env)
         engine = create_engine(url, connect_args={"check_same_thread": False})
         
         # Crear tablas
