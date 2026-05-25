@@ -57,9 +57,8 @@ class RCSOAPClient:
         token = self._get_token_sync()
         client = self._get_zeep_client()
         
-        # Recurso Confiable asume Hora de México (UTC-6) si no entiende UTC
-        # Restamos 6 horas a la fecha UTC para asegurar que no caiga "en el futuro"
-        rc_date = (event.date - timedelta(hours=6)) if event.date else (datetime.now() - timedelta(hours=6))
+        # Recurso Confiable asume UTC puro siempre, según documentación
+        rc_date = event.date if event.date else datetime.now()
         
         # Mapeo a diccionario plano soportado por Zeep
         event_dict = {
