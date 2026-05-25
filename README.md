@@ -1,56 +1,52 @@
-# Hub de Integración Telemática y Centro de Comando
+# Centro de Comando APIs | Assistcargo
 
-Microservicio on-premise desarrollado con FastAPI, SQLite y Vanilla JS que actúa como un hub centralizador de eventos telemáticos.
+Hub Telemático corporativo para recibir, parsear y encolar eventos GPS provenientes de APIs de terceros (Push), transformándolos en un Modelo Canónico y enviándolos asíncronamente a Recurso Confiable.
 
-## Características Principales
-*   **Recepción de Webhooks**: Endpoint asíncrono para recibir eventos (inicialmente Schmitz Cargobull v1.35).
-*   **Mapeo y Normalización**: Transformación de payloads crudos a un modelo canónico centralizado (RC Canonical Model).
-*   **Auditoría Dinámica**: Almacenamiento rotativo en archivos `.jsonl` separados por proveedor.
-*   **Persistencia y Encolamiento**: Base de datos SQLite para mantener estado de los eventos recibidos y su estado de procesamiento.
-*   **Cliente SOAP (Próximamente)**: Worker en background para la comunicación con Recurso Confiable.
-*   **Dashboard Reactivo (Próximamente)**: Interfaz de Centro de Comando en tiempo real.
+## 🚀 Arquitectura del Sistema
+El sistema ha sido diseñado para escalar a más de 15 proveedores simultáneos con cero pérdida de rendimiento, empleando un diseño moderno y seguro.
 
-## Tecnologías Utilizadas
-*   Python 3
-*   FastAPI
-*   SQLAlchemy
-*   SQLite
-*   HTTPX
-*   Pydantic
+- **Multi-Base de Datos (SQLite Aisaldo):** Cada proveedor y entorno genera su propio archivo de base de datos dinámico (`schmitz_prod.db`, `schmitz_test.db`). Esto previene bloqueos por concurrencia y mantiene los datos de pruebas separados de producción.
+- **Worker Concurrente (`asyncio.gather`):** El procesamiento en segundo plano no lee los proveedores uno a uno. Lee todas las bases de datos simultáneamente en paralelo, maximizando el rendimiento (Real-time data stream).
+- **Modelo Canónico (Pydantic):** Validación estricta. Todo lo que ingresa de un externo se transforma a un formato estándar de Assistcargo antes de viajar a Recurso Confiable.
+- **Auditoría Dinámica:** Cada payload crudo recibido se guarda instantáneamente en un `.jsonl` rotativo por proveedor, actuando como la "caja negra" del sistema.
 
-## Despliegue en Windows (Producción)
+## 🎛️ Dashboard y Panel de Administración
+El servidor incluye una interfaz web interactiva (Vanilla JS, CSS Premium, sin frameworks pesados) para la gestión visual del Hub.
 
-Para instalar el Hub como un servicio de Windows que arranque automáticamente en segundo plano (24/7) y sobreviva a reinicios, usaremos **NSSM** (Non-Sucking Service Manager).
+- **Dashboard Principal:** Métricas en tiempo real (Pendientes, Enviados, Fallidos) y streaming de la última actividad global.
+- **Configuración Global:** Panel visual para activar/desactivar el procesamiento de cada proveedor, establecer credenciales de RC y ajustar los intervalos de purga. Modifica dinámicamente el archivo `system_config_global.db`.
+- **Logs de Auditoría:** Pantalla para inspeccionar en vivo los JSONs crudos que están ingresando al sistema.
+- **Simulador de Webhooks:** Herramienta interna para inyectar payloads de prueba. Permite copiar/pegar un JSON real de un proveedor (ej. Schmitz) y dispararlo directamente al entorno de `TEST` para validar el comportamiento del sistema sin ensuciar producción.
 
-### 1. Instalar el Servicio (NSSM)
-1. Descarga [NSSM](http://nssm.cc/download).
-2. Abre la consola de Windows (CMD o PowerShell) como Administrador.
-3. Navega a la carpeta de NSSM y ejecuta:
-   ```cmd
-   nssm install HubTelematico
+## 💻 Ejecución en Desarrollo (Local)
+1. Instalar dependencias:
+   ```bash
+   pip install fastapi uvicorn sqlalchemy pydantic zeep
    ```
-4. Se abrirá una interfaz gráfica. Configura lo siguiente:
-   * **Path**: La ruta absoluta a tu ejecutable de Python (ej. `C:\Ruta\A\python.exe` o de tu entorno virtual).
-   * **Arguments**: `-m uvicorn main:app --host 0.0.0.0 --port 8000`
-   * **Details > Display name**: `Centro de Comando APIs (Hub Telemático)`
-   * **Details > Description**: `Microservicio backend de integración GPS para Assistcargo`
-   * **Details > Startup type**: `Automatic`
-5. Haz clic en "Install service".
-
-Para iniciarlo manualmente por primera vez:
-```cmd
-nssm start HubTelematico
-```
-
-### 2. Crear el Lanzador de Escritorio (.exe)
-Hemos provisto un script `launcher.py` que abre automáticamente el navegador apuntando al Dashboard. Para convertirlo en un icono clickeable `.exe`:
-
-1. Instala PyInstaller:
-   ```cmd
-   pip install pyinstaller
+2. Ejecutar el servidor web (con recarga automática):
+   ```bash
+   uvicorn main:app --port 8000 --reload
    ```
-2. Compila el ejecutable sin ventana de consola (`--noconsole`) y en un solo archivo (`--onefile`):
+3. Abrir el panel de control: [http://localhost:8000/dashboard](http://localhost:8000/dashboard)
+
+## 🌐 Despliegue en Producción (Servidor Windows / AWS)
+*Esta sección detalla cómo mantener el sistema vivo 24/7 sin consolas abiertas.*
+
+Dado que la aplicación web necesita que el motor de Python esté siempre encendido, se recomienda utilizar **NSSM (Non-Sucking Service Manager)** para encapsular el comando de inicio dentro de un Servicio Nativo de Windows.
+
+1. Descarga NSSM (http://nssm.cc/).
+2. En la terminal del servidor AWS ejecuta:
    ```cmd
-   pyinstaller --onefile --noconsole --name "Centro_Comando_Assistcargo" launcher.py
+   nssm install CentroComandoAPIs
    ```
-3. Encontrarás tu `.exe` dentro de la carpeta `dist/`. ¡Puedes crear un acceso directo de ese archivo en tu escritorio!
+3. En la ventana que aparece:
+   - **Path:** Ruta al ejecutable de Python (ej. `C:\Python310\python.exe`)
+   - **Arguments:** `-m uvicorn main:app --host 0.0.0.0 --port 8000`
+   - **Directory:** Ruta a este proyecto (ej. `C:\Users\Administrador\Desktop\Centro_de_Comando_APIs`)
+4. Inicia el servicio desde el Administrador de Servicios de Windows (services.msc) o con `nssm start CentroComandoAPIs`.
+
+A partir de ese momento, el Hub Telemático arrancará automáticamente con Windows de manera invisible y silenciosa.
+
+---
+**Desarrollado por el Área de Integraciones GPS Assistcargo**
+*Gustavo Gómez & Roberto Herrera ®*

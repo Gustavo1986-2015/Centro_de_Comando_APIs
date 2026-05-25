@@ -354,6 +354,7 @@
         <ul>
             <li id="tab-dashboard" class="active-tab" onclick="switchView('dashboard')">Dashboard Principal</li>
             <li id="tab-config" onclick="switchView('config')">Configuración Global</li>
+            <li id="tab-simulator" onclick="switchView('simulator')">Simulador de Webhooks</li>
             <li id="tab-logs" onclick="switchView('logs')">Logs de Auditoría Dinámica</li>
         </ul>
     </nav>
@@ -456,6 +457,42 @@
         </div>
     </main>
 
+    <!-- VISTA SIMULADOR -->
+    <main id="view-simulator" style="display: none;">
+        <div class="recent-section">
+            <h2>Simulador de Webhooks (Entorno de Pruebas)</h2>
+            <div style="background: rgba(16, 185, 129, 0.1); border-left: 4px solid var(--color-green-vibrant); padding: 1rem; margin-bottom: 1.5rem; border-radius: 4px; font-size: 0.9rem; color: #E5E7EB;">
+                <strong>¿Cómo funciona esto?</strong><br>
+                Esta herramienta permite simular el comportamiento de una API de terceros (como Schmitz) inyectando datos directamente a tu sistema. 
+                <ul>
+                    <li style="margin-top: 0.5rem;">Copia un archivo JSON real de los "Demo Payloads" y pégalo en la caja de abajo.</li>
+                    <li>Por seguridad, los eventos disparados aquí se envían automáticamente al entorno <strong>TEST</strong> para no contaminar la base de datos productiva.</li>
+                    <li>Revisa la vista de <em>Logs de Auditoría</em> y el <em>Dashboard Principal</em> para ver el impacto en tiempo real.</li>
+                </ul>
+            </div>
+            
+            <div class="form-group" style="max-width: 400px;">
+                <label title="Selecciona a qué proveedor pertenece el JSON que vas a simular">Proveedor (API)</label>
+                <select id="sim-provider" class="form-control" style="background-color: var(--color-black); cursor: pointer;">
+                    <!-- Se carga dinamicamente -->
+                </select>
+            </div>
+            
+            <div class="form-group" style="max-width: 400px;">
+                <label title="El entorno está forzado a TEST por seguridad.">Entorno</label>
+                <input type="text" class="form-control" value="TEST (Modo Seguro)" disabled style="opacity: 0.7;">
+            </div>
+
+            <div class="form-group">
+                <label title="Pega aquí el contenido del archivo .json que deseas simular">Payload JSON (Raw Data)</label>
+                <textarea id="sim-payload" class="form-control" rows="12" placeholder='{\n  "ejemplo": "pega tu JSON aquí"\n}' style="font-family: monospace; font-size: 0.85rem; resize: vertical;"></textarea>
+            </div>
+
+            <button class="btn-save" onclick="sendSimulation()" title="Disparar la petición contra tu servidor como si fueras el proveedor externo">🚀 Disparar Webhook</button>
+            <div id="sim-result" style="margin-top: 1rem; font-weight: 600;"></div>
+        </div>
+    </main>
+
     <footer style="text-align: center; padding: 1.5rem; border-top: 1px solid var(--card-border); color: var(--color-gray); font-size: 0.85rem; font-weight: 300;">
         Desarrollado por Area de Integraciones GPS Assistcargo | Gustavo Gómez & Roberto Herrera &reg;
     </footer>
@@ -468,10 +505,12 @@
         function switchView(view) {
             document.getElementById('view-dashboard').style.display = view === 'dashboard' ? 'flex' : 'none';
             document.getElementById('view-config').style.display = view === 'config' ? 'flex' : 'none';
+            document.getElementById('view-simulator').style.display = view === 'simulator' ? 'flex' : 'none';
             document.getElementById('view-logs').style.display = view === 'logs' ? 'flex' : 'none';
             
             document.getElementById('tab-dashboard').classList.toggle('active-tab', view === 'dashboard');
             document.getElementById('tab-config').classList.toggle('active-tab', view === 'config');
+            document.getElementById('tab-simulator').classList.toggle('active-tab', view === 'simulator');
             document.getElementById('tab-logs').classList.toggle('active-tab', view === 'logs');
             
             toggleMenu(); // Cierra el menú al elegir
@@ -480,6 +519,8 @@
             
             if (view === 'config') {
                 loadConfig();
+            } else if (view === 'simulator') {
+                loadSimulator();
             } else if (view === 'logs') {
                 loadLogs();
             } else {
@@ -621,6 +662,82 @@
                 });
             } catch(e) {
                 console.error("Error cargando logs", e);
+            }
+        }
+
+        // Simulador
+        async function loadSimulator() {
+            try {
+                // Traer proveedores unicos
+                const res = await fetch('/api/config');
+                const configs = await res.json();
+                const providerSelect = document.getElementById('sim-provider');
+                providerSelect.innerHTML = '';
+                
+                const uniqueProviders = [...new Set(configs.map(c => c.provider_name.toLowerCase()))];
+                
+                if (uniqueProviders.length === 0) {
+                    providerSelect.innerHTML = '<option value="">(No hay proveedores configurados)</option>';
+                } else {
+                    uniqueProviders.forEach(p => {
+                        const opt = document.createElement('option');
+                        opt.value = p;
+                        opt.textContent = p.toUpperCase();
+                        providerSelect.appendChild(opt);
+                    });
+                }
+                
+                document.getElementById('sim-result').textContent = '';
+            } catch(e) {
+                console.error("Error cargando opciones del simulador", e);
+            }
+        }
+
+        async function sendSimulation() {
+            const provider = document.getElementById('sim-provider').value;
+            const payloadStr = document.getElementById('sim-payload').value;
+            const resultDiv = document.getElementById('sim-result');
+            
+            if (!provider) {
+                alert("Debes seleccionar un proveedor.");
+                return;
+            }
+            if (!payloadStr.trim()) {
+                alert("Debes pegar un JSON válido en la caja.");
+                return;
+            }
+
+            // Validar que sea JSON valido
+            let jsonPayload;
+            try {
+                jsonPayload = JSON.parse(payloadStr);
+            } catch (e) {
+                alert("El texto ingresado NO es un JSON válido. Revisa los corchetes y comillas.");
+                return;
+            }
+
+            resultDiv.style.color = "var(--color-gray)";
+            resultDiv.textContent = "Disparando...";
+
+            try {
+                // Pegar directo al webhook con env=test
+                const res = await fetch(`/${provider}/webhook?env=test`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(jsonPayload)
+                });
+                
+                if (res.ok) {
+                    resultDiv.style.color = "var(--color-green-bright)";
+                    resultDiv.textContent = "¡Éxito! El webhook devolvió estado " + res.status + ". Ve al Dashboard Principal o a Logs para verificar.";
+                } else {
+                    resultDiv.style.color = "#EF4444";
+                    resultDiv.textContent = "Error: El webhook devolvió estado " + res.status;
+                }
+            } catch (error) {
+                resultDiv.style.color = "#EF4444";
+                resultDiv.textContent = "Fallo de conexión al enviar el simulacro.";
+                console.error(error);
             }
         }
 
