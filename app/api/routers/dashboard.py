@@ -101,7 +101,15 @@ async def get_stats():
             "speed": getattr(ev, 'speed', 0),
             "coords": f"{ev.latitude}, {ev.longitude}" if getattr(ev, 'latitude') and ev.latitude else "Sin GPS",
             "ignition": "ON" if getattr(ev, 'ignition') else "OFF",
-            "code": getattr(ev, 'code', "N/A")
+            "code": getattr(ev, 'code', "N/A"),
+            "course": getattr(ev, 'course', None),
+            "altitude": getattr(ev, 'altitude', None),
+            "temperature": getattr(ev, 'temperature', None),
+            "battery": getattr(ev, 'battery', None),
+            "odometer": getattr(ev, 'odometer', None),
+            "humidity": getattr(ev, 'humidity', None),
+            "shipment": getattr(ev, 'shipment', None),
+            "serial": getattr(ev, 'serial_number', None)
         })
 
     return {
