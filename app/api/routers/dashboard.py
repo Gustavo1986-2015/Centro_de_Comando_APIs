@@ -95,11 +95,13 @@ async def get_stats():
         recent_list.append({
             "chassis": ev.chassis_number,
             "status": ev.status,
-            "time": ev.updated_at.strftime("%H:%M:%S") if ev.updated_at else "N/A",
-            "provider": ev.provider_name.upper() if hasattr(ev, 'provider_name') else "N/A",
-            "env": ev.env.upper() if hasattr(ev, 'env') else "N/A",
-            "speed": ev.speed if hasattr(ev, 'speed') else 0,
-            "coords": f"{ev.latitude}, {ev.longitude}" if hasattr(ev, 'latitude') and ev.latitude else "Sin GPS"
+            "time": ev.updated_at.strftime("%H:%M:%S") + " (UTC)" if ev.updated_at else "N/A",
+            "provider": getattr(ev, 'provider_name', "N/A").upper(),
+            "env": getattr(ev, 'env', "N/A").upper(),
+            "speed": getattr(ev, 'speed', 0),
+            "coords": f"{ev.latitude}, {ev.longitude}" if getattr(ev, 'latitude') and ev.latitude else "Sin GPS",
+            "ignition": "ON" if getattr(ev, 'ignition') else "OFF",
+            "code": getattr(ev, 'code', "N/A")
         })
 
     return {

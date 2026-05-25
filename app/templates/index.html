@@ -134,6 +134,10 @@
             background: linear-gradient(90deg, var(--color-green-vibrant), var(--color-green-bright));
         }
 
+        .card.pending-card::before {
+            background: #F59E0B;
+        }
+
         .card.failed::before {
             background: #EF4444;
         }
@@ -371,7 +375,7 @@
     <!-- VISTA DASHBOARD -->
     <main id="view-dashboard">
         <div class="stats-grid">
-            <div class="card" title="Eventos recibidos en la cola local que aún no han sido transmitidos a Recurso Confiable.">
+            <div class="card pending-card" title="Eventos recibidos en la cola local que aún no han sido transmitidos a Recurso Confiable.">
                 <div class="card-title">En Cola (Pendientes)</div>
                 <div class="card-value" id="val-pending">0</div>
             </div>
@@ -395,6 +399,7 @@
                             <th>Chasis / Patente</th>
                             <th>Estado</th>
                             <th>Velocidad / Coords</th>
+                            <th>Ign. / Código</th>
                             <th>Hora (Actualización)</th>
                         </tr>
                     </thead>
@@ -579,6 +584,7 @@
                     <td>${item.chassis || 'Desconocido'}</td>
                     <td><span class="badge ${item.status}">${item.status.toUpperCase()}</span></td>
                     <td style="font-size: 0.85rem; color: var(--color-gray)">${item.speed !== null ? item.speed : 0} km/h<br>${item.coords || ''}</td>
+                    <td style="font-size: 0.85rem; color: var(--color-gray)">Ign: <span style="color:var(--color-white)">${item.ignition}</span><br>Cod: <span style="color:var(--color-white)">${item.code}</span></td>
                     <td>${item.time}</td>
                 `;
                 tbody.appendChild(tr);
@@ -593,22 +599,39 @@
                 const tbody = document.getElementById('config-table-body');
                 tbody.innerHTML = '';
 
+                // Agrupar por proveedor
+                const grouped = {};
                 currentConfigs.forEach((c, idx) => {
-                    const tr = document.createElement('tr');
-                    tr.innerHTML = `
-                        <td style="font-weight:bold; color:var(--color-white)">${c.provider_name}</td>
-                        <td><span class="badge ${c.env === 'PROD' ? 'sent' : 'pending'}">${c.env}</span></td>
-                        <td>
-                            <label class="switch">
-                                <input type="checkbox" id="active_${idx}" ${c.is_active ? 'checked' : ''}>
-                                <span class="slider"></span>
-                            </label>
-                        </td>
-                        <td><input class="form-control" type="text" id="user_${idx}" value="${c.rc_user}"></td>
-                        <td><input class="form-control" type="password" id="pass_${idx}" value="${c.rc_password}"></td>
-                        <td><input class="form-control" type="number" id="purge_${idx}" value="${c.purge_interval_min}" style="width: 80px;"></td>
-                    `;
-                    tbody.appendChild(tr);
+                    c._originalIdx = idx; // Guardar id original para guardar datos después
+                    if(!grouped[c.provider_name]) grouped[c.provider_name] = [];
+                    grouped[c.provider_name].push(c);
+                });
+
+                Object.keys(grouped).forEach(provider => {
+                    const envs = grouped[provider];
+                    envs.forEach((c, i) => {
+                        const tr = document.createElement('tr');
+                        
+                        let providerCell = '';
+                        if (i === 0) {
+                            providerCell = `<td rowspan="${envs.length}" style="font-weight:bold; color:var(--color-white); vertical-align: middle;">${c.provider_name}</td>`;
+                        }
+
+                        tr.innerHTML = `
+                            ${providerCell}
+                            <td><span class="badge ${c.env === 'PROD' ? 'sent' : 'pending'}">${c.env}</span></td>
+                            <td>
+                                <label class="switch">
+                                    <input type="checkbox" id="active_${c._originalIdx}" ${c.is_active ? 'checked' : ''}>
+                                    <span class="slider"></span>
+                                </label>
+                            </td>
+                            <td><input class="form-control" type="text" id="user_${c._originalIdx}" value="${c.rc_user}"></td>
+                            <td><input class="form-control" type="password" id="pass_${c._originalIdx}" value="${c.rc_password}"></td>
+                            <td><input class="form-control" type="number" id="purge_${c._originalIdx}" value="${c.purge_interval_min}" style="width: 80px;"></td>
+                        `;
+                        tbody.appendChild(tr);
+                    });
                 });
             } catch(e) {
                 console.error("Error al cargar config", e);
@@ -654,13 +677,23 @@
                     return;
                 }
 
-                logs.forEach(log => {
+                logs.forEach((log, idx) => {
                     const tr = document.createElement('tr');
                     const payloadStr = JSON.stringify(log.payload, null, 2);
+                    // Botón de descarga Base64/URI
+                    const encodedPayload = encodeURIComponent(payloadStr);
+                    const cleanDate = log.timestamp.replace(/[:.T-]/g, '');
+                    
                     tr.innerHTML = `
-                        <td style="white-space: nowrap; font-size: 0.85rem">${log.timestamp.replace('T', ' ')}</td>
+                        <td style="white-space: nowrap; font-size: 0.85rem">${log.timestamp.replace('T', ' ')} (UTC)</td>
                         <td><span class="badge pending">${log.provider.toUpperCase()}</span></td>
-                        <td><pre style="background: rgba(0,0,0,0.5); padding: 10px; border-radius: 6px; font-size: 0.75rem; color: var(--color-green-bright); max-height: 100px; overflow-y: auto; margin:0;">${payloadStr}</pre></td>
+                        <td>
+                            <div style="display:flex; justify-content:space-between; margin-bottom: 5px;">
+                                <span style="color:var(--color-gray); font-size:0.8rem;">JSON Raw Data</span>
+                                <a href="data:text/json;charset=utf-8,${encodedPayload}" download="payload_${log.provider}_${cleanDate}.json" style="color: var(--color-green-bright); text-decoration: none; font-size: 0.8rem; border: 1px solid var(--color-green-bright); padding: 2px 8px; border-radius: 4px; transition: all 0.2s;">📥 Descargar JSON</a>
+                            </div>
+                            <pre style="background: rgba(0,0,0,0.5); padding: 10px; border-radius: 6px; font-size: 0.75rem; color: var(--color-green-bright); max-height: 100px; overflow-y: auto; margin:0;">${payloadStr}</pre>
+                        </td>
                     `;
                     tbody.appendChild(tr);
                 });
