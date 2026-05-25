@@ -60,17 +60,17 @@ class RCSOAPClient:
         # Recurso Confiable asume UTC puro siempre, según documentación
         rc_date = event.date if event.date else datetime.now()
         
-        # Mapeo estricto soportado por Zeep usando tipos nativos de Python
+        # Mapeo estricto soportado por Zeep usando tipos nativos y strings puros
         event_dict = {
             'asset': event.chassis_number or "",
             'code': event.code or "1",
             'customer': {'id': '', 'name': ''},
-            'date': rc_date, # Zeep lo formatea a xsd:dateTime automáticamente
+            'date': rc_date.strftime("%Y-%m-%dT%H:%M:%S"),
             'direction': str(event.course) if event.course is not None else "0",
-            'ignition': bool(event.ignition),
-            'latitude': float(event.latitude) if event.latitude is not None else 0.0,
-            'longitude': float(event.longitude) if event.longitude is not None else 0.0,
-            'speed': int(event.speed) if event.speed is not None else 0,
+            'ignition': "true" if event.ignition else "false",
+            'latitude': str(event.latitude) if event.latitude is not None else "0",
+            'longitude': str(event.longitude) if event.longitude is not None else "0",
+            'speed': str(event.speed) if event.speed is not None else "0",
         }
         
         if event.altitude is not None:
@@ -88,8 +88,9 @@ class RCSOAPClient:
         if event.shipment:
             event_dict['shipment'] = str(event.shipment)
         
-        # Enviar
-        res = client.service.GPSAssetTracking(token, [event_dict])
+        
+        # Enviar (Zeep requiere mapear explícitamente el array a la llave 'Event' del esquema XML)
+        res = client.service.GPSAssetTracking(token, {'Event': [event_dict]})
         return res
 
     async def send_event(self, event: RCCanonicalModel):
