@@ -57,6 +57,10 @@ class RCSOAPClient:
         token = self._get_token_sync()
         client = self._get_zeep_client()
         
+        # Recurso Confiable asume Hora de México (UTC-6) si no entiende UTC
+        # Restamos 6 horas a la fecha UTC para asegurar que no caiga "en el futuro"
+        rc_date = (event.date - timedelta(hours=6)) if event.date else (datetime.now() - timedelta(hours=6))
+        
         # Mapeo a diccionario plano soportado por Zeep
         event_dict = {
             'altitude': str(event.altitude) if event.altitude is not None else "0",
@@ -65,7 +69,7 @@ class RCSOAPClient:
             'code': event.code or "1",
             'course': str(event.course) if event.course is not None else "0",
             'customer': {'id': '', 'name': ''},
-            'date': event.date.strftime("%Y-%m-%dT%H:%M:%SZ") if event.date else datetime.now().strftime("%Y-%m-%dT%H:%M:%SZ"),
+            'date': rc_date.strftime("%Y-%m-%dT%H:%M:%S"),
             'direction': str(event.course) if event.course is not None else "0",
             'humidity': str(event.humidity) if event.humidity is not None else "0",
             'ignition': "true" if event.ignition else "false",
