@@ -8,6 +8,7 @@ El sistema ha sido diseñado para escalar a más de 15 proveedores simultáneos 
 - **Multi-Base de Datos (SQLite Aisaldo):** Cada proveedor y entorno genera su propio archivo de base de datos dinámico (`schmitz_prod.db`, `schmitz_test.db`). Esto previene bloqueos por concurrencia y mantiene los datos de pruebas separados de producción.
 - **Worker Concurrente (`asyncio.gather`):** El procesamiento en segundo plano no lee los proveedores uno a uno. Lee todas las bases de datos simultáneamente en paralelo, maximizando el rendimiento (Real-time data stream).
 - **Modelo Canónico (Pydantic):** Validación estricta. Todo lo que ingresa de un externo se transforma a un formato estándar de Assistcargo antes de viajar a Recurso Confiable.
+- **Seguridad Perimetral (Toggle Switch):** Los Webhooks receptores cuentan con validación de "API Keys" mediante cabeceras HTTP, las cuales pueden activarse/desactivarse en caliente desde el archivo `.env` para facilitar pruebas.
 - **Auditoría Dinámica:** Cada payload crudo recibido se guarda instantáneamente en un `.jsonl` rotativo por proveedor, actuando como la "caja negra" del sistema.
 
 ## 🎛️ Dashboard y Panel de Administración

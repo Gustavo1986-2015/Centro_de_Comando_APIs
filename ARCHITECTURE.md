@@ -60,17 +60,20 @@ Cuando el Hub debe ir a buscar datos proactivamente (Ej. Samsara, Geotab), reque
 - **Ejemplo en `.env`:** `SAMSARA_API_TOKEN=xxx`
 - **Uso:** El `Worker` asíncrono lee esta variable y arma las cabeceras (Headers) de la petición GET saliente.
 
-### APIs PUSH (Webhooks)
-Cuando los proveedores nos envían datos a nuestra URL (Ej. Schmitz), debemos blindar nuestros endpoints para que no cualquiera nos inyecte basura.
-Existen dos métodos estándar en la industria para asegurar estos endpoints:
+### APIs PUSH (Webhooks) y el Toggle Switch (Seguridad Activable)
+Cuando los proveedores nos envían datos a nuestra URL (Ej. Schmitz), debemos blindar nuestros endpoints para que no cualquiera nos inyecte basura. 
 
-1. **API Keys (El método simple):**
-   - **Ejemplo en `.env`:** `SCHMITZ_INBOUND_SECRET=Schmitz_2026_UltraSecreta`
-   - **Mecánica:** Acuerdas con el proveedor que en cada petición HTTP adjunten un Header (ej. `x-api-key: Schmitz_2026_UltraSecreta`). En `router.py`, rechazas cualquier petición que no traiga ese Header exacto.
+Para facilitar las pruebas, todos los Webhooks en esta arquitectura nacen con un **"Interruptor de Seguridad" (Toggle Switch)** en el archivo `.env`.
 
-2. **Firmas HMAC (El método bancario/criptográfico):**
-   - **Ejemplo en `.env`:** `GENERIC_WEBHOOK_SECRET=clave_para_validar_firmas`
-   - **Mecánica:** Algunos proveedores de alto nivel no envían la clave por internet. En su lugar, usan la clave secreta para "licuar" (hashear mediante SHA-256) el JSON que te van a enviar, generando una "Firma" alfanumérica única (Ej. `x-signature: a8f4b...`). Cuando tu Hub recibe el JSON, usa la misma clave local para intentar generar la firma; si ambas firmas coinciden, significa que nadie alteró el JSON en el camino y el proveedor es auténtico.
+**Mecánica (El estándar del Hub):**
+1. En `.env` definimos el interruptor y la clave:
+   - `REQUIRE_SCHMITZ_AUTH=False`
+   - `SCHMITZ_API_KEY=Schmitz_2026_UltraSecreta`
+2. En `router.py` (ej. `app/providers/schmitz/router.py`) inyectamos la dependencia `Depends(verify_api_key)`.
+3. Si el interruptor está en `False`, el endpoint es público (ideal para inyectar datos falsos y testear rápido).
+4. Si el interruptor se pasa a `True`, el endpoint exige que el proveedor envíe la cabecera `x-api-key: Schmitz_2026_UltraSecreta`. De lo contrario, devuelve un `401 Unauthorized`.
+
+> **Escalabilidad:** Esta misma dupla de variables (`REQUIRE_NUEVO_AUTH` y `NUEVO_API_KEY`) se debe replicar en el `.env` para cada futuro proveedor PUSH que agreguemos (Ej. Carrier, Trackimo, etc.), garantizando que la seguridad se maneja centralizadamente.
 
 ---
 
