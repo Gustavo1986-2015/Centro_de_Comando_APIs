@@ -33,7 +33,6 @@
             flex-direction: column;
         }
 
-        /* Top Bar */
         header {
             background-color: var(--color-black);
             padding: 1rem 2rem;
@@ -41,7 +40,8 @@
             grid-template-columns: 1fr auto 1fr;
             align-items: center;
             border-bottom: 1px solid var(--card-border);
-            position: relative;
+            position: sticky;
+            top: 0;
             z-index: 100;
         }
 
@@ -176,11 +176,25 @@
 
         .table-container {
             overflow-x: auto;
+            overflow-y: auto;
+            max-height: 450px;
         }
 
         table {
             width: 100%;
             border-collapse: collapse;
+        }
+
+        th {
+            color: var(--color-gray);
+            font-weight: 600;
+            font-size: 0.85rem;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            position: sticky;
+            top: 0;
+            background-color: var(--card-bg);
+            z-index: 10;
         }
 
         th, td {
@@ -495,7 +509,10 @@
                 <textarea id="sim-payload" class="form-control" rows="22" placeholder='{\n  "ejemplo": "pega tu JSON aquí"\n}' style="font-family: monospace; font-size: 0.85rem; resize: vertical; width: 100%;"></textarea>
             </div>
 
-            <button class="btn-save" onclick="sendSimulation()" title="Disparar la petición contra tu servidor como si fueras el proveedor externo">🚀 Disparar Webhook</button>
+            <div style="display: flex; gap: 1rem; align-items: center;">
+                <button class="btn-save" onclick="sendSimulation()" title="Disparar la petición contra tu servidor como si fueras el proveedor externo">🚀 Disparar Webhook</button>
+                <button class="btn-save" style="background: rgba(255,255,255,0.1); color: var(--color-white);" onclick="document.getElementById('sim-payload').value=''" title="Limpiar la caja de texto">🧹 Limpiar JSON</button>
+            </div>
             <div id="sim-result" style="margin-top: 1rem; font-weight: 600;"></div>
         </div>
     </main>
