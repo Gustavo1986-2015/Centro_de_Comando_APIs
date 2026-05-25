@@ -582,6 +582,7 @@
                 
                 // Formatear Localización
                 let locHtml = `<div style="font-size:0.8rem; color:var(--color-gray); line-height: 1.4;">`;
+                locHtml += `<div>Fecha GPS: <span style="color:var(--color-white); font-weight:bold;">${item.device_date}</span></div>`;
                 locHtml += `<div>Coords: <span style="color:var(--color-white)">${item.coords}</span></div>`;
                 locHtml += `<div>Vel: <span style="color:var(--color-white)">${item.speed !== null ? item.speed : 0} km/h</span> | Rumbo: <span style="color:var(--color-white)">${item.course !== null ? item.course + '°' : '-'}</span></div>`;
                 locHtml += `<div>Alt: <span style="color:var(--color-white)">${item.altitude !== null ? item.altitude + 'm' : '-'}</span></div>`;

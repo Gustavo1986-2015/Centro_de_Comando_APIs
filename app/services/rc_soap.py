@@ -65,7 +65,7 @@ class RCSOAPClient:
             'code': event.code or "1",
             'course': str(event.course) if event.course is not None else "0",
             'customer': {'id': '', 'name': ''},
-            'date': event.date if event.date else datetime.now(),
+            'date': event.date.strftime("%Y-%m-%dT%H:%M:%SZ") if event.date else datetime.now().strftime("%Y-%m-%dT%H:%M:%SZ"),
             'direction': str(event.course) if event.course is not None else "0",
             'humidity': str(event.humidity) if event.humidity is not None else "0",
             'ignition': "true" if event.ignition else "false",

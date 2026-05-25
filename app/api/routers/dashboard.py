@@ -98,6 +98,7 @@ async def get_stats():
             "time": ev.updated_at.strftime("%H:%M:%S") + " (UTC)" if ev.updated_at else "N/A",
             "provider": getattr(ev, 'provider_name', "N/A").upper(),
             "env": getattr(ev, 'env', "N/A").upper(),
+            "device_date": ev.date.strftime("%Y-%m-%d %H:%M:%S") + " (UTC)" if getattr(ev, 'date') and ev.date else "N/A",
             "speed": getattr(ev, 'speed', 0),
             "coords": f"{ev.latitude}, {ev.longitude}" if getattr(ev, 'latitude') and ev.latitude else "Sin GPS",
             "ignition": "ON" if getattr(ev, 'ignition') else "OFF",
