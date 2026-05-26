@@ -2,83 +2,70 @@ import requests
 import time
 import random
 import datetime
+import json
+import os
+import glob
 
 # Placas de prueba solicitadas
-PLACAS = ["RHR577", "GDG848", "JMC1234"]
-
-# Coordenadas base (Buenos Aires)
-BASE_LAT = -34.603722
-BASE_LON = -58.381592
+PLACAS = ["A1A123", "GDG848", "XX0001"]
 
 WEBHOOK_URL = "http://localhost:8000/webhook/schmitz"
 
+# Ruta a los payloads reales de prueba de Schmitz
+DEMO_PAYLOADS_DIR = r"C:\Users\gustavogomez\Downloads\Quickstart_RESTPushAPI_v_1_35_v01_eng\Demo_Payloads"
+
+# Cargar todos los archivos JSON de los subdirectorios
+payload_files = glob.glob(os.path.join(DEMO_PAYLOADS_DIR, "**", "*.json"), recursive=True)
+
+if not payload_files:
+    print(f"Error: No se encontraron archivos JSON en {DEMO_PAYLOADS_DIR}")
+    exit(1)
+
+def update_datetime_recursive(obj, current_time_str):
+    """Busca cualquier campo de fecha/hora y lo actualiza a la hora actual."""
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            # Actualizar cualquier campo que parezca ser de tiempo
+            if k in ["ReceiveTime", "DeviceTime", "GPSDateTime", "DateTime"] and isinstance(v, str):
+                obj[k] = current_time_str
+            else:
+                update_datetime_recursive(v, current_time_str)
+    elif isinstance(obj, list):
+        for item in obj:
+            update_datetime_recursive(item, current_time_str)
+
 def generar_evento(placa):
-    # Generar tiempos actuales
+    # Elegir un payload real al azar
+    json_path = random.choice(payload_files)
+    
+    with open(json_path, "r", encoding="utf-8") as f:
+        payload = json.load(f)
+        
+    # Reemplazar la patente para nuestras pruebas
+    if "ChassisNumber" in payload:
+        payload["ChassisNumber"] = placa
+    if "Plate" in payload:
+        payload["Plate"] = placa
+        
+    # Reemplazar todos los tiempos por la hora actual UTC
     ahora_utc = datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%S.0000000Z")
+    update_datetime_recursive(payload, ahora_utc)
     
-    # Mover levemente las coordenadas para simular movimiento
-    lat = BASE_LAT + random.uniform(-0.05, 0.05)
-    lon = BASE_LON + random.uniform(-0.05, 0.05)
+    # Extraer de qué tipo fue el payload base para mostrarlo en consola
+    tipo_evento = payload.get("Reason", {}).get("ItemElementName", "Desconocido")
+    archivo_base = os.path.basename(json_path)
     
-    # Simular otros datos
-    velocidad = random.randint(40, 100)
-    bateria = random.randint(12, 14)
-    rumbo = random.choice([0, 90, 180, 270])
-    ignicion = random.choice([True, False])
+    return payload, tipo_evento, archivo_base
 
-    payload = {
-      "ChassisNumber": placa,
-      "CtuId": 12345678,
-      "Plate": placa,
-      "ReceiveTime": ahora_utc,
-      "DeviceTime": ahora_utc,
-      "StatusData": [
-        {
-          "Position": {
-            "GPSDateTime": ahora_utc,
-            "DateTime": ahora_utc,
-            "Latitude": round(lat, 6),
-            "Longitude": round(lon, 6),
-            "GPSHeading": str(rumbo),
-            "GPSMilage": {
-              "exists": True,
-              "Value": random.randint(50000, 150000)
-            },
-            "Location": {
-              "City": "Buenos Aires"
-            },
-            "Altitude": random.randint(0, 500)
-          },
-          "SensorStatus": {
-            "DateTime": ahora_utc,
-            "IsIgnitionOn": ignicion,
-            "Battery": {
-              "ExternalPowerSupplyVoltage": bateria
-            }
-          },
-          "EBS": {
-            "DateTime": ahora_utc,
-            "Velocity": str(velocidad),
-            "Milage": random.randint(50000, 150000)
-          }
-        }
-      ],
-      "Reason": {
-        "Item": True,
-        "ItemElementName": "0"
-      }
-    }
-    
-    return payload
-
-print("=== INICIANDO SIMULADOR EN VIVO (SCHMITZ) ===")
+print(f"=== INICIANDO SIMULADOR AVANZADO EN VIVO ===")
+print(f"Se encontraron {len(payload_files)} payloads reales de Schmitz.")
 print("Presiona Ctrl+C para detener.")
 
 while True:
     placa = random.choice(PLACAS)
-    evento = generar_evento(placa)
+    evento, tipo_evento, archivo = generar_evento(placa)
     
-    print(f"\n[{datetime.datetime.now().strftime('%H:%M:%S')}] Enviando patente {placa}...")
+    print(f"\n[{datetime.datetime.now().strftime('%H:%M:%S')}] Enviando {placa} | Archivo base: {archivo} | Tipo Alarma/Razón: {tipo_evento}")
     
     try:
         response = requests.post(WEBHOOK_URL, json=evento)
