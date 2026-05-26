@@ -100,7 +100,10 @@ async def get_stats(
         finally:
             db.close()
 
-    # Ordenar los recientes de todas las BDs y quedarnos con los 50 últimos absolutos
+    # Importación diferida para evitar importaciones circulares
+    from app.worker.processor import RETRIES_CACHE
+
+    # Ordenar los recientes de todas las BDs y quedarnos con los 200 últimos absolutos
     recent_events_global.sort(key=lambda x: x.updated_at or x.created_at, reverse=True)
     recent_events_global = recent_events_global[:200]
 
@@ -115,7 +118,19 @@ async def get_stats(
             total_latency_seconds += latency_sec
             latency_samples += 1
             
+        # Determinar reintentos en memoria
+        event_key = f"{getattr(ev, 'provider_name', '').lower()}_{getattr(ev, 'env', '').lower()}_{ev.id}"
+        retry_count = 0
+        next_retry_in_sec = 0
+        if event_key in RETRIES_CACHE:
+            entry = RETRIES_CACHE[event_key]
+            retry_count = entry.get("count", 0)
+            next_retry_at = entry.get("next_retry_at")
+            if next_retry_at:
+                next_retry_in_sec = max(0, int((next_retry_at - datetime.now()).total_seconds()))
+            
         recent_list.append({
+            "id": ev.id,
             "chassis": ev.chassis_number,
             "status": ev.status,
             "time": ev.updated_at.strftime("%Y-%m-%d %H:%M:%S (UTC)") if ev.updated_at else ev.created_at.strftime("%Y-%m-%d %H:%M:%S (UTC)"),
@@ -139,6 +154,8 @@ async def get_stats(
             "shipment": getattr(ev, 'shipment', None),
             "serial": getattr(ev, 'serial_number', None),
             "job_id": getattr(ev, 'job_id', None),
+            "retry_count": retry_count,
+            "next_retry_in_sec": next_retry_in_sec,
             
             # Exportación estructurada idéntica a Recurso Confiable
             "rc_format": {
@@ -170,6 +187,7 @@ async def get_stats(
         "pending": total_pending,
         "sent": total_sent,
         "failed": total_failed,
+        "retries": len(RETRIES_CACHE),
         "avg_latency_sec": avg_latency,
         "recent": recent_list
     }
