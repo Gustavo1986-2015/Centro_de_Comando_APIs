@@ -541,6 +541,7 @@
         let currentStatusFilter = 'all';
         let currentProviderFilter = 'all';
         let allRecentEvents = [];
+        let expandedRows = new Set();
         
         function setFilterStatus(status) {
             currentStatusFilter = status;
@@ -693,12 +694,14 @@
                 // Exportador JSON (Usa formato exacto de RC)
                 const jsonPayload = encodeURIComponent(JSON.stringify(ev.rc_format, null, 2));
                 const safeTime = ev.time.replace(/[: ()]/g, '');
+                const uniqueId = `${ev.chassis}_${safeTime}`;
+                const isExpanded = expandedRows.has(uniqueId);
                 
                 opHtml += `<div style="margin-top: 8px; display: flex; gap: 5px;">`;
-                opHtml += `<button onclick="toggleRaw(this)" style="background:rgba(255,255,255,0.1); border:1px solid var(--color-gray); color:var(--color-white); border-radius:4px; font-size:0.7rem; cursor:pointer; padding:2px 5px;" title="Ver Payload enviado a RC">👁️ Ver JSON</button>`;
+                opHtml += `<button onclick="toggleRaw(this, '${uniqueId}')" style="background:rgba(255,255,255,0.1); border:1px solid var(--color-gray); color:var(--color-white); border-radius:4px; font-size:0.7rem; cursor:pointer; padding:2px 5px;" title="Ver Payload enviado a RC">${isExpanded ? '👁️ Ocultar JSON' : '👁️ Ver JSON'}</button>`;
                 opHtml += `<a href="data:text/json;charset=utf-8,${jsonPayload}" download="evento_RC_${ev.chassis}_${safeTime}.json" style="color: var(--color-green-bright); text-decoration: none; font-size: 0.7rem; border: 1px solid var(--color-green-bright); padding: 2px 6px; border-radius: 4px; display: inline-block; transition: all 0.2s;" title="Descargar Payload formato RC">📥 Bajar JSON</a>`;
                 opHtml += `</div>`;
-                opHtml += `<div class="raw-data-row" style="display:none; margin-top:5px;">${rawHtml}</div>`;
+                opHtml += `<div class="raw-data-row" style="display:${isExpanded ? 'block' : 'none'}; margin-top:5px;">${rawHtml}</div>`;
                 opHtml += `</div>`;
                 
                 let statusHtml = `<span class="badge ${statusClass}">${statusText.toUpperCase()}</span><br>`;
@@ -722,14 +725,16 @@
         }
         
         // UI Helpers
-        function toggleRaw(btn) {
+        function toggleRaw(btn, uniqueId) {
             const row = btn.parentElement.nextElementSibling;
             if(row.style.display === 'none') {
                 row.style.display = 'block';
                 btn.innerText = '👁️ Ocultar JSON';
+                expandedRows.add(uniqueId);
             } else {
                 row.style.display = 'none';
                 btn.innerText = '👁️ Ver JSON';
+                expandedRows.delete(uniqueId);
             }
         }
 
