@@ -22,6 +22,7 @@ class ConfigUpdate(BaseModel):
     rc_user: str
     rc_password: str
     purge_interval_min: int
+    run_interval_sec: int
 
 @router.get("/dashboard", response_class=HTMLResponse)
 async def get_dashboard(request: Request):
@@ -193,7 +194,8 @@ async def get_all_configs():
             "is_active": c.is_active,
             "rc_user": c.rc_user,
             "rc_password": c.rc_password,
-            "purge_interval_min": c.purge_interval_min
+            "purge_interval_min": c.purge_interval_min,
+            "run_interval_sec": c.run_interval_sec
         } for c in configs]
     finally:
         db.close()
@@ -209,6 +211,7 @@ async def update_configs(updates: List[ConfigUpdate]):
                 conf.rc_user = u.rc_user
                 conf.rc_password = u.rc_password
                 conf.purge_interval_min = u.purge_interval_min
+                conf.run_interval_sec = u.run_interval_sec
         db.commit()
         return {"status": "ok"}
     finally:

@@ -10,6 +10,7 @@ __pycache__/
 *.so
 
 # Bases de Datos locales
+db/
 *.db
 *.sqlite3
 
