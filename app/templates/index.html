@@ -389,22 +389,31 @@
     <!-- VISTA DASHBOARD -->
     <main id="view-dashboard">
         <div class="stats-grid">
-            <div class="card pending-card" title="Eventos recibidos en la cola local que aún no han sido transmitidos a Recurso Confiable.">
+            <div class="card pending-card" style="cursor: pointer; transition: transform 0.2s;" onclick="setFilterStatus('pending')" onmouseover="this.style.transform='scale(1.02)'" onmouseout="this.style.transform='scale(1)'" title="Clic para filtrar pendientes">
                 <div class="card-title">En Cola (Pendientes)</div>
                 <div class="card-value" id="val-pending">0</div>
             </div>
-            <div class="card" title="Cantidad de eventos de todos los proveedores que fueron enviados exitosamente a Recurso Confiable durante el día de hoy.">
+            <div class="card" style="cursor: pointer; transition: transform 0.2s;" onclick="setFilterStatus('sent')" onmouseover="this.style.transform='scale(1.02)'" onmouseout="this.style.transform='scale(1)'" title="Clic para filtrar enviados">
                 <div class="card-title">Enviados (Hoy)</div>
                 <div class="card-value" id="val-sent">0</div>
             </div>
-            <div class="card failed" title="Cantidad de eventos que presentaron algún error técnico al intentar enviarse a Recurso Confiable hoy.">
+            <div class="card failed" style="cursor: pointer; transition: transform 0.2s;" onclick="setFilterStatus('failed')" onmouseover="this.style.transform='scale(1.02)'" onmouseout="this.style.transform='scale(1)'" title="Clic para filtrar fallidos">
                 <div class="card-title">Fallidos (Hoy)</div>
                 <div class="card-value" id="val-failed">0</div>
             </div>
         </div>
 
         <div class="recent-section">
-            <h2>Última Actividad Global</h2>
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+                <h2>Última Actividad Global <span id="current-filter-label" style="font-size: 0.9rem; font-weight: normal; color: var(--color-yellow); margin-left: 10px;"></span></h2>
+                <div style="display: flex; gap: 1rem; align-items: center;">
+                    <span style="color: var(--color-gray); font-size: 0.9rem;">Filtros:</span>
+                    <select id="filter-provider" onchange="setFilterProvider(this.value)" style="background: var(--color-gray-dark); color: white; border: 1px solid var(--color-gray); border-radius: 4px; padding: 4px 8px; cursor: pointer;">
+                        <option value="all">Todas las APIs</option>
+                    </select>
+                    <button class="btn-save" onclick="resetFilters()" style="background: rgba(255,255,255,0.1); color: white; padding: 4px 8px;">Quitar Filtros</button>
+                </div>
+            </div>
             <div class="table-container">
                 <table>
                     <thead>
@@ -588,57 +597,84 @@
             }
         }
 
-        function updateTable(recentItems) {
+        function renderRecentTable() {
             const tbody = document.getElementById('recent-table-body');
             tbody.innerHTML = '';
             
-            if (recentItems.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="3" style="text-align:center; color: var(--color-gray)">No hay actividad reciente.</td></tr>';
+            let filtered = allRecentEvents;
+            
+            if (currentStatusFilter !== 'all') {
+                filtered = filtered.filter(ev => ev.status === currentStatusFilter);
+            }
+            if (currentProviderFilter !== 'all') {
+                filtered = filtered.filter(ev => ev.provider.toLowerCase() === currentProviderFilter);
+            }
+            
+            let labelText = "";
+            if (currentStatusFilter !== 'all' || currentProviderFilter !== 'all') {
+                labelText = `(Filtrado: ${currentStatusFilter !== 'all' ? currentStatusFilter.toUpperCase() : ''} ${currentProviderFilter !== 'all' ? currentProviderFilter.toUpperCase() : ''})`;
+            }
+            document.getElementById('current-filter-label').innerText = labelText;
+
+            if (filtered.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="6" style="text-align:center; color: var(--color-gray)">No hay eventos con estos filtros.</td></tr>';
                 return;
             }
 
-            recentItems.forEach(item => {
+            filtered.forEach(ev => {
                 const tr = document.createElement('tr');
                 
-                // Formatear Localización
+                let statusClass = 'pending';
+                let statusText = 'En Cola';
+                if (ev.status === 'sent') { statusClass = 'sent'; statusText = 'Enviado'; }
+                if (ev.status === 'failed') { statusClass = 'failed'; statusText = 'Error'; }
+
+                let badgeClass = 'pending';
+                if (ev.env.toLowerCase() === 'prod') badgeClass = 'sent';
+                if (ev.env.toLowerCase() === 'test') badgeClass = 'pending';
+
+                let rawHtml = `<pre style="font-size:0.7rem; background:rgba(0,0,0,0.5); padding:10px; border-radius:4px; max-height:150px; overflow-y:auto; color:var(--color-green-bright); margin-top:5px; white-space:pre-wrap;">${JSON.stringify(ev.rc_format, null, 2)}</pre>`;
+
                 let locHtml = `<div style="font-size:0.8rem; color:var(--color-gray); line-height: 1.4;">`;
-                locHtml += `<div>Fecha GPS: <span style="color:var(--color-white); font-weight:bold;">${item.device_date}</span></div>`;
-                locHtml += `<div>Coords: <span style="color:var(--color-white)">${item.coords}</span></div>`;
-                locHtml += `<div>Vel: <span style="color:var(--color-white)">${item.speed !== null ? item.speed : 0} km/h</span> | Rumbo: <span style="color:var(--color-white)">${item.course !== null ? item.course + '°' : '-'}</span></div>`;
-                locHtml += `<div>Alt: <span style="color:var(--color-white)">${item.altitude !== null ? item.altitude + 'm' : '-'}</span></div>`;
+                locHtml += `<div>Fecha GPS: <span style="color:var(--color-white); font-weight:bold;">${ev.device_date}</span></div>`;
+                locHtml += `<div>Coords: <span style="color:var(--color-white)">${ev.coords}</span></div>`;
+                locHtml += `<div>Dir: <span style="color:var(--color-white)">${ev.course !== null ? ev.course + '°' : 'N/A'}</span> | Alt: <span style="color:var(--color-white)">${ev.altitude !== null ? ev.altitude + 'm' : 'N/A'}</span></div>`;
                 locHtml += `</div>`;
 
-                // Formatear Telemetría
-                let telHtml = `<div style="font-size:0.8rem; color:var(--color-gray); line-height: 1.4;">`;
-                telHtml += `<div>Ignición: <span style="color:var(--color-white)">${item.ignition}</span></div>`;
-                telHtml += `<div>Temp: <span style="color:var(--color-white)">${item.temperature !== null ? item.temperature + '°C' : '-'}</span> | Bat: <span style="color:var(--color-white)">${item.battery !== null ? item.battery + 'V' : '-'}</span></div>`;
-                telHtml += `<div>Odom: <span style="color:var(--color-white)">${item.odometer !== null ? item.odometer + 'km' : '-'}</span> | Hum: <span style="color:var(--color-white)">${item.humidity !== null ? item.humidity + '%' : '-'}</span></div>`;
-                telHtml += `</div>`;
+                let sensorHtml = `<div style="font-size:0.8rem; color:var(--color-gray); line-height: 1.4;">`;
+                sensorHtml += `<div>Velocidad: <span style="color:var(--color-white)">${ev.speed} km/h</span></div>`;
+                sensorHtml += `<div>Ignición: <span style="${ev.ignition==='ON'?'color:var(--color-green-bright); font-weight:bold;':'color:var(--color-red)'}">${ev.ignition}</span></div>`;
+                sensorHtml += `<div>Batería: <span style="color:var(--color-white)">${ev.battery !== null ? ev.battery + '%' : 'N/A'}</span> | Temp: <span style="color:var(--color-white)">${ev.temperature !== null ? ev.temperature + '°' : 'N/A'}</span></div>`;
+                sensorHtml += `</div>`;
 
-                // Formatear Operativa y Botón de Descarga
                 let opHtml = `<div style="font-size:0.8rem; color:var(--color-gray); line-height: 1.4;">`;
-                opHtml += `<div>Cod Alarma: <span style="color:var(--color-white)">${item.code || '-'}</span></div>`;
-                opHtml += `<div>Carga: <span style="color:var(--color-white)">${item.shipment || '-'}</span> | Serial: <span style="color:var(--color-white)">${item.serial || '-'}</span></div>`;
+                opHtml += `<div>Job ID: <span style="color:var(--color-green-bright); font-weight:bold;">${ev.job_id || 'N/A'}</span></div>`;
+                opHtml += `<div>Código EV: <span style="color:var(--color-yellow)">${ev.code}</span></div>`;
+                opHtml += `<div>Odom: <span style="color:var(--color-white)">${ev.odometer !== null ? ev.odometer : 'N/A'}</span></div>`;
                 
                 // Exportador JSON (Usa formato exacto de RC)
-                const jsonPayload = encodeURIComponent(JSON.stringify(item.rc_format, null, 2));
-                const safeTime = item.time.replace(/[: ()]/g, '');
-                opHtml += `<div style="margin-top: 6px;"><a href="data:text/json;charset=utf-8,${jsonPayload}" download="evento_RC_${item.chassis}_${safeTime}.json" style="color: var(--color-green-bright); text-decoration: none; font-size: 0.75rem; border: 1px solid var(--color-green-bright); padding: 2px 6px; border-radius: 4px; display: inline-block; transition: all 0.2s;" title="Descargar Payload formato RC">📥 JSON RC</a></div>`;
+                const jsonPayload = encodeURIComponent(JSON.stringify(ev.rc_format, null, 2));
+                const safeTime = ev.time.replace(/[: ()]/g, '');
+                opHtml += `<div style="margin-top: 6px;"><a href="data:text/json;charset=utf-8,${jsonPayload}" download="evento_RC_${ev.chassis}_${safeTime}.json" style="color: var(--color-green-bright); text-decoration: none; font-size: 0.75rem; border: 1px solid var(--color-green-bright); padding: 2px 6px; border-radius: 4px; display: inline-block; transition: all 0.2s;" title="Descargar Payload formato RC">📥 JSON RC</a></div>`;
                 opHtml += `</div>`;
-
-                let statusHtml = `<span class="badge ${item.status}">${item.status.toUpperCase()}</span><br>`;
-                statusHtml += `<span style="font-size:0.75rem; color:var(--color-gray); display:inline-block; margin-top:4px;">${item.time}</span>`;
-                if(item.job_id) {
-                    statusHtml += `<br><span style="font-size:0.65rem; color:var(--color-blue); display:inline-block; margin-top:4px;" title="Recurso Confiable Job ID">ID: ${item.job_id}</span>`;
-                }
-
+                
+                let statusHtml = `<span class="badge ${statusClass}">${statusText.toUpperCase()}</span><br>`;
+                statusHtml += `<span style="font-size:0.75rem; color:var(--color-gray); display:inline-block; margin-top:4px;">${ev.time}</span>`;
+                
                 tr.innerHTML = `
-                    <td style="font-weight: bold; white-space: nowrap;">${item.provider} <span style="font-size: 0.7em; color: var(--color-gray)">(${item.env})</span></td>
-                    <td style="font-weight: bold; color:var(--color-green-bright); white-space: nowrap;">${item.chassis || 'Desconocido'}</td>
+                    <td>
+                        <span style="font-weight:bold; color:var(--color-white)">${ev.provider.toUpperCase()}</span><br>
+                        <span class="badge ${badgeClass}" style="margin-top:5px">${ev.env.toUpperCase()}</span>
+                    </td>
+                    <td>
+                        <span style="color:var(--color-yellow); font-weight:bold;">${ev.chassis}</span><br>
+                        <button onclick="toggleRaw(this)" style="margin-top:5px; background:none; border:1px solid var(--color-gray); color:var(--color-white); border-radius:4px; font-size:0.7rem; cursor:pointer; padding:2px 5px;">Ver JSON RC</button>
+                        <div class="raw-data-row" style="display:none; margin-top:10px;">${rawHtml}</div>
+                    </td>
                     <td style="white-space: nowrap;">${statusHtml}</td>
-                    <td style="white-space: nowrap;">${locHtml}</td>
-                    <td style="white-space: nowrap;">${telHtml}</td>
-                    <td style="white-space: nowrap;">${opHtml}</td>
+                    <td>${locHtml}</td>
+                    <td>${sensorHtml}</td>
+                    <td>${opHtml}</td>
                 `;
                 tbody.appendChild(tr);
             });
