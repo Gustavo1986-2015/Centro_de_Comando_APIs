@@ -576,7 +576,22 @@
                 updateValue('val-sent', data.sent);
                 updateValue('val-failed', data.failed);
 
-                updateTable(data.recent);
+                allRecentEvents = data.recent;
+                
+                // Populate provider dropdown dynamically
+                const dropdown = document.getElementById('filter-provider');
+                const existingOptions = Array.from(dropdown.options).map(o => o.value);
+                const uniqueProviders = [...new Set(data.recent.map(e => e.provider.toLowerCase()))];
+                uniqueProviders.forEach(p => {
+                    if (!existingOptions.includes(p)) {
+                        const opt = document.createElement('option');
+                        opt.value = p;
+                        opt.innerText = p.toUpperCase();
+                        dropdown.appendChild(opt);
+                    }
+                });
+
+                renderRecentTable();
 
                 document.getElementById('sync-status').textContent = 'Conectado y Escuchando';
                 document.querySelector('.pulse').style.backgroundColor = 'var(--color-green-bright)';
