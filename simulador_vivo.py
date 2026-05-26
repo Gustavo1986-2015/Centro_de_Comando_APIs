@@ -5,6 +5,7 @@ import datetime
 import json
 import os
 import glob
+from concurrent.futures import ThreadPoolExecutor
 
 # MODO ESTRÉS MASIVO
 # Si es True, inyectará 25 patentes ficticias al azar cada 2 segundos.
@@ -71,30 +72,42 @@ print(f"Se encontraron {len(payload_files)} payloads reales de Schmitz.")
 print(f"Modo Estrés: {'ACTIVADO (2 seg)' if MODO_ESTRES else 'DESACTIVADO (30 seg)'}")
 print("Presiona Ctrl+C para detener.")
 
+def enviar_evento_worker(placa):
+    evento, tipo_evento, archivo = generar_evento(placa)
+    try:
+        response = requests.post(WEBHOOK_URL, json=evento, timeout=5)
+        if response.status_code in [200, 202]:
+            return True, None
+        return False, f"HTTP {response.status_code}: {response.text}"
+    except Exception as e:
+        return False, str(e)
+
 while True:
     if MODO_ESTRES:
-        print(f"\n[{datetime.datetime.now().strftime('%H:%M:%S')}] Iniciando ráfaga de estrés: inyectando {len(PLACAS)} vehículos...")
+        print(f"\n[{datetime.datetime.now().strftime('%H:%M:%S')}] Iniciando ráfaga de estrés concurrente: inyectando {len(PLACAS)} vehículos...")
+        
+        start_time = time.time()
         exitos = 0
         errores = 0
-        for placa in PLACAS:
-            evento, tipo_evento, archivo = generar_evento(placa)
-            try:
-                response = requests.post(WEBHOOK_URL, json=evento)
-                if response.status_code == 200 or response.status_code == 202:
-                    exitos += 1
-                else:
-                    errores += 1
-                    print(f" -> ERROR {placa}: HTTP {response.status_code}. Respuesta: {response.text}")
-            except Exception as e:
+        
+        # Enviar las peticiones HTTP en paralelo utilizando 25 hilos
+        with ThreadPoolExecutor(max_workers=len(PLACAS)) as executor:
+            resultados = list(executor.map(enviar_evento_worker, PLACAS))
+            
+        for success, err in resultados:
+            if success:
+                exitos += 1
+            else:
                 errores += 1
-                print(f" -> ERROR de conexión en {placa}: {str(e)}")
-        print(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] Ráfaga completada. Éxitos: {exitos} | Errores: {errores}. Esperando {SEGUNDOS_ESPERA} segundos...")
+                
+        elapsed = time.time() - start_time
+        print(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] Ráfaga completada en {elapsed:.2f} segundos. Éxitos: {exitos} | Errores: {errores}. Esperando {SEGUNDOS_ESPERA} segundos...")
     else:
         placa = random.choice(PLACAS)
         evento, tipo_evento, archivo = generar_evento(placa)
         print(f"\n[{datetime.datetime.now().strftime('%H:%M:%S')}] Enviando {placa} | Archivo base: {archivo} | Tipo Alarma: {tipo_evento}")
         try:
-            response = requests.post(WEBHOOK_URL, json=evento)
+            response = requests.post(WEBHOOK_URL, json=evento, timeout=5)
             if response.status_code in [200, 202]:
                 print(f" -> ÉXITO. Respuesta: {response.text}")
             else:
