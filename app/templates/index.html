@@ -423,7 +423,7 @@
                             <th style="white-space: nowrap;">Estado & Hora</th>
                             <th style="white-space: nowrap;">Localización</th>
                             <th style="white-space: nowrap;">Sensores (Telemetría)</th>
-                            <th style="white-space: nowrap;">Operativa</th>
+                            <th style="white-space: nowrap;">HUB RC</th>
                         </tr>
                     </thead>
                     <tbody id="recent-table-body">
@@ -682,17 +682,22 @@
                 sensorHtml += `<div>Velocidad: <span style="color:var(--color-white)">${ev.speed} km/h</span></div>`;
                 sensorHtml += `<div>Ignición: <span style="${ev.ignition==='ON'?'color:var(--color-green-bright); font-weight:bold;':'color:var(--color-red)'}">${ev.ignition}</span></div>`;
                 sensorHtml += `<div>Batería: <span style="color:var(--color-white)">${ev.battery !== null ? ev.battery + '%' : 'N/A'}</span> | Temp: <span style="color:var(--color-white)">${ev.temperature !== null ? ev.temperature + '°' : 'N/A'}</span></div>`;
+                sensorHtml += `<div>Odom: <span style="color:var(--color-white)">${ev.odometer !== null ? ev.odometer : 'N/A'}</span> | Código EV: <span style="color:var(--color-yellow)">${ev.code}</span></div>`;
                 sensorHtml += `</div>`;
 
                 let opHtml = `<div style="font-size:0.8rem; color:var(--color-gray); line-height: 1.4;">`;
                 opHtml += `<div>Job ID: <span style="color:var(--color-green-bright); font-weight:bold;">${ev.job_id || 'N/A'}</span></div>`;
-                opHtml += `<div>Código EV: <span style="color:var(--color-yellow)">${ev.code}</span></div>`;
-                opHtml += `<div>Odom: <span style="color:var(--color-white)">${ev.odometer !== null ? ev.odometer : 'N/A'}</span></div>`;
+                opHtml += `<div>Procesado: <span style="color:var(--color-white)">${ev.time}</span></div>`;
                 
                 // Exportador JSON (Usa formato exacto de RC)
                 const jsonPayload = encodeURIComponent(JSON.stringify(ev.rc_format, null, 2));
                 const safeTime = ev.time.replace(/[: ()]/g, '');
-                opHtml += `<div style="margin-top: 6px;"><a href="data:text/json;charset=utf-8,${jsonPayload}" download="evento_RC_${ev.chassis}_${safeTime}.json" style="color: var(--color-green-bright); text-decoration: none; font-size: 0.75rem; border: 1px solid var(--color-green-bright); padding: 2px 6px; border-radius: 4px; display: inline-block; transition: all 0.2s;" title="Descargar Payload formato RC">📥 JSON RC</a></div>`;
+                
+                opHtml += `<div style="margin-top: 8px; display: flex; gap: 5px;">`;
+                opHtml += `<button onclick="toggleRaw(this)" style="background:rgba(255,255,255,0.1); border:1px solid var(--color-gray); color:var(--color-white); border-radius:4px; font-size:0.7rem; cursor:pointer; padding:2px 5px;" title="Ver Payload enviado a RC">👁️ Ver JSON</button>`;
+                opHtml += `<a href="data:text/json;charset=utf-8,${jsonPayload}" download="evento_RC_${ev.chassis}_${safeTime}.json" style="color: var(--color-green-bright); text-decoration: none; font-size: 0.7rem; border: 1px solid var(--color-green-bright); padding: 2px 6px; border-radius: 4px; display: inline-block; transition: all 0.2s;" title="Descargar Payload formato RC">📥 Bajar JSON</a>`;
+                opHtml += `</div>`;
+                opHtml += `<div class="raw-data-row" style="display:none; margin-top:5px;">${rawHtml}</div>`;
                 opHtml += `</div>`;
                 
                 let statusHtml = `<span class="badge ${statusClass}">${statusText.toUpperCase()}</span><br>`;
@@ -704,9 +709,7 @@
                         <span class="badge ${badgeClass}" style="margin-top:5px">${ev.env.toUpperCase()}</span>
                     </td>
                     <td>
-                        <span style="color:var(--color-yellow); font-weight:bold;">${ev.chassis}</span><br>
-                        <button onclick="toggleRaw(this)" style="margin-top:5px; background:none; border:1px solid var(--color-gray); color:var(--color-white); border-radius:4px; font-size:0.7rem; cursor:pointer; padding:2px 5px;">Ver JSON RC</button>
-                        <div class="raw-data-row" style="display:none; margin-top:10px;">${rawHtml}</div>
+                        <span style="color:var(--color-yellow); font-weight:bold;">${ev.chassis}</span>
                     </td>
                     <td style="white-space: nowrap;">${statusHtml}</td>
                     <td>${locHtml}</td>
