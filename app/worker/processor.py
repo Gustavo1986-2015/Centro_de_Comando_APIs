@@ -24,53 +24,58 @@ def get_active_providers():
         db.close()
 
 async def process_provider_events(provider: str, env: str):
-    """Procesa pendientes de un único proveedor y entorno."""
+    """Procesa pendientes de un único proveedor y entorno en lotes (batching)."""
     db: Session = get_session(provider, env)
     try:
         pendings = db.query(NormalizedRCEvent).filter(NormalizedRCEvent.status == "pending").limit(50).all()
         
         if not pendings:
             return
-
+            
+        canonical_events = []
         for db_event in pendings:
+            canonical_event = RCCanonicalModel(
+                chassis_number=db_event.chassis_number,
+                latitude=db_event.latitude,
+                longitude=db_event.longitude,
+                speed=db_event.speed,
+                code=db_event.code,
+                date=db_event.date.replace(tzinfo=timezone.utc) if db_event.date else None,
+                altitude=db_event.altitude,
+                battery=db_event.battery,
+                course=db_event.course,
+                humidity=db_event.humidity,
+                ignition=db_event.ignition,
+                odometer=db_event.odometer,
+                temperature=db_event.temperature,
+                serial_number=db_event.serial_number,
+                shipment=db_event.shipment,
+                vehicle_type=db_event.vehicle_type,
+                vehicle_brand=db_event.vehicle_brand,
+                vehicle_model=db_event.vehicle_model
+            )
+            canonical_events.append(canonical_event)
+            
+        # Despachar lote completo a RC
+        logger.info(f"Enviando lote de {len(canonical_events)} eventos a RC para {provider}_{env}")
+        results = await rc_client.send_events_batch(canonical_events)
+        
+        # Mapear los resultados posicionalmente
+        for idx, db_event in enumerate(pendings):
             try:
-                canonical_event = RCCanonicalModel(
-                    chassis_number=db_event.chassis_number,
-                    latitude=db_event.latitude,
-                    longitude=db_event.longitude,
-                    speed=db_event.speed,
-                    code=db_event.code,
-                    date=db_event.date.replace(tzinfo=timezone.utc) if db_event.date else None,
-                    altitude=db_event.altitude,
-                    battery=db_event.battery,
-                    course=db_event.course,
-                    humidity=db_event.humidity,
-                    ignition=db_event.ignition,
-                    odometer=db_event.odometer,
-                    temperature=db_event.temperature,
-                    serial_number=db_event.serial_number,
-                    shipment=db_event.shipment,
-                    vehicle_type=db_event.vehicle_type,
-                    vehicle_brand=db_event.vehicle_brand,
-                    vehicle_model=db_event.vehicle_model
-                )
-
-                # Si es test, podríamos NO enviar a RC realmente, o enviarlo a un endpoint de test
-                # Por ahora, usamos el comportamiento normal
-                success, job_id, rc_response = await rc_client.send_event(canonical_event)
+                success, job_id, rc_response = results[idx] if idx < len(results) else (False, f"rc_err_missing_{int(datetime.now().timestamp())}", "No response mapping for event")
                 
                 db_event.rc_response = rc_response
                 db_event.job_id = job_id
-
+                
                 if success:
                     db_event.status = "sent"
                 else:
                     db_event.status = "failed"
-                    
-            except Exception as e:
-                logger.error(f"Error procesando evento {db_event.id} en {provider}_{env}: {str(e)}")
+            except Exception as inner_e:
+                logger.error(f"Error al guardar resultado de evento individual {db_event.id}: {str(inner_e)}")
                 db_event.status = "failed"
-
+                
         db.commit()
 
     except Exception as e:

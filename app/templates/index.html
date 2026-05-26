@@ -14,6 +14,9 @@
             --color-green-vibrant: #10B981;
             --color-white: #FFFFFF;
             --color-gray: #8F95B2;
+            --color-yellow: #FBBF24;
+            --color-orange: #F97316;
+            --color-red: #EF4444;
             --card-bg: rgba(255, 255, 255, 0.03);
             --card-border: rgba(255, 255, 255, 0.08);
         }
@@ -401,7 +404,7 @@
                 <div class="card-title">Fallidos (Hoy)</div>
                 <div class="card-value" id="val-failed">0</div>
             </div>
-            <div class="card" style="border-top: 4px solid #3b82f6;" title="Tiempo promedio entre que nuestro Hub recibe el dato y lo envía a Recurso Confiable (en segundos)">
+            <div class="card" style="border-top: 4px solid #3b82f6;" title="Tiempo promedio entre que nuestro Hub recibe el dato (incluyendo la transformación interna) y lo despacha exitosamente a Recurso Confiable (en segundos)">
                 <div class="card-title">Latencia RC Promedio</div>
                 <div class="card-value" id="val-latency" style="color: #3b82f6;">0s</div>
             </div>
@@ -698,17 +701,23 @@
                 sensorHtml += `</div>`;
 
                 let rcHtml = `<div style="font-size:0.8rem; color:var(--color-gray); line-height: 1.4;">`;
-                rcHtml += `<div>Job ID: <span style="color:var(--color-white)">${ev.job_id || 'N/A'}</span></div>`;
+                let jobStyle = 'color:var(--color-white)';
+                if (ev.status === 'sent') {
+                    jobStyle = 'color:var(--color-green-bright); font-weight:bold;';
+                } else if (ev.status === 'failed') {
+                    jobStyle = 'color:var(--color-red); font-weight:bold;';
+                }
+                rcHtml += `<div>Job ID: <span style="${jobStyle}">${ev.job_id || 'N/A'}</span></div>`;
                 rcHtml += `<div>Recepcionado Hub: <span style="color:var(--color-white)">${ev.time_received || 'N/A'}</span></div>`;
                 rcHtml += `<div>Enviado a RC: <span style="color:var(--color-white)">${ev.time_sent || 'N/A'}</span></div>`;
                 
                 let latencyBadge = '';
                 if (ev.latency_sec !== null && ev.latency_sec !== undefined) {
-                    let c = ev.latency_sec < 5 ? 'var(--color-green-bright)' : (ev.latency_sec < 15 ? 'var(--color-yellow)' : '#EF4444');
-                    latencyBadge = `<span style="font-size: 0.7rem; background: ${c}; color: black; padding: 2px 4px; border-radius: 4px; margin-left: 5px;">${ev.latency_sec}s</span>`;
+                    let c = ev.latency_sec <= 2 ? 'var(--color-green-bright)' : (ev.latency_sec <= 9 ? 'var(--color-orange)' : 'var(--color-red)');
+                    latencyBadge = `<span style="font-size: 0.7rem; background: ${c}; color: var(--color-black); font-weight: bold; padding: 2px 4px; border-radius: 4px; margin-left: 5px;">${ev.latency_sec}s</span>`;
                 }
                 
-                rcHtml += `<div>Recepcionado RC: <span class="${statusClass}">${statusText}</span>${latencyBadge}</div>`;
+                rcHtml += `<div>Recepcionado RC: <span class="badge ${statusClass}">${statusText}</span>${latencyBadge}</div>`;
                 
                 const jsonPayload = encodeURIComponent(JSON.stringify(ev.rc_format, null, 2));
                 // Para ev.time, usamos ev.time_received si ev.time no existe (ya que se cambió a time_received en el backend)

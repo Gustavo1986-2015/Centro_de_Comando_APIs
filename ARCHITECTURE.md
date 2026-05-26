@@ -59,10 +59,11 @@ Dependiendo de la arquitectura de la API, las credenciales se manejan distinto:
 Para conectarse a los sistemas legacy de la industria (Ej. Recurso Confiable), el `Worker` asíncrono utiliza librerías industriales y de alto rendimiento.
 
 **El caso de Recurso Confiable (SOAP):**
-En lugar de ensamblar strings de XML manualmente (propenso a fallas críticas de deserialización), el Hub utiliza **Zeep** (`zeep.Client`) delegado a hilos nativos (`asyncio.to_thread`).
-1. **Autenticación en tiempo real:** Se invoca `GetUserToken` contra el WSDL productivo y se mantiene el token en memoria.
-2. **Armado determinista:** Al invocar `GPSAssetTracking`, Zeep lee dinámicamente las reglas (WSDL) del proveedor y arma un *SOAP Envelope* criptográficamente perfecto.
-3. **Parseo inteligente:** Extrae nativamente el `idJob` (Acuse de recibo) directamente desde los objetos complejos que devuelve el servidor SOAP, garantizando total trazabilidad.
+En lugar de ensamblar strings de XML manualmente (propenso a fallas críticas de deserialización), el Hub utiliza **Zeep** (`zeep.Client`) delegado a hilos nativos (`asyncio.to_thread`) y optimizado para **envío por lotes (batching)**:
+1. **Envío por Lotes (Batching):** El worker asíncrono agrupa los eventos pendientes (hasta un límite de 50) y los envía en una única llamada SOAP a `GPSAssetTracking` usando una lista de eventos dentro de la estructura `{'Event': [...]}`. Esto reduce significativamente la latencia total y la sobrecarga de red en entornos con múltiples APIs concurrentes.
+2. **Autenticación en tiempo real:** Se invoca `GetUserToken` contra el WSDL productivo y se mantiene el token en memoria caché (renovación automática cada 23.5 horas).
+3. **Mecanismo Robusto de Tokenización:** Si el servidor de RC responde de forma síncrona con `idJob: 0` y la excepción de negocio `CGI:UNKNOWN_TOKEN` (lo cual ocurre si el token es invalidado prematuramente por RC), el Hub invalida automáticamente el token en caché (`self._token = None`) y marca individualmente los eventos del lote como fallidos, obligando al sistema a re-autenticarse limpiamente en el siguiente ciclo.
+4. **Parseo y Trazabilidad:** Extrae posicionalmente el `idJob` (Acuse de recibo) de cada respuesta correspondiente dentro del lote, registrándolo en las bases de datos de auditoría individuales para mantener trazabilidad unitaria.
 
 **APIs REST genéricas (Ej. Samsara, Geotab):**
 Se utiliza la librería asíncrona `httpx`.
