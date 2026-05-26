@@ -30,12 +30,12 @@ def setup_provider_logger(provider: str) -> logging.Logger:
     # TimedRotatingFileHandler añadirá la fecha al rotar.
     log_file = os.path.join(provider_dir, f"{provider}.jsonl")
 
-    # Rotar a medianoche (midnight), mantener 30 días (backupCount=30)
+    # Rotar a medianoche (midnight), mantener historial indefinidamente (backupCount=0)
     handler = TimedRotatingFileHandler(
         filename=log_file,
         when="midnight",
         interval=1,
-        backupCount=30,
+        backupCount=0,
         encoding="utf-8"
     )
 

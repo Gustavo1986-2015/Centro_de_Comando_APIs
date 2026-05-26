@@ -4,7 +4,7 @@ import random
 import datetime
 
 # Placas de prueba solicitadas
-PLACAS = ["A1A123", "GDG848", "XX0001"]
+PLACAS = ["RHR577", "GDG848", "JMC1234"]
 
 # Coordenadas base (Buenos Aires)
 BASE_LAT = -34.603722
