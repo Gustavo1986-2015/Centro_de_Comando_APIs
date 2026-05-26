@@ -72,10 +72,10 @@ async def get_stats():
                 NormalizedRCEvent.created_at >= today_start
             ).count()
 
-            # Obtener los 5 más recientes de esta BD particular
+            # Obtener los 50 más recientes de esta BD particular
             recent = db.query(NormalizedRCEvent).order_by(
                 NormalizedRCEvent.updated_at.desc()
-            ).limit(5).all()
+            ).limit(50).all()
             
             for r in recent:
                 # Inyectar dinámicamente estos atributos para la lectura posterior
@@ -86,9 +86,9 @@ async def get_stats():
         finally:
             db.close()
 
-    # Ordenar los recientes de todas las BDs y quedarnos con los 5 últimos absolutos
+    # Ordenar los recientes de todas las BDs y quedarnos con los 50 últimos absolutos
     recent_events_global.sort(key=lambda x: x.updated_at or x.created_at, reverse=True)
-    recent_events_global = recent_events_global[:5]
+    recent_events_global = recent_events_global[:50]
 
     recent_list = []
     for ev in recent_events_global:
