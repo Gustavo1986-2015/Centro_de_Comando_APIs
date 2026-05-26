@@ -95,7 +95,9 @@ async def get_stats():
         recent_list.append({
             "chassis": ev.chassis_number,
             "status": ev.status,
-            "time": ev.updated_at.strftime("%Y-%m-%d %H:%M:%S") + " (UTC)" if ev.updated_at else "N/A",
+            "time": ev.updated_at.strftime("%Y-%m-%d %H:%M:%S (UTC)") if ev.updated_at else ev.created_at.strftime("%Y-%m-%d %H:%M:%S (UTC)"),
+            "time_received": ev.created_at.strftime("%Y-%m-%d %H:%M:%S (UTC)"),
+            "time_sent": ev.updated_at.strftime("%Y-%m-%d %H:%M:%S (UTC)") if ev.updated_at else "Pendiente",
             "provider": getattr(ev, 'provider_name', "N/A").upper(),
             "env": getattr(ev, 'env', "N/A").upper(),
             "device_date": ev.date.strftime("%Y-%m-%d %H:%M:%S") + " (UTC)" if getattr(ev, 'date') and ev.date else "N/A",

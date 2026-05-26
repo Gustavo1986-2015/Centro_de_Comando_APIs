@@ -687,7 +687,8 @@
 
                 let opHtml = `<div style="font-size:0.8rem; color:var(--color-gray); line-height: 1.4;">`;
                 opHtml += `<div>Job ID: <span style="color:var(--color-green-bright); font-weight:bold;">${ev.job_id || 'N/A'}</span></div>`;
-                opHtml += `<div>Procesado: <span style="color:var(--color-white)">${ev.time}</span></div>`;
+                opHtml += `<div>Procesado / Enviado: <span style="color:var(--color-white)">${ev.time_received || ev.time}</span></div>`;
+                opHtml += `<div>Recepcionado RC: <span style="color:var(--color-white)">${ev.time_sent || 'N/A'}</span></div>`;
                 
                 // Exportador JSON (Usa formato exacto de RC)
                 const jsonPayload = encodeURIComponent(JSON.stringify(ev.rc_format, null, 2));
@@ -718,6 +719,18 @@
                 `;
                 tbody.appendChild(tr);
             });
+        }
+        
+        // UI Helpers
+        function toggleRaw(btn) {
+            const row = btn.parentElement.nextElementSibling;
+            if(row.style.display === 'none') {
+                row.style.display = 'block';
+                btn.innerText = '👁️ Ocultar JSON';
+            } else {
+                row.style.display = 'none';
+                btn.innerText = '👁️ Ver JSON';
+            }
         }
 
         // Configuración
