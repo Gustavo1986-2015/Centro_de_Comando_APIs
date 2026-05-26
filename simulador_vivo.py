@@ -7,9 +7,9 @@ import os
 import glob
 
 # Placas de prueba solicitadas
-PLACAS = ["A1A123", "GDG848", "XX0001"]
+PLACAS = ["RHR5776", "GDG8486", "JMC1236"]
 
-WEBHOOK_URL = "http://localhost:8000/webhook/schmitz"
+WEBHOOK_URL = "http://localhost:8000/schmitz/webhook"
 
 # Ruta a los payloads reales de prueba de Schmitz
 DEMO_PAYLOADS_DIR = r"C:\Users\gustavogomez\Downloads\Quickstart_RESTPushAPI_v_1_35_v01_eng\Demo_Payloads"
