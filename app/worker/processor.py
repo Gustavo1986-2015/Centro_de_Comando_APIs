@@ -12,6 +12,9 @@ from app.models.config_models import ProviderConfig
 
 logger = logging.getLogger(__name__)
 
+# Caché en memoria para rastrear reintentos por eventos fallidos debido a errores de autenticación o red
+RETRIES_CACHE = {}
+
 def get_active_providers():
     db = get_session("system_config", "global")
     try:
@@ -70,8 +73,29 @@ async def process_provider_events(provider: str, env: str):
                 
                 if success:
                     db_event.status = "sent"
+                    # Si tuvo éxito, limpiar de la caché de reintentos
+                    event_key = f"{provider}_{env}_{db_event.id}"
+                    if event_key in RETRIES_CACHE:
+                        del RETRIES_CACHE[event_key]
                 else:
-                    db_event.status = "failed"
+                    # Comprobar si el error es de tipo token/autenticación/conexión (error transitorio)
+                    err_lower = str(rc_response).lower()
+                    is_auth_error = any(w in err_lower for w in ["unknown_token", "userunk", "autentica", "token", "incorrecta", "contrase", "conn_err", "connection"])
+                    
+                    if is_auth_error:
+                        event_key = f"{provider}_{env}_{db_event.id}"
+                        current_retries = RETRIES_CACHE.get(event_key, 0)
+                        if current_retries < 3:
+                            RETRIES_CACHE[event_key] = current_retries + 1
+                            db_event.status = "pending"
+                            logger.warning(f"Error temporal de autenticación/conexión en RC para evento {db_event.id}. Reintento {RETRIES_CACHE[event_key]}/3. Se mantendrá como PENDING.")
+                        else:
+                            db_event.status = "failed"
+                            if event_key in RETRIES_CACHE:
+                                del RETRIES_CACHE[event_key]
+                            logger.error(f"Se excedieron los 3 reintentos de autenticación para el evento {db_event.id}. Marcado como FAILED definitivo.")
+                    else:
+                        db_event.status = "failed"
             except Exception as inner_e:
                 logger.error(f"Error al guardar resultado de evento individual {db_event.id}: {str(inner_e)}")
                 db_event.status = "failed"
