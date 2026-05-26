@@ -6,8 +6,17 @@ import json
 import os
 import glob
 
-# Placas de prueba solicitadas
-PLACAS = ["RHR5776", "GDG8486", "JMC1236"]
+# MODO ESTRÉS MASIVO
+# Si es True, inyectará 25 patentes ficticias al azar cada 2 segundos.
+# Si es False, usará las 3 placas originales cada 30 segundos.
+MODO_ESTRES = False
+
+if MODO_ESTRES:
+    PLACAS = [f"TEST-{str(i).zfill(3)}" for i in range(1, 26)]
+    SEGUNDOS_ESPERA = 2
+else:
+    PLACAS = ["RHR5776", "GDG8486", "JMC1236"]
+    SEGUNDOS_ESPERA = 30
 
 WEBHOOK_URL = "http://localhost:8000/schmitz/webhook?env=test"
 
@@ -59,6 +68,7 @@ def generar_evento(placa):
 
 print(f"=== INICIANDO SIMULADOR AVANZADO EN VIVO ===")
 print(f"Se encontraron {len(payload_files)} payloads reales de Schmitz.")
+print(f"Modo Estrés: {'ACTIVADO (2 seg)' if MODO_ESTRES else 'DESACTIVADO (30 seg)'}")
 print("Presiona Ctrl+C para detener.")
 
 while True:
@@ -76,5 +86,5 @@ while True:
     except Exception as e:
         print(f" -> ERROR de conexión: {str(e)}")
         
-    # Esperar 30 segundos
-    time.sleep(5)
+    # Esperar
+    time.sleep(SEGUNDOS_ESPERA)

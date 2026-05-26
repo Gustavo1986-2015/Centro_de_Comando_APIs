@@ -60,6 +60,15 @@ class RCSOAPClient:
         # Recurso Confiable asume UTC puro siempre, según documentación
         rc_date = event.date if event.date else datetime.now()
         
+        # Sanitizar velocidad por si Schmitz envía literal "null"
+        def clean_speed(s):
+            if s is None:
+                return "0"
+            s_str = str(s).strip().lower()
+            if s_str in ["", "null", "none"]:
+                return "0"
+            return s_str
+        
         # Mapeo estricto soportado por Zeep usando tipos nativos y strings puros
         event_dict = {
             'asset': event.chassis_number or "",
@@ -70,7 +79,7 @@ class RCSOAPClient:
             'ignition': "true" if event.ignition else "false",
             'latitude': str(event.latitude) if event.latitude is not None else "0",
             'longitude': str(event.longitude) if event.longitude is not None else "0",
-            'speed': str(event.speed) if event.speed is not None else "0",
+            'speed': clean_speed(event.speed),
         }
         
         if event.altitude is not None:
