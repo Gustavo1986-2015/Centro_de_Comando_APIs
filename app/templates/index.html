@@ -401,6 +401,10 @@
                 <div class="card-title">Fallidos (Hoy)</div>
                 <div class="card-value" id="val-failed">0</div>
             </div>
+            <div class="card" style="border-top: 4px solid #3b82f6;">
+                <div class="card-title">Latencia RC Promedio</div>
+                <div class="card-value" id="val-latency" style="color: #3b82f6;">0s</div>
+            </div>
         </div>
 
         <div class="recent-section">
@@ -414,7 +418,7 @@
                     <button class="btn-save" onclick="resetFilters()" style="background: rgba(255,255,255,0.1); color: white; padding: 4px 8px;">Quitar Filtros</button>
                 </div>
             </div>
-            <div class="table-container">
+            <div class="table-container" style="max-height: 500px; overflow-y: auto;">
                 <table>
                     <thead>
                         <tr>
@@ -602,6 +606,7 @@
                 updateValue('val-pending', data.pending);
                 updateValue('val-sent', data.sent);
                 updateValue('val-failed', data.failed);
+                updateValue('val-latency', (data.avg_latency_sec || 0).toFixed(2) + 's');
 
                 allRecentEvents = data.recent;
                 
@@ -665,7 +670,7 @@
                 return;
             }
 
-            filtered.forEach(ev => {
+            filtered.forEach((ev, i) => {
                 const tr = document.createElement('tr');
                 
                 let statusClass = 'pending';
@@ -692,26 +697,39 @@
                 sensorHtml += `<div>Odom: <span style="color:var(--color-white)">${ev.odometer !== null ? ev.odometer : 'N/A'}</span> | Código EV: <span style="color:var(--color-yellow)">${ev.code}</span></div>`;
                 sensorHtml += `</div>`;
 
-                let opHtml = `<div style="font-size:0.8rem; color:var(--color-gray); line-height: 1.4;">`;
-                opHtml += `<div>Job ID: <span style="color:var(--color-green-bright); font-weight:bold;">${ev.job_id || 'N/A'}</span></div>`;
-                opHtml += `<div>Procesado / Enviado: <span style="color:var(--color-white)">${ev.time_received || ev.time}</span></div>`;
-                opHtml += `<div>Recepcionado RC: <span style="color:var(--color-white)">${ev.time_sent || 'N/A'}</span></div>`;
+                let rcHtml = `<div style="font-size:0.8rem; color:var(--color-gray); line-height: 1.4;">`;
+                rcHtml += `<div>Job ID: <span style="color:var(--color-white)">${ev.job_id || 'N/A'}</span></div>`;
+                rcHtml += `<div>Procesado / Enviado: <span style="color:var(--color-white)">${ev.time_sent || 'N/A'}</span></div>`;
                 
-                // Exportador JSON (Usa formato exacto de RC)
+                let latencyBadge = '';
+                if (ev.latency_sec !== null && ev.latency_sec !== undefined) {
+                    let c = ev.latency_sec < 5 ? 'var(--color-green-bright)' : (ev.latency_sec < 15 ? 'var(--color-yellow)' : '#EF4444');
+                    latencyBadge = `<span style="font-size: 0.7rem; background: ${c}; color: black; padding: 2px 4px; border-radius: 4px; margin-left: 5px;">${ev.latency_sec}s</span>`;
+                }
+                
+                rcHtml += `<div>Recepcionado RC: <span class="${statusClass}">${statusText}</span>${latencyBadge}</div>`;
+                
                 const jsonPayload = encodeURIComponent(JSON.stringify(ev.rc_format, null, 2));
-                const safeTime = ev.time.replace(/[: ()]/g, '');
+                // Para ev.time, usamos ev.time_received si ev.time no existe (ya que se cambió a time_received en el backend)
+                const fallbackTime = ev.time_received || ev.device_date || "time";
+                const safeTime = fallbackTime.replace(/[: ()]/g, '');
                 const uniqueId = `${ev.chassis}_${safeTime}`;
                 const isExpanded = expandedRows.has(uniqueId);
                 
-                opHtml += `<div style="margin-top: 8px; display: flex; gap: 5px;">`;
-                opHtml += `<button onclick="toggleRaw(this, '${uniqueId}')" style="background:rgba(255,255,255,0.1); border:1px solid var(--color-gray); color:var(--color-white); border-radius:4px; font-size:0.7rem; cursor:pointer; padding:2px 5px;" title="Ver Payload enviado a RC">${isExpanded ? '👁️ Ocultar JSON' : '👁️ Ver JSON'}</button>`;
-                opHtml += `<a href="data:text/json;charset=utf-8,${jsonPayload}" download="evento_RC_${ev.chassis}_${safeTime}.json" style="color: var(--color-green-bright); text-decoration: none; font-size: 0.7rem; border: 1px solid var(--color-green-bright); padding: 2px 6px; border-radius: 4px; display: inline-block; transition: all 0.2s;" title="Descargar Payload formato RC">📥 Bajar JSON</a>`;
-                opHtml += `</div>`;
-                opHtml += `<div class="raw-data-row" style="display:${isExpanded ? 'block' : 'none'}; margin-top:5px;">${rawHtml}</div>`;
-                opHtml += `</div>`;
+                rcHtml += `<div style="margin-top: 8px; display: flex; gap: 5px; flex-wrap: wrap;">`;
+                rcHtml += `<button onclick="toggleRaw(this, '${uniqueId}')" style="background:rgba(255,255,255,0.1); border:1px solid var(--color-gray); color:var(--color-white); border-radius:4px; font-size:0.7rem; cursor:pointer; padding:2px 5px;" title="Ver Payload enviado a RC">${isExpanded ? '👁️ Ocultar JSON' : '👁️ Ver JSON'}</button>`;
+                rcHtml += `<a href="data:text/json;charset=utf-8,${jsonPayload}" download="evento_RC_${ev.chassis}_${safeTime}.json" style="color: var(--color-green-bright); text-decoration: none; font-size: 0.7rem; border: 1px solid var(--color-green-bright); padding: 2px 6px; border-radius: 4px; display: inline-block; transition: all 0.2s;" title="Descargar Payload formato RC">📥 Bajar JSON</a>`;
+                
+                if (ev.status === 'failed' && ev.rc_response) {
+                    let errStr = String(ev.rc_response).replace(/'/g, "\\'").replace(/"/g, '&quot;').replace(/\n/g, ' ');
+                    rcHtml += `<button style="background-color: rgba(239, 68, 68, 0.2); border: 1px solid #EF4444; padding: 2px 5px; color: #EF4444; font-size: 0.7rem; border-radius:4px; cursor:pointer;" onclick="alert('Error RC:\\n${errStr}')" title="Ver Error de Recurso Confiable">⚠️ Ver Error</button>`;
+                }
+                rcHtml += `</div>`;
+                rcHtml += `<div class="raw-data-row" style="display:${isExpanded ? 'block' : 'none'}; margin-top:5px;">${rawHtml}</div>`;
+                rcHtml += `</div>`;
                 
                 let statusHtml = `<span class="badge ${statusClass}">${statusText.toUpperCase()}</span><br>`;
-                statusHtml += `<span style="font-size:0.75rem; color:var(--color-gray); display:inline-block; margin-top:4px;">${ev.time}</span>`;
+                statusHtml += `<span style="font-size:0.75rem; color:var(--color-gray); display:inline-block; margin-top:4px;">${fallbackTime}</span>`;
                 
                 tr.innerHTML = `
                     <td>
@@ -724,7 +742,7 @@
                     <td style="white-space: nowrap;">${statusHtml}</td>
                     <td>${locHtml}</td>
                     <td>${sensorHtml}</td>
-                    <td>${opHtml}</td>
+                    <td>${rcHtml}</td>
                 `;
                 tbody.appendChild(tr);
             });

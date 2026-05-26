@@ -26,9 +26,9 @@ def setup_provider_logger(provider: str) -> logging.Logger:
     provider_dir = os.path.join(AUDIT_DIR, provider)
     os.makedirs(provider_dir, exist_ok=True)
 
-    # El archivo base será ej. audit/schmitz/schmitz.jsonl
+    # El archivo base será ej. audit/schmitz/schmitz.log
     # TimedRotatingFileHandler añadirá la fecha al rotar.
-    log_file = os.path.join(provider_dir, f"{provider}.jsonl")
+    log_file = os.path.join(provider_dir, f"{provider}.log")
 
     # Rotar a medianoche (midnight), mantener historial indefinidamente (backupCount=0)
     handler = TimedRotatingFileHandler(
@@ -44,10 +44,10 @@ def setup_provider_logger(provider: str) -> logging.Logger:
     handler.suffix = "%Y-%m-%d"
     
     def namer(default_name):
-        # default_name viene como audit/schmitz/schmitz.jsonl.2026-05-23
-        # Queremos convertirlo a audit/schmitz/schmitz_2026-05-23.jsonl
+        # default_name viene como audit/schmitz/schmitz.log.2026-05-23
+        # Queremos convertirlo a audit/schmitz/schmitz_2026-05-23.log
         dir_name, file_name = os.path.split(default_name)
-        base_name = file_name.replace(".jsonl.", "_") + ".jsonl"
+        base_name = file_name.replace(".log.", "_") + ".log"
         return os.path.join(dir_name, base_name)
         
     handler.namer = namer
@@ -61,7 +61,7 @@ def setup_provider_logger(provider: str) -> logging.Logger:
 
 def audit_event(provider: str, payload: dict):
     """
-    Guarda un evento en el archivo de auditoría del proveedor en formato JSONL.
+    Guarda un evento en el archivo de auditoría del proveedor en formato estructurado multi-línea.
     """
     logger = setup_provider_logger(provider)
     
@@ -72,6 +72,7 @@ def audit_event(provider: str, payload: dict):
         "payload": payload
     }
     
-    # Convertir a JSON string, asegurar que sea una sola línea
-    json_str = json.dumps(audit_record, ensure_ascii=False)
-    logger.info(json_str)
+    # Convertir a JSON string indentado para fácil lectura humana
+    json_str = json.dumps(audit_record, ensure_ascii=False, indent=4)
+    # Agregar un separador visual para identificar dónde termina un payload y empieza el siguiente
+    logger.info(json_str + "\n" + "-"*80)

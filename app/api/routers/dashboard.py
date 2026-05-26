@@ -85,10 +85,10 @@ async def get_stats(
             if status_filter and status_filter != 'all':
                 query = query.filter(NormalizedRCEvent.status == status_filter)
 
-            # Obtener los 50 más recientes de esta BD particular
+            # Obtener los 200 más recientes de esta BD particular
             recent = query.order_by(
                 NormalizedRCEvent.updated_at.desc()
-            ).limit(50).all()
+            ).limit(200).all()
             
             for r in recent:
                 # Inyectar dinámicamente estos atributos para la lectura posterior
@@ -101,16 +101,27 @@ async def get_stats(
 
     # Ordenar los recientes de todas las BDs y quedarnos con los 50 últimos absolutos
     recent_events_global.sort(key=lambda x: x.updated_at or x.created_at, reverse=True)
-    recent_events_global = recent_events_global[:50]
+    recent_events_global = recent_events_global[:200]
 
+    total_latency_seconds = 0
+    latency_samples = 0
     recent_list = []
+    
     for ev in recent_events_global:
+        latency_sec = None
+        if ev.status == 'sent' and ev.updated_at and ev.created_at:
+            latency_sec = (ev.updated_at - ev.created_at).total_seconds()
+            total_latency_seconds += latency_sec
+            latency_samples += 1
+            
         recent_list.append({
             "chassis": ev.chassis_number,
             "status": ev.status,
             "time": ev.updated_at.strftime("%Y-%m-%d %H:%M:%S (UTC)") if ev.updated_at else ev.created_at.strftime("%Y-%m-%d %H:%M:%S (UTC)"),
             "time_received": ev.created_at.strftime("%Y-%m-%d %H:%M:%S (UTC)"),
             "time_sent": ev.updated_at.strftime("%Y-%m-%d %H:%M:%S (UTC)") if ev.updated_at else "Pendiente",
+            "latency_sec": round(latency_sec, 2) if latency_sec is not None else None,
+            "rc_response": getattr(ev, 'rc_response', ""),
             "provider": getattr(ev, 'provider_name', "N/A").upper(),
             "env": getattr(ev, 'env', "N/A").upper(),
             "device_date": ev.date.strftime("%Y-%m-%d %H:%M:%S") + " (UTC)" if getattr(ev, 'date') and ev.date else "N/A",
@@ -152,10 +163,13 @@ async def get_stats(
             }
         })
 
+    avg_latency = round(total_latency_seconds / latency_samples, 2) if latency_samples > 0 else 0
+
     return {
         "pending": total_pending,
         "sent": total_sent,
         "failed": total_failed,
+        "avg_latency_sec": avg_latency,
         "recent": recent_list
     }
 
