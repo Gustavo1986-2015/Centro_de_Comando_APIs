@@ -57,9 +57,31 @@ def generar_evento(placa):
     if "Plate" in payload:
         payload["Plate"] = placa
         
-    # Reemplazar todos los tiempos por la hora actual UTC
-    ahora_utc = datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%S.0000000Z")
-    update_datetime_recursive(payload, ahora_utc)
+    # 1. Generar horario local de un país europeo aleatorio (offset +00:00 a +03:00)
+    offset_hours = random.choice([0, 1, 2, 3])
+    ahora_utc = datetime.datetime.now(datetime.timezone.utc)
+    local_time = ahora_utc + datetime.timedelta(hours=offset_hours)
+    
+    if offset_hours == 0:
+        offset_str = "Z"
+    else:
+        offset_str = f"+{str(offset_hours).zfill(2)}:00"
+        
+    fecha_local_str = local_time.strftime(f"%Y-%m-%dT%H:%M:%S.0000000{offset_str}")
+    update_datetime_recursive(payload, fecha_local_str)
+    
+    # 2. Generar coordenadas geográficas aleatorias dentro de Europa
+    # Latitud aproximada: 40.0 (España/Italia) a 58.0 (Norte de Europa)
+    # Longitud aproximada: -8.0 (Portugal/España) a 25.0 (Europa Oriental)
+    lat_eur = round(random.uniform(40.0, 58.0), 6)
+    lon_eur = round(random.uniform(-8.0, 25.0), 6)
+    
+    if "StatusData" in payload and isinstance(payload["StatusData"], list) and len(payload["StatusData"]) > 0:
+        status_data_0 = payload["StatusData"][0]
+        if "Position" not in status_data_0 or not isinstance(status_data_0["Position"], dict):
+            status_data_0["Position"] = {}
+        status_data_0["Position"]["Latitude"] = lat_eur
+        status_data_0["Position"]["Longitude"] = lon_eur
     
     # Extraer de qué tipo fue el payload base para mostrarlo en consola
     tipo_evento = payload.get("Reason", {}).get("ItemElementName", "Desconocido")

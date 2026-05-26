@@ -7,8 +7,12 @@ def parse_date_to_utc0(date_str: str) -> datetime | None:
     if not date_str:
         return None
     try:
-        # Parsear la fecha y convertirla a UTC explícitamente
-        dt = dateutil.parser.isoparse(date_str)
+        # Parsear la fecha de manera flexible (soporta offsets locales de Europa)
+        dt = dateutil.parser.parse(date_str)
+        # Si la fecha es naive (no incluye zona horaria), la tratamos como UTC
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        # Convertir y retornar en UTC 0 (huso horario +00:00)
         return dt.astimezone(timezone.utc)
     except Exception:
         return None
