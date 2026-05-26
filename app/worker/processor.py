@@ -1,14 +1,14 @@
 import asyncio
 import logging
 from sqlalchemy.orm import Session
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta, date
 
 from app.database import get_session
 from app.models.db_models import NormalizedRCEvent
 from app.schemas.canonical import RCCanonicalModel
 from app.services.rc_soap import rc_client
 
-from app.models.config_models import ProviderConfig
+from app.models.config_models import ProviderConfig, DailyStat
 
 logger = logging.getLogger(__name__)
 
@@ -27,86 +27,203 @@ def get_active_providers():
         db.close()
 
 async def process_provider_events(provider: str, env: str):
-    """Procesa pendientes de un único proveedor y entorno en lotes (batching)."""
+    """Procesa pendientes de un único proveedor y entorno en lotes concurrentes en paralelo y aplica backoff."""
     db: Session = get_session(provider, env)
     try:
-        pendings = db.query(NormalizedRCEvent).filter(NormalizedRCEvent.status == "pending").limit(50).all()
+        # 1. Obtener pendientes y filtrar usando Backoff temporal de la caché en memoria
+        all_pendings = db.query(NormalizedRCEvent).filter(NormalizedRCEvent.status == "pending").order_by(NormalizedRCEvent.id.asc()).limit(250).all()
         
+        now_time = datetime.now()
+        pendings = []
+        for ev in all_pendings:
+            event_key = f"{provider}_{env}_{ev.id}"
+            if event_key in RETRIES_CACHE:
+                next_retry = RETRIES_CACHE[event_key].get("next_retry_at")
+                if next_retry and next_retry > now_time:
+                    continue
+            pendings.append(ev)
+            if len(pendings) >= 150: # Procesar hasta 3 lotes de 50 en paralelo
+                break
+                
         if not pendings:
             return
             
-        canonical_events = []
-        for db_event in pendings:
-            canonical_event = RCCanonicalModel(
-                chassis_number=db_event.chassis_number,
-                latitude=db_event.latitude,
-                longitude=db_event.longitude,
-                speed=db_event.speed,
-                code=db_event.code,
-                date=db_event.date.replace(tzinfo=timezone.utc) if db_event.date else None,
-                altitude=db_event.altitude,
-                battery=db_event.battery,
-                course=db_event.course,
-                humidity=db_event.humidity,
-                ignition=db_event.ignition,
-                odometer=db_event.odometer,
-                temperature=db_event.temperature,
-                serial_number=db_event.serial_number,
-                shipment=db_event.shipment,
-                vehicle_type=db_event.vehicle_type,
-                vehicle_brand=db_event.vehicle_brand,
-                vehicle_model=db_event.vehicle_model
-            )
-            canonical_events.append(canonical_event)
-            
-        # Despachar lote completo a RC
-        logger.info(f"Enviando lote de {len(canonical_events)} eventos a RC para {provider}_{env}")
-        results = await rc_client.send_events_batch(canonical_events)
+        # 2. Particionar en sub-lotes de hasta 50 eventos
+        batch_size = 50
+        batches = [pendings[i:i + batch_size] for i in range(0, len(pendings), batch_size)]
         
-        # Mapear los resultados posicionalmente
-        for idx, db_event in enumerate(pendings):
-            try:
-                success, job_id, rc_response = results[idx] if idx < len(results) else (False, f"rc_err_missing_{int(datetime.now().timestamp())}", "No response mapping for event")
-                
-                db_event.rc_response = rc_response
-                db_event.job_id = job_id
-                
-                if success:
-                    db_event.status = "sent"
-                    # Si tuvo éxito, limpiar de la caché de reintentos
-                    event_key = f"{provider}_{env}_{db_event.id}"
-                    if event_key in RETRIES_CACHE:
-                        del RETRIES_CACHE[event_key]
-                else:
-                    # Comprobar si el error es de tipo token/autenticación/conexión (error transitorio)
-                    err_lower = str(rc_response).lower()
-                    is_auth_error = any(w in err_lower for w in ["unknown_token", "userunk", "autentica", "token", "incorrecta", "contrase", "conn_err", "connection"])
+        soap_tasks = []
+        for batch in batches:
+            canonical_events = []
+            for db_event in batch:
+                canonical_event = RCCanonicalModel(
+                    chassis_number=db_event.chassis_number,
+                    latitude=db_event.latitude,
+                    longitude=db_event.longitude,
+                    speed=db_event.speed,
+                    code=db_event.code,
+                    date=db_event.date.replace(tzinfo=timezone.utc) if db_event.date else None,
+                    altitude=db_event.altitude,
+                    battery=db_event.battery,
+                    course=db_event.course,
+                    humidity=db_event.humidity,
+                    ignition=db_event.ignition,
+                    odometer=db_event.odometer,
+                    temperature=db_event.temperature,
+                    serial_number=db_event.serial_number,
+                    shipment=db_event.shipment,
+                    vehicle_type=db_event.vehicle_type,
+                    vehicle_brand=db_event.vehicle_brand,
+                    vehicle_model=db_event.vehicle_model
+                )
+                canonical_events.append(canonical_event)
+            
+            # Agregar tarea de despacho SOAP asíncrona
+            soap_tasks.append(rc_client.send_events_batch(canonical_events))
+            
+        # 3. Disparar todos los sub-lotes en paralelo (concurrencia de red)
+        logger.info(f"Enviando {len(pendings)} eventos en {len(batches)} sub-lote(s) en paralelo para {provider}_{env}")
+        batches_results = await asyncio.gather(*soap_tasks, return_exceptions=True)
+        
+        # 4. Procesar y guardar resultados de forma secuencial en una única transacción de base de datos
+        for batch_idx, batch in enumerate(batches):
+            results = batches_results[batch_idx]
+            
+            # Manejar excepciones completas de red/transporte para todo el sub-lote
+            if isinstance(results, Exception):
+                logger.error(f"Excepción general en sub-lote {batch_idx + 1} para {provider}_{env}: {results}")
+                for db_event in batch:
+                    db_event.rc_response = f"Excepción de transporte: {str(results)}"
+                    db_event.job_id = f"rc_conn_err_{int(datetime.now().timestamp())}"
                     
-                    if is_auth_error:
-                        event_key = f"{provider}_{env}_{db_event.id}"
-                        current_retries = RETRIES_CACHE.get(event_key, 0)
-                        if current_retries < 3:
-                            RETRIES_CACHE[event_key] = current_retries + 1
-                            db_event.status = "pending"
-                            logger.warning(f"Error temporal de autenticación/conexión en RC para evento {db_event.id}. Reintento {RETRIES_CACHE[event_key]}/3. Se mantendrá como PENDING.")
-                        else:
-                            db_event.status = "failed"
-                            if event_key in RETRIES_CACHE:
-                                del RETRIES_CACHE[event_key]
-                            logger.error(f"Se excedieron los 3 reintentos de autenticación para el evento {db_event.id}. Marcado como FAILED definitivo.")
+                    event_key = f"{provider}_{env}_{db_event.id}"
+                    current_retries = RETRIES_CACHE.get(event_key, {}).get("count", 0)
+                    
+                    # Backoff lineal para reintentos de red: 1° -> 10s, 2° -> 45s, 3° -> 120s, 4° -> 300s
+                    backoff_sec = [10, 45, 120, 300][min(current_retries, 3)]
+                    next_retry = datetime.now() + timedelta(seconds=backoff_sec)
+                    
+                    if current_retries < 4:
+                        RETRIES_CACHE[event_key] = {
+                            "count": current_retries + 1,
+                            "next_retry_at": next_retry
+                        }
+                        db_event.status = "pending"
+                        logger.warning(f"Fallo de red en RC para evento {db_event.id}. Reintento {current_retries + 1}/4 programado para {next_retry}. Queda PENDING.")
                     else:
                         db_event.status = "failed"
-            except Exception as inner_e:
-                logger.error(f"Error al guardar resultado de evento individual {db_event.id}: {str(inner_e)}")
-                db_event.status = "failed"
+                        if event_key in RETRIES_CACHE:
+                            del RETRIES_CACHE[event_key]
+                        logger.error(f"Excedidos los 4 reintentos de red para evento {db_event.id}. Marcado FAILED definitivo.")
+                continue
                 
+            # Procesar acuse de recibo de eventos individuales dentro del sub-lote
+            for idx, db_event in enumerate(batch):
+                try:
+                    success, job_id, rc_response = results[idx] if results and idx < len(results) else (False, f"rc_err_missing_{int(datetime.now().timestamp())}", "No response mapping for event")
+                    
+                    db_event.rc_response = rc_response
+                    db_event.job_id = job_id
+                    
+                    if success:
+                        db_event.status = "sent"
+                        event_key = f"{provider}_{env}_{db_event.id}"
+                        if event_key in RETRIES_CACHE:
+                            del RETRIES_CACHE[event_key]
+                    else:
+                        err_lower = str(rc_response).lower()
+                        is_auth_error = any(w in err_lower for w in ["unknown_token", "userunk", "autentica", "token", "incorrecta", "contrase", "conn_err", "connection"])
+                        
+                        if is_auth_error:
+                            event_key = f"{provider}_{env}_{db_event.id}"
+                            current_retries = RETRIES_CACHE.get(event_key, {}).get("count", 0)
+                            
+                            # Backoff lineal para fallas temporales: 1° -> 10s, 2° -> 45s, 3° -> 120s, 4° -> 300s
+                            backoff_sec = [10, 45, 120, 300][min(current_retries, 3)]
+                            next_retry = datetime.now() + timedelta(seconds=backoff_sec)
+                            
+                            if current_retries < 4:
+                                RETRIES_CACHE[event_key] = {
+                                    "count": current_retries + 1,
+                                    "next_retry_at": next_retry
+                                }
+                                db_event.status = "pending"
+                                logger.warning(f"Fallo de autenticación/token en RC para evento {db_event.id}. Reintento {current_retries + 1}/4 programado para {next_retry}. Queda PENDING.")
+                            else:
+                                db_event.status = "failed"
+                                if event_key in RETRIES_CACHE:
+                                    del RETRIES_CACHE[event_key]
+                                logger.error(f"Excedidos los 4 reintentos de autenticación para evento {db_event.id}. Marcado FAILED definitivo.")
+                        else:
+                            db_event.status = "failed"
+                except Exception as inner_e:
+                    logger.error(f"Error al guardar resultado de evento individual {db_event.id}: {str(inner_e)}")
+                    db_event.status = "failed"
+                    
         db.commit()
-
+        
+        # 5. Consolidar estadísticas del día de hoy en la base de datos global de forma asincrónica e independiente
+        try:
+            update_daily_stats(provider, env)
+        except Exception as stats_e:
+            logger.error(f"Error al actualizar estadísticas diarias para {provider}_{env}: {stats_e}")
+        
     except Exception as e:
         logger.error(f"Error general en process_provider_events para {provider}_{env}: {str(e)}")
         db.rollback()
     finally:
         db.close()
+
+def update_daily_stats(provider: str, env: str):
+    """Calcula y actualiza las estadísticas de procesamiento del día de hoy en la BD global."""
+    from datetime import datetime
+    today_start = datetime.combine(datetime.now().date(), datetime.min.time())
+    
+    db_prov = get_session(provider, env)
+    try:
+        sent_count = db_prov.query(NormalizedRCEvent).filter(
+            NormalizedRCEvent.status == "sent",
+            NormalizedRCEvent.created_at >= today_start
+        ).count()
+        
+        failed_count = db_prov.query(NormalizedRCEvent).filter(
+            NormalizedRCEvent.status == "failed",
+            NormalizedRCEvent.created_at >= today_start
+        ).count()
+    except Exception as e:
+        logger.error(f"Error al contar estadísticas de hoy para {provider}_{env}: {e}")
+        return
+    finally:
+        db_prov.close()
+        
+    db_global = get_session("system_config", "global")
+    try:
+        today_date = datetime.now().date()
+        stat = db_global.query(DailyStat).filter(
+            DailyStat.date == today_date,
+            DailyStat.provider == provider,
+            DailyStat.env == env
+        ).first()
+        
+        if not stat:
+            stat = DailyStat(
+                date=today_date,
+                provider=provider,
+                env=env,
+                sent_count=sent_count,
+                failed_count=failed_count
+            )
+            db_global.add(stat)
+        else:
+            stat.sent_count = sent_count
+            stat.failed_count = failed_count
+            
+        db_global.commit()
+    except Exception as e:
+        logger.error(f"Error al guardar DailyStat en system_config para {provider}_{env}: {e}")
+        db_global.rollback()
+    finally:
+        db_global.close()
 
 async def process_pending_events():
     """Ejecuta el procesamiento concurrente (en paralelo) de todas las APIs activas."""

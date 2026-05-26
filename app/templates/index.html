@@ -377,6 +377,7 @@
             <li id="tab-config" onclick="switchView('config')">Configuración Global</li>
             <li id="tab-simulator" onclick="switchView('simulator')">Simulador de Webhooks</li>
             <li id="tab-logs" onclick="switchView('logs')">Logs de Auditoría Dinámica</li>
+            <li id="tab-history" onclick="switchView('history')">Historial Diario</li>
         </ul>
     </nav>
 
@@ -417,6 +418,12 @@
                     <span style="color: var(--color-gray); font-size: 0.9rem;">Filtros:</span>
                     <select id="filter-provider" onchange="setFilterProvider(this.value)" style="background: var(--color-gray-dark); color: white; border: 1px solid var(--color-gray); border-radius: 4px; padding: 4px 8px; cursor: pointer;">
                         <option value="all" style="color: black; background: white;">Todas las APIs</option>
+                    </select>
+                    <select id="filter-latency" onchange="setFilterLatency(this.value)" style="background: var(--color-gray-dark); color: white; border: 1px solid var(--color-gray); border-radius: 4px; padding: 4px 8px; cursor: pointer;">
+                        <option value="all" style="color: black; background: white;">Todas las Latencias</option>
+                        <option value="low" style="color: black; background: white;">Baja (≤ 2s)</option>
+                        <option value="medium" style="color: black; background: white;">Media (3-9s)</option>
+                        <option value="high" style="color: black; background: white;">Alta (≥ 10s)</option>
                     </select>
                     <button class="btn-save" onclick="resetFilters()" style="background: rgba(255,255,255,0.1); color: white; padding: 4px 8px;">Quitar Filtros</button>
                 </div>
@@ -498,6 +505,34 @@
         </div>
     </main>
 
+    <!-- VISTA HISTORIAL DIARIO -->
+    <main id="view-history" style="display: none;">
+        <div class="recent-section">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
+                <h2>Historial de Envíos Diarios Consolidados</h2>
+                <button class="btn-save" onclick="loadHistory()" style="background: var(--color-gray); color: var(--color-white)">Actualizar Historial</button>
+            </div>
+            
+            <div class="table-container">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Fecha Calendario</th>
+                            <th>Proveedor</th>
+                            <th>Entorno</th>
+                            <th style="color: var(--color-green-bright);">Enviados Exitosamente</th>
+                            <th style="color: var(--color-red);">Fallidos / Errores</th>
+                            <th>Total Procesados</th>
+                        </tr>
+                    </thead>
+                    <tbody id="history-table-body">
+                        <!-- Historial se inyecta via JS -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </main>
+
     <!-- VISTA SIMULADOR -->
     <main id="view-simulator" style="display: none;">
         <div class="recent-section">
@@ -548,6 +583,7 @@
         // Variables globales para filtros
         let currentStatusFilter = 'all';
         let currentProviderFilter = 'all';
+        let currentLatencyFilter = 'all';
         let allRecentEvents = [];
         let expandedRows = new Set();
         
@@ -560,11 +596,18 @@
             currentProviderFilter = provider.toLowerCase();
             renderRecentTable();
         }
+
+        function setFilterLatency(latency) {
+            currentLatencyFilter = latency;
+            renderRecentTable();
+        }
         
         function resetFilters() {
             currentStatusFilter = 'all';
             currentProviderFilter = 'all';
+            currentLatencyFilter = 'all';
             document.getElementById('filter-provider').value = 'all';
+            document.getElementById('filter-latency').value = 'all';
             renderRecentTable();
         }
 
@@ -574,14 +617,16 @@
             document.getElementById('view-config').style.display = view === 'config' ? 'flex' : 'none';
             document.getElementById('view-simulator').style.display = view === 'simulator' ? 'flex' : 'none';
             document.getElementById('view-logs').style.display = view === 'logs' ? 'flex' : 'none';
+            document.getElementById('view-history').style.display = view === 'history' ? 'flex' : 'none';
             
             document.getElementById('tab-dashboard').classList.toggle('active-tab', view === 'dashboard');
             document.getElementById('tab-config').classList.toggle('active-tab', view === 'config');
             document.getElementById('tab-simulator').classList.toggle('active-tab', view === 'simulator');
             document.getElementById('tab-logs').classList.toggle('active-tab', view === 'logs');
+            document.getElementById('tab-history').classList.toggle('active-tab', view === 'history');
             
             toggleMenu(); // Cierra el menú al elegir
-
+ 
             clearInterval(statsInterval);
             
             if (view === 'config') {
@@ -590,9 +635,41 @@
                 loadSimulator();
             } else if (view === 'logs') {
                 loadLogs();
+            } else if (view === 'history') {
+                loadHistory();
             } else {
                 fetchStats();
                 statsInterval = setInterval(fetchStats, 2000);
+            }
+        }
+
+        async function loadHistory() {
+            try {
+                const response = await fetch('/api/history');
+                const data = await response.json();
+                const tbody = document.getElementById('history-table-body');
+                tbody.innerHTML = '';
+                
+                if (data.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="6" style="text-align:center; color: var(--color-gray)">No hay registros históricos consolidados aún.</td></tr>';
+                    return;
+                }
+                
+                data.forEach(row => {
+                    const tr = document.createElement('tr');
+                    const total = (row.sent_count || 0) + (row.failed_count || 0);
+                    tr.innerHTML = `
+                        <td style="font-weight:bold; color:var(--color-white)">${row.date}</td>
+                        <td style="font-weight:bold; color:var(--color-white)">${row.provider}</td>
+                        <td><span class="badge ${row.env === 'PROD' ? 'sent' : 'pending'}">${row.env}</span></td>
+                        <td style="color: var(--color-green-bright); font-weight: bold;">${row.sent_count}</td>
+                        <td style="color: var(--color-red); font-weight: bold;">${row.failed_count}</td>
+                        <td style="font-weight: bold; color: var(--color-white);">${total}</td>
+                    `;
+                    tbody.appendChild(tr);
+                });
+            } catch(e) {
+                console.error("Error al cargar historial diario", e);
             }
         }
 
@@ -662,10 +739,23 @@
             if (currentProviderFilter !== 'all') {
                 filtered = filtered.filter(ev => ev.provider.toLowerCase() === currentProviderFilter);
             }
+            if (currentLatencyFilter !== 'all') {
+                filtered = filtered.filter(ev => {
+                    if (ev.latency_sec === null || ev.latency_sec === undefined) return false;
+                    if (currentLatencyFilter === 'low') return ev.latency_sec <= 2;
+                    if (currentLatencyFilter === 'medium') return ev.latency_sec > 2 && ev.latency_sec <= 9;
+                    if (currentLatencyFilter === 'high') return ev.latency_sec >= 10;
+                    return true;
+                });
+            }
             
             let labelText = "";
-            if (currentStatusFilter !== 'all' || currentProviderFilter !== 'all') {
-                labelText = `(Filtrado: ${currentStatusFilter !== 'all' ? currentStatusFilter.toUpperCase() : ''} ${currentProviderFilter !== 'all' ? currentProviderFilter.toUpperCase() : ''})`;
+            if (currentStatusFilter !== 'all' || currentProviderFilter !== 'all' || currentLatencyFilter !== 'all') {
+                let filters = [];
+                if (currentStatusFilter !== 'all') filters.push(currentStatusFilter.toUpperCase());
+                if (currentProviderFilter !== 'all') filters.push(currentProviderFilter.toUpperCase());
+                if (currentLatencyFilter !== 'all') filters.push(`LATENCIA: ${currentLatencyFilter.toUpperCase()}`);
+                labelText = `(Filtrado: ${filters.join(' | ')})`;
             }
             document.getElementById('current-filter-label').innerText = labelText;
 

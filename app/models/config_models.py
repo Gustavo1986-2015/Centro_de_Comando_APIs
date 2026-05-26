@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Boolean
+from sqlalchemy import Column, Integer, String, Boolean, Date
 from app.database import Base
 
 class ProviderConfig(Base):
@@ -12,3 +12,13 @@ class ProviderConfig(Base):
     rc_password = Column(String, default="")
     purge_interval_min = Column(Integer, default=15)
     run_interval_sec = Column(Integer, default=5)
+
+class DailyStat(Base):
+    """Modelo de base de datos para almacenar el histórico de eventos procesados por día calendario."""
+    __tablename__ = "daily_stats"
+    id = Column(Integer, primary_key=True, index=True)
+    date = Column(Date, index=True)
+    provider = Column(String, index=True)
+    env = Column(String, index=True)
+    sent_count = Column(Integer, default=0)
+    failed_count = Column(Integer, default=0)

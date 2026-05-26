@@ -39,6 +39,12 @@ def get_engine(provider: str, env: str = "prod"):
         url = get_db_url(provider, env)
         engine = create_engine(url, connect_args={"check_same_thread": False})
         
+        # Asegurar que los modelos estén registrados en Base.metadata
+        if provider == "system_config":
+            from app.models.config_models import ProviderConfig, DailyStat
+        else:
+            from app.models.db_models import NormalizedRCEvent
+            
         # Crear tablas
         Base.metadata.create_all(bind=engine)
         
