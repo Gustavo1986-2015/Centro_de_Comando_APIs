@@ -409,7 +409,7 @@
                 <div style="display: flex; gap: 1rem; align-items: center;">
                     <span style="color: var(--color-gray); font-size: 0.9rem;">Filtros:</span>
                     <select id="filter-provider" onchange="setFilterProvider(this.value)" style="background: var(--color-gray-dark); color: white; border: 1px solid var(--color-gray); border-radius: 4px; padding: 4px 8px; cursor: pointer;">
-                        <option value="all">Todas las APIs</option>
+                        <option value="all" style="color: black; background: white;">Todas las APIs</option>
                     </select>
                     <button class="btn-save" onclick="resetFilters()" style="background: rgba(255,255,255,0.1); color: white; padding: 4px 8px;">Quitar Filtros</button>
                 </div>
@@ -591,7 +591,11 @@
         // Dashboard Stats
         async function fetchStats() {
             try {
-                const response = await fetch('/api/stats');
+                const url = new URL('/api/stats', window.location.origin);
+                if (currentStatusFilter !== 'all') url.searchParams.append('status', currentStatusFilter);
+                if (currentProviderFilter !== 'all') url.searchParams.append('provider', currentProviderFilter);
+                
+                const response = await fetch(url);
                 if (!response.ok) throw new Error('Network response was not ok');
                 const data = await response.json();
                 
@@ -610,6 +614,8 @@
                         const opt = document.createElement('option');
                         opt.value = p;
                         opt.innerText = p.toUpperCase();
+                        opt.style.color = "black";
+                        opt.style.background = "white";
                         dropdown.appendChild(opt);
                     }
                 });
