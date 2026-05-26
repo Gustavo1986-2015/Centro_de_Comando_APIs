@@ -7,30 +7,25 @@ from datetime import datetime, timezone
 # Directorio raíz para auditoría
 AUDIT_DIR = "audit"
 
-def setup_provider_logger(provider: str) -> logging.Logger:
+def setup_provider_logger(provider: str, format_type: str = "jsonl") -> logging.Logger:
     """
-    Configura y devuelve un logger para un proveedor específico.
-    Guarda los logs en formato JSONL y rota diariamente a medianoche,
-    manteniendo 30 días de historial.
+    Configura y devuelve un logger específico. Mantiene historial indefinido (backupCount=0).
+    format_type debe ser 'jsonl' o 'log'.
     """
-    logger = logging.getLogger(f"auditor_{provider}")
+    logger_name = f"auditor_{provider}_{format_type}"
+    logger = logging.getLogger(logger_name)
     
-    # Si el logger ya tiene handlers, significa que ya fue configurado (evita duplicados en la misma ejecución)
     if logger.handlers:
         return logger
 
     logger.setLevel(logging.INFO)
-    logger.propagate = False  # No propagar al root logger
+    logger.propagate = False 
 
-    # Crear directorio del proveedor si no existe
     provider_dir = os.path.join(AUDIT_DIR, provider)
     os.makedirs(provider_dir, exist_ok=True)
 
-    # El archivo base será ej. audit/schmitz/schmitz.log
-    # TimedRotatingFileHandler añadirá la fecha al rotar.
-    log_file = os.path.join(provider_dir, f"{provider}.log")
+    log_file = os.path.join(provider_dir, f"{provider}.{format_type}")
 
-    # Rotar a medianoche (midnight), mantener historial indefinidamente (backupCount=0)
     handler = TimedRotatingFileHandler(
         filename=log_file,
         when="midnight",
@@ -39,20 +34,15 @@ def setup_provider_logger(provider: str) -> logging.Logger:
         encoding="utf-8"
     )
 
-    # Definir la extensión y formato para los archivos rotados
-    # Ej: schmitz_2026-05-23.jsonl (ajustando el namer)
     handler.suffix = "%Y-%m-%d"
     
     def namer(default_name):
-        # default_name viene como audit/schmitz/schmitz.log.2026-05-23
-        # Queremos convertirlo a audit/schmitz/schmitz_2026-05-23.log
         dir_name, file_name = os.path.split(default_name)
-        base_name = file_name.replace(".log.", "_") + ".log"
+        base_name = file_name.replace(f".{format_type}.", "_") + f".{format_type}"
         return os.path.join(dir_name, base_name)
         
     handler.namer = namer
 
-    # Formateador simple que solo imprime el mensaje (que será el JSON crudo o transformado)
     formatter = logging.Formatter("%(message)s")
     handler.setFormatter(formatter)
     
@@ -61,9 +51,10 @@ def setup_provider_logger(provider: str) -> logging.Logger:
 
 def audit_event(provider: str, payload: dict):
     """
-    Guarda un evento en el archivo de auditoría del proveedor en formato estructurado multi-línea.
+    Guarda el evento simultáneamente en formato estricto (.jsonl) y formato humano (.log)
     """
-    logger = setup_provider_logger(provider)
+    logger_jsonl = setup_provider_logger(provider, format_type="jsonl")
+    logger_human = setup_provider_logger(provider, format_type="log")
     
     # Envolver el payload con metadatos útiles
     audit_record = {
@@ -72,7 +63,10 @@ def audit_event(provider: str, payload: dict):
         "payload": payload
     }
     
-    # Convertir a JSON string indentado para fácil lectura humana
-    json_str = json.dumps(audit_record, ensure_ascii=False, indent=4)
-    # Agregar un separador visual para identificar dónde termina un payload y empieza el siguiente
-    logger.info(json_str + "\n" + "-"*80)
+    # 1. Guardado JSONL estricto para máquinas
+    json_str_strict = json.dumps(audit_record, ensure_ascii=False)
+    logger_jsonl.info(json_str_strict)
+    
+    # 2. Guardado LOG formateado para humanos
+    json_str_human = json.dumps(audit_record, ensure_ascii=False, indent=4)
+    logger_human.info(json_str_human + "\n" + "-"*80)

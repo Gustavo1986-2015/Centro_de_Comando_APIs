@@ -401,7 +401,7 @@
                 <div class="card-title">Fallidos (Hoy)</div>
                 <div class="card-value" id="val-failed">0</div>
             </div>
-            <div class="card" style="border-top: 4px solid #3b82f6;">
+            <div class="card" style="border-top: 4px solid #3b82f6;" title="Tiempo promedio entre que nuestro Hub recibe el dato y lo envía a Recurso Confiable (en segundos)">
                 <div class="card-title">Latencia RC Promedio</div>
                 <div class="card-value" id="val-latency" style="color: #3b82f6;">0s</div>
             </div>
@@ -699,7 +699,8 @@
 
                 let rcHtml = `<div style="font-size:0.8rem; color:var(--color-gray); line-height: 1.4;">`;
                 rcHtml += `<div>Job ID: <span style="color:var(--color-white)">${ev.job_id || 'N/A'}</span></div>`;
-                rcHtml += `<div>Procesado / Enviado: <span style="color:var(--color-white)">${ev.time_sent || 'N/A'}</span></div>`;
+                rcHtml += `<div>Recepcionado Hub: <span style="color:var(--color-white)">${ev.time_received || 'N/A'}</span></div>`;
+                rcHtml += `<div>Enviado a RC: <span style="color:var(--color-white)">${ev.time_sent || 'N/A'}</span></div>`;
                 
                 let latencyBadge = '';
                 if (ev.latency_sec !== null && ev.latency_sec !== undefined) {
