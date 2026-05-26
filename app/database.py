@@ -15,6 +15,23 @@ def get_db_url(provider: str, env: str) -> str:
         return "sqlite:///./db/telematics_hub.db"
     return f"sqlite:///./db/{provider}_{env}.db"
 
+def check_and_migrate_db():
+    """Ejecuta una migración automática para agregar run_interval_sec a provider_config en sqlite."""
+    import sqlite3
+    db_path = "./db/telematics_hub.db"
+    if not os.path.exists(db_path):
+        return
+    try:
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        cursor.execute("PRAGMA table_info(provider_config)")
+        columns = [row[1] for row in cursor.fetchall()]
+        if columns and "run_interval_sec" not in columns:
+            cursor.execute("ALTER TABLE provider_config ADD COLUMN run_interval_sec INTEGER DEFAULT 5")
+            conn.commit()
+    except Exception:
+        pass
+
 def get_engine(provider: str, env: str = "prod"):
     """Devuelve (y crea si no existe) el motor SQLite para el proveedor y entorno dados."""
     key = f"{provider}_{env}"
@@ -25,6 +42,10 @@ def get_engine(provider: str, env: str = "prod"):
         # Crear tablas
         Base.metadata.create_all(bind=engine)
         
+        # Migración automática si es la base de datos de configuración global
+        if provider == "system_config":
+            check_and_migrate_db()
+            
         _engines[key] = engine
         _sessions[key] = sessionmaker(autocommit=False, autoflush=False, bind=engine)
         

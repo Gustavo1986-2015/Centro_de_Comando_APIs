@@ -11,3 +11,4 @@ class ProviderConfig(Base):
     rc_user = Column(String, default="")
     rc_password = Column(String, default="")
     purge_interval_min = Column(Integer, default=15)
+    run_interval_sec = Column(Integer, default=5)

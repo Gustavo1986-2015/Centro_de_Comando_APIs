@@ -459,6 +459,7 @@
                             <th>RC Usuario</th>
                             <th>RC Password</th>
                             <th>Purga (min)</th>
+                            <th>Ejecución (seg)</th>
                         </tr>
                     </thead>
                     <tbody id="config-table-body">
@@ -810,6 +811,7 @@
                             <td><input class="form-control" type="text" id="user_${c._originalIdx}" value="${c.rc_user}"></td>
                             <td><input class="form-control" type="password" id="pass_${c._originalIdx}" value="${c.rc_password}"></td>
                             <td><input class="form-control" type="number" id="purge_${c._originalIdx}" value="${c.purge_interval_min}" style="width: 80px;"></td>
+                            <td><input class="form-control" type="number" id="run_int_${c._originalIdx}" value="${c.run_interval_sec}" style="width: 80px;"></td>
                         `;
                         tbody.appendChild(tr);
                     });
@@ -825,7 +827,8 @@
                 is_active: document.getElementById(`active_${idx}`).checked,
                 rc_user: document.getElementById(`user_${idx}`).value,
                 rc_password: document.getElementById(`pass_${idx}`).value,
-                purge_interval_min: parseInt(document.getElementById(`purge_${idx}`).value) || 15
+                purge_interval_min: parseInt(document.getElementById(`purge_${idx}`).value) || 15,
+                run_interval_sec: parseInt(document.getElementById(`run_int_${idx}`).value) || 5
             }));
 
             try {

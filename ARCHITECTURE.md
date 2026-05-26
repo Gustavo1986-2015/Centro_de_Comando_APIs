@@ -33,7 +33,7 @@ Cuando en cualquier parte del código llamas a la función `get_session("nombre_
 - **`rc_soap.py`**: Implementa la clase `RCSOAPClient`. Se encarga de construir el XML feo que requiere el protocolo SOAP y dispararlo a la URL real de Recurso Confiable. Mantiene el Token en memoria.
 
 ### Carpeta `app/worker/`
-- **`processor.py`**: Es un motor infinito. Extrae los proveedores activos de la configuración maestra y usa `asyncio.gather` para abrir todas sus bases de datos en simultáneo. Busca eventos "pending", invoca a `rc_soap.py`, y marca los eventos como "sent" o "failed". También limpia datos viejos.
+- **`processor.py`**: Es un gestor de sub-workers asíncronos independientes. En lugar de un loop global y secuencial, levanta tareas independientes (`asyncio.create_task`) para cada proveedor-entorno configurado. Cada sub-worker se ejecuta de forma paralela leyendo dinámicamente de la base de datos de configuración global en cada iteración. Esto permite ajustar su intervalo de ejecución (`run_interval_sec`) o activar/desactivar proveedores en caliente desde el dashboard sin requerir reinicios. También limpia datos históricos de manera independiente.
 
 ---
 
