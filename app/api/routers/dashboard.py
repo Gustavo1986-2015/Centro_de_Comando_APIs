@@ -29,7 +29,10 @@ async def get_dashboard(request: Request):
     return templates.TemplateResponse("index.html", {"request": request})
 
 @router.get("/api/stats")
-async def get_stats():
+async def get_stats(
+    status_filter: str = Query(None, alias="status"),
+    provider_filter: str = Query(None, alias="provider")
+):
     """
     Retorna las estadísticas en tiempo real sumando los datos de
     TODAS las bases de datos SQLite de los distintos proveedores.
@@ -58,6 +61,10 @@ async def get_stats():
         provider_name = p.provider_name
         provider_env = p.env
         
+        # Filtrar si se solicitó un proveedor específico
+        if provider_filter and provider_filter.lower() != 'all' and provider_name.lower() != provider_filter.lower():
+            continue
+            
         db = get_session(provider_name, provider_env)
         try:
             total_pending += db.query(NormalizedRCEvent).filter(NormalizedRCEvent.status == "pending").count()
@@ -72,8 +79,14 @@ async def get_stats():
                 NormalizedRCEvent.created_at >= today_start
             ).count()
 
+            # Base query
+            query = db.query(NormalizedRCEvent)
+            
+            if status_filter and status_filter != 'all':
+                query = query.filter(NormalizedRCEvent.status == status_filter)
+
             # Obtener los 50 más recientes de esta BD particular
-            recent = db.query(NormalizedRCEvent).order_by(
+            recent = query.order_by(
                 NormalizedRCEvent.updated_at.desc()
             ).limit(50).all()
             

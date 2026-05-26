@@ -77,4 +77,4 @@ while True:
         print(f" -> ERROR de conexión: {str(e)}")
         
     # Esperar 30 segundos
-    time.sleep(30)
+    time.sleep(5)
