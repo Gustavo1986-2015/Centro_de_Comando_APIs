@@ -536,6 +536,28 @@
     <script>
         let currentConfigs = [];
         let statsInterval;
+        
+        // Variables globales para filtros
+        let currentStatusFilter = 'all';
+        let currentProviderFilter = 'all';
+        let allRecentEvents = [];
+        
+        function setFilterStatus(status) {
+            currentStatusFilter = status;
+            renderRecentTable();
+        }
+        
+        function setFilterProvider(provider) {
+            currentProviderFilter = provider.toLowerCase();
+            renderRecentTable();
+        }
+        
+        function resetFilters() {
+            currentStatusFilter = 'all';
+            currentProviderFilter = 'all';
+            document.getElementById('filter-provider').value = 'all';
+            renderRecentTable();
+        }
 
         // Vistas
         function switchView(view) {
