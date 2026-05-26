@@ -50,7 +50,14 @@ def map_schmitz_payload(payload: Dict[str, Any]) -> RCCanonicalModel:
     latitude = position.get("Latitude")
     longitude = position.get("Longitude")
     
-    speed = get_safe(position, ["GPSSpeed", "Value"]) or ebs.get("Velocity")
+    speed_raw = get_safe(position, ["GPSSpeed", "Value"]) or ebs.get("Velocity")
+    try:
+        if speed_raw is None or str(speed_raw).strip().lower() in ["", "null", "none"]:
+            speed = 0.0
+        else:
+            speed = float(speed_raw)
+    except Exception:
+        speed = 0.0
     
     code_val = reason.get("ItemElementName") or "1"
     code = str(code_val)
