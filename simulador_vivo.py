@@ -57,9 +57,12 @@ def generar_evento(placa):
     if "Plate" in payload:
         payload["Plate"] = placa
         
-    # 1. Generar horario local de un país europeo aleatorio (offset +00:00 a +03:00)
+    # 1. Generar horario local de un país europeo aleatorio (offset +00:00 a +03:00) con dispersión temporal en el pasado
+    # Restar de 0 a 600 segundos (hasta 10 minutos) para que las fechas GPS de los vehículos no coincidan exactamente
+    segundos_pasado = random.randint(0, 600)
+    ahora_utc = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(seconds=segundos_pasado)
+    
     offset_hours = random.choice([0, 1, 2, 3])
-    ahora_utc = datetime.datetime.now(datetime.timezone.utc)
     local_time = ahora_utc + datetime.timedelta(hours=offset_hours)
     
     if offset_hours == 0:

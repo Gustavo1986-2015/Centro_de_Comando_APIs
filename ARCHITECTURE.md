@@ -44,8 +44,8 @@ La Base de Datos Dinámica almacena **únicamente el Modelo Canónico** (las 18 
 Por lo tanto, no importa si un dato llega porque el proveedor nos lo envió (Webhooks / PUSH) o porque nosotros corrimos un CronJob para ir a buscarlo (PULL). El flujo es siempre el mismo:
 
 1. **Ingesta Cruda:** Llega el JSON inentendible (ej. `{"pos_x": -34, "temp_door": 12}`). Se guarda intacto en los **Logs de Auditoría** para respaldo.
-2. **El Mapper (La única tarea humana):** Alguien del equipo programa un archivo `mapper.py` exclusivo para este proveedor. Este script hace la traducción: `canonical.latitude = json["pos_x"]`.
-3. **Guardado Transparente:** Se pasa el objeto canónico ya traducido a la base de datos `proveedor_entorno.db`, la cual lo guarda sin hacer preguntas, porque ya viene en el idioma universal que el sistema entiende.
+2. **El Mapper (La única tarea humana):** Alguien del equipo programa un archivo `mapper.py` exclusivo para este proveedor. Este script traduce los campos de entrada y realiza la **sanitización y normalización de tipos**. Por ejemplo, si el proveedor nos envía una velocidad nula, vacía o en formato de texto como `"null"`, el mapper la convierte automáticamente a `0.0` (float) antes de guardarla.
+3. **Guardado Transparente:** Se pasa el objeto canónico ya traducido y normalizado a la base de datos `proveedor_entorno.db`, la cual lo almacena de forma consistente.
 
 ---
 
@@ -61,7 +61,7 @@ Para conectarse a los sistemas legacy de la industria (Ej. Recurso Confiable), e
 **El caso de Recurso Confiable (SOAP):**
 En lugar de ensamblar strings de XML manualmente (propenso a fallas críticas de deserialización), el Hub utiliza **Zeep** (`zeep.Client`) delegado a hilos nativos (`asyncio.to_thread`) y optimizado para **envío por lotes (batching)**:
 1. **Envío por Lotes (Batching):** El worker asíncrono agrupa los eventos pendientes (hasta un límite de 50) y los envía en una única llamada SOAP a `GPSAssetTracking` usando una lista de eventos dentro de la estructura `{'Event': [...]}`. Esto reduce significativamente la latencia total y la sobrecarga de red en entornos con múltiples APIs concurrentes.
-2. **Autenticación en tiempo real:** Se invoca `GetUserToken` contra el WSDL productivo y se mantiene el token en memoria caché (renovación automática cada 23.5 horas).
+2. **Autenticación Optimizada en Caché:** Para cumplir con la restricción de que el Token de RC dura 24 horas y no debe solicitarse en cada envío, se implementó una caché en disco (`./db/rc_token_cache.json`) y en memoria. El Hub reutiliza el token existente y solo invoca a `GetUserToken` al expirar la caché (cada 23.5 horas), al iniciar sin caché, o tras ser rechazado explícitamente por RC.
 3. **Mecanismo Robusto de Tokenización:** Si el servidor de RC responde de forma síncrona con `idJob: 0` y la excepción de negocio `CGI:UNKNOWN_TOKEN` (lo cual ocurre si el token es invalidado prematuramente por RC), el Hub invalida automáticamente el token en caché (`self._token = None`) y marca individualmente los eventos del lote como fallidos, obligando al sistema a re-autenticarse limpiamente en el siguiente ciclo.
 4. **Parseo y Trazabilidad:** Extrae posicionalmente el `idJob` (Acuse de recibo) de cada respuesta correspondiente dentro del lote, registrándolo en las bases de datos de auditoría individuales para mantener trazabilidad unitaria.
 
