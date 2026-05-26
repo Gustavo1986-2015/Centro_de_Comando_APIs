@@ -9,7 +9,7 @@ import json
 
 from app.database import get_session
 from app.models.db_models import NormalizedRCEvent
-from app.models.config_models import ProviderConfig
+from app.models.config_models import ProviderConfig, DailyStat
 from pydantic import BaseModel
 from typing import List
 
@@ -264,4 +264,21 @@ async def clear_audit_logs():
         except Exception:
             pass
     return {"status": "ok"}
+
+@router.get("/api/history")
+async def get_daily_history():
+    """Devuelve los registros históricos de estadísticas diarias consolidando los últimos 30 días."""
+    db = get_session("system_config", "global")
+    try:
+        stats = db.query(DailyStat).order_by(DailyStat.date.desc()).limit(200).all()
+        return [{
+            "id": s.id,
+            "date": s.date.strftime("%Y-%m-%d") if s.date else "",
+            "provider": s.provider.upper(),
+            "env": s.env.upper(),
+            "sent_count": s.sent_count,
+            "failed_count": s.failed_count
+        } for s in stats]
+    finally:
+        db.close()
 
