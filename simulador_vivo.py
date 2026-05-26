@@ -9,14 +9,14 @@ import glob
 # MODO ESTRÉS MASIVO
 # Si es True, inyectará 25 patentes ficticias al azar cada 2 segundos.
 # Si es False, usará las 3 placas originales cada 30 segundos.
-MODO_ESTRES = False
+MODO_ESTRES = True
 
 if MODO_ESTRES:
     PLACAS = [f"TEST-{str(i).zfill(3)}" for i in range(1, 26)]
     SEGUNDOS_ESPERA = 2
 else:
     PLACAS = ["RHR5776", "GDG8486", "JMC1236"]
-    SEGUNDOS_ESPERA = 30
+    SEGUNDOS_ESPERA = 2
 
 WEBHOOK_URL = "http://localhost:8000/schmitz/webhook?env=test"
 
@@ -72,19 +72,34 @@ print(f"Modo Estrés: {'ACTIVADO (2 seg)' if MODO_ESTRES else 'DESACTIVADO (30 s
 print("Presiona Ctrl+C para detener.")
 
 while True:
-    placa = random.choice(PLACAS)
-    evento, tipo_evento, archivo = generar_evento(placa)
-    
-    print(f"\n[{datetime.datetime.now().strftime('%H:%M:%S')}] Enviando {placa} | Archivo base: {archivo} | Tipo Alarma/Razón: {tipo_evento}")
-    
-    try:
-        response = requests.post(WEBHOOK_URL, json=evento)
-        if response.status_code == 200:
-            print(f" -> ÉXITO (HTTP 200). Respuesta: {response.text}")
-        else:
-            print(f" -> ERROR HTTP {response.status_code}. Respuesta: {response.text}")
-    except Exception as e:
-        print(f" -> ERROR de conexión: {str(e)}")
+    if MODO_ESTRES:
+        print(f"\n[{datetime.datetime.now().strftime('%H:%M:%S')}] Iniciando ráfaga de estrés: inyectando {len(PLACAS)} vehículos...")
+        exitos = 0
+        errores = 0
+        for placa in PLACAS:
+            evento, tipo_evento, archivo = generar_evento(placa)
+            try:
+                response = requests.post(WEBHOOK_URL, json=evento)
+                if response.status_code == 200 or response.status_code == 202:
+                    exitos += 1
+                else:
+                    errores += 1
+                    print(f" -> ERROR {placa}: HTTP {response.status_code}. Respuesta: {response.text}")
+            except Exception as e:
+                errores += 1
+                print(f" -> ERROR de conexión en {placa}: {str(e)}")
+        print(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] Ráfaga completada. Éxitos: {exitos} | Errores: {errores}. Esperando {SEGUNDOS_ESPERA} segundos...")
+    else:
+        placa = random.choice(PLACAS)
+        evento, tipo_evento, archivo = generar_evento(placa)
+        print(f"\n[{datetime.datetime.now().strftime('%H:%M:%S')}] Enviando {placa} | Archivo base: {archivo} | Tipo Alarma: {tipo_evento}")
+        try:
+            response = requests.post(WEBHOOK_URL, json=evento)
+            if response.status_code in [200, 202]:
+                print(f" -> ÉXITO. Respuesta: {response.text}")
+            else:
+                print(f" -> ERROR HTTP {response.status_code}. Respuesta: {response.text}")
+        except Exception as e:
+            print(f" -> ERROR de conexión: {str(e)}")
         
-    # Esperar
     time.sleep(SEGUNDOS_ESPERA)
