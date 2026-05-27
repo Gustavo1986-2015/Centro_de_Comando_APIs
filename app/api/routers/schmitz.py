@@ -81,4 +81,11 @@ async def schmitz_webhook(
     db.add(new_event)
     db.commit()
 
+    # Despertar al worker de forma instantánea
+    try:
+        from app.worker.processor import trigger_worker
+        trigger_worker("schmitz", env)
+    except Exception:
+        pass
+
     return {"status": "accepted"}

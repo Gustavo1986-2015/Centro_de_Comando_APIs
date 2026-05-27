@@ -16,6 +16,18 @@ logger = logging.getLogger(__name__)
 # Caché en memoria para rastrear reintentos por eventos fallidos debido a errores de autenticación o red
 RETRIES_CACHE = {}
 
+# Registro global de eventos para despertar a los workers de forma instantánea
+WORKER_TRIGGERS = {}
+
+def trigger_worker(provider: str, env: str):
+    """Despierta el worker correspondiente al proveedor y entorno de forma inmediata."""
+    key = f"{provider.lower()}_{env.lower()}"
+    if key in WORKER_TRIGGERS:
+        try:
+            WORKER_TRIGGERS[key].set()
+        except Exception:
+            pass
+
 async def send_batch_and_measure(canonical_events):
     start_time = time.time()
     results = await rc_client.send_events_batch(canonical_events)
@@ -334,6 +346,11 @@ async def api_worker_loop(provider: str, env: str):
     logger.info(f"Iniciando sub-worker independiente para {provider}_{env}")
     last_purge = datetime.now()
     
+    # Registrar el evento trigger para despertar de forma instantánea
+    key = f"{provider.lower()}_{env.lower()}"
+    trigger = asyncio.Event()
+    WORKER_TRIGGERS[key] = trigger
+    
     while True:
         run_interval = 5
         try:
@@ -363,7 +380,12 @@ async def api_worker_loop(provider: str, env: str):
             logger.error(f"Error en api_worker_loop para {provider}_{env}: {str(e)}")
             run_interval = 5
             
-        await asyncio.sleep(run_interval)
+        try:
+            # Esperar run_interval segundos O despertar instantáneamente si se recibe una notificación
+            await asyncio.wait_for(trigger.wait(), timeout=run_interval)
+            trigger.clear()
+        except asyncio.TimeoutError:
+            pass
 
 async def worker_loop():
     """Inicia y gestiona las corrutinas independientes para cada proveedor registrado."""
