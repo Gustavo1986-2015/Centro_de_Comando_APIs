@@ -202,7 +202,7 @@
             letter-spacing: 1px;
             position: sticky;
             top: 0;
-            background-color: var(--card-bg);
+            background-color: #1A1D24; /* Color de fondo sólido para que los datos no se traslapen al hacer scroll */
             z-index: 10;
         }
 
@@ -872,7 +872,15 @@
                     latencyBadge = `<span style="font-size: 0.7rem; background: ${c}; color: var(--color-black); font-weight: bold; padding: 2px 4px; border-radius: 4px; margin-left: 5px;" title="Tiempo de respuesta (latencia de red SOAP) de Recurso Confiable">${rcLat.toFixed(2)}s</span>`;
                 }
                 
-                rcHtml += `<div>Recepcionado RC: <span class="badge ${statusClass}" style="${badgeStyle}">${statusText}</span>${latencyBadge}</div>`;
+                let rcStatusHtml = '';
+                if (ev.status === 'sent') {
+                    rcStatusHtml = `<span style="color:var(--color-white)">${ev.time_sent}</span>`;
+                } else if (ev.status === 'failed') {
+                    rcStatusHtml = `<span class="badge failed" style="${badgeStyle}">Error</span>` + (ev.time_sent !== 'Fallido' ? ` <span style="color:var(--color-white)">${ev.time_sent}</span>` : '');
+                } else {
+                    rcStatusHtml = `<span class="badge ${statusClass}" style="${badgeStyle}">${statusText}</span>`;
+                }
+                rcHtml += `<div>Recepcionado RC: ${rcStatusHtml}${latencyBadge}</div>`;
                 if (ev.status === 'pending' && ev.retry_count && ev.retry_count > 0 && ev.next_retry_in_sec !== undefined) {
                     rcHtml += `<div style="font-size:0.7rem; color:var(--color-yellow); margin-top:2px; cursor:help;" title="Intervalos de reintentos programados:&#10;• 1° reintento: 10 segundos&#10;• 2° reintento: 45 segundos&#10;• 3° reintento: 120 segundos&#10;• 4° reintento: 300 segundos">⏳ Siguiente reintento en: ${ev.next_retry_in_sec}s</div>`;
                 }
