@@ -10,7 +10,7 @@ from concurrent.futures import ThreadPoolExecutor
 # MODO ESTRÉS MASIVO
 # Si es True, inyectará 25 patentes ficticias al azar cada 2 segundos.
 # Si es False, usará las 3 placas originales cada 30 segundos.
-MODO_ESTRES = True
+MODO_ESTRES = False
 
 if MODO_ESTRES:
     PLACAS = [f"TEST-{str(i).zfill(3)}" for i in range(1, 26)]

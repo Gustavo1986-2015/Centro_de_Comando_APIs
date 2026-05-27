@@ -146,3 +146,19 @@ Para evitar la saturación de los servidores de RC y evitar bucles infinitos por
        (Badge Amarillo en UI)
 ```
 * **Comportamiento en Cola:** El sub-worker de la API continúa ejecutándose normalmente cada $N$ segundos procesando paquetes de telemetría nuevos, omitiendo de forma inteligente cualquier evento en cola cuya marca de tiempo actual sea inferior a `next_retry_at`. Esto asegura que el canal de datos permanezca siempre operativo.
+
+---
+
+## 6. Mecanismo de Activación Instantánea del Worker (Event-Driven)
+
+Para reducir la latencia de procesamiento del Hub a prácticamente **0 segundos** y evitar el consumo innecesario de recursos (CPU y consultas repetitivas de base de datos) al escalar a múltiples APIs activas (por ejemplo, 15 o más), el sistema implementa una arquitectura orientada a eventos basada en `asyncio.Event`:
+
+1. **Registro de Triggers (`WORKER_TRIGGERS`):** Cada sub-worker (`api_worker_loop`) registra un objeto `asyncio.Event()` único asociado a su proveedor y entorno (`f"{provider}_{env}"`).
+2. **Espera Inteligente y Timeout:** En lugar de ejecutar un bucle con un sleep fijo (lo cual obligaba a los eventos entrantes a esperar hasta 5 segundos a que el worker despertara), el sub-worker realiza una espera asíncrona:
+   ```python
+   await asyncio.wait_for(trigger.wait(), timeout=run_interval)
+   ```
+   Esto mantiene al sub-worker suspendido y liberando recursos del sistema. El sub-worker se despertará automáticamente al cumplirse el timeout (polling de resguardo) o inmediatamente si el trigger es activado.
+3. **Disparo Inmediato (Push Trigger):** Cuando un webhook del proveedor (ej. `schmitz.py` o el simulador) recibe y confirma un JSON de telemetría válido, realiza el `db.commit()` y acto seguido invoca la función `trigger_worker(provider, env)`.
+4. **Despertar Instantáneo:** El evento se activa (`trigger.set()`), lo cual despierta inmediatamente al sub-worker en una fracción de milisegundo para procesar el evento recién encolado.
+5. **Escalabilidad Garantizada:** Si hay 15 o 30 APIs registradas, éstas permanecen inactivas consumiendo 0% de CPU y 0 consultas SQLite, y sólo cobran vida de forma concurrente cuando un webhook real inyecta información. Esto previene colapsos y asegura un rendimiento óptimo bajo producción pesada.
