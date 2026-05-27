@@ -532,15 +532,15 @@
                 <table>
                     <thead>
                         <tr>
-                            <th>Fecha Calendario</th>
-                            <th>Proveedor</th>
-                            <th>Entorno</th>
-                            <th style="color: var(--color-green-bright);">Enviados Exitosamente</th>
-                            <th style="color: var(--color-red);">Fallidos / Errores</th>
-                            <th>Total Procesados</th>
-                            <th style="color: var(--color-yellow);">Lat. Transmisión Promedio (GPS -> Hub)</th>
-                            <th style="color: var(--color-green-bright);">Lat. Hub Promedio (Hub -> RC)</th>
-                            <th style="color: #3b82f6;">Lat. SOAP RC Promedio (Red)</th>
+                            <th style="white-space: nowrap;" title="Fecha Calendario">Fecha</th>
+                            <th style="white-space: nowrap;">Proveedor</th>
+                            <th style="white-space: nowrap;">Entorno</th>
+                            <th style="color: var(--color-green-bright); white-space: nowrap;" title="Cantidad de envíos exitosos (Recurso Confiable recibió el ID de Job)">Enviados OK</th>
+                            <th style="color: var(--color-red); white-space: nowrap;" title="Cantidad de envíos fallidos u omitidos por error">Fallidos / Errores</th>
+                            <th style="white-space: nowrap;" title="Total de peticiones/eventos procesados">Total Procesados</th>
+                            <th style="color: var(--color-yellow); white-space: nowrap;" title="Latencia promedio desde la generación del evento en el GPS hasta su llegada al Hub de Assistcargo (GPS -> Hub)">Lat. Transmisión</th>
+                            <th style="color: var(--color-green-bright); white-space: nowrap;" title="Latencia promedio de procesamiento interno y cola en el Hub de Assistcargo (Hub -> RC)">Lat. Hub AC</th>
+                            <th style="color: #3b82f6; white-space: nowrap;" title="Latencia promedio de red SOAP de Recurso Confiable (Envío -> ID de Job)">Lat. SOAP RC</th>
                         </tr>
                     </thead>
                     <tbody id="history-table-body">
