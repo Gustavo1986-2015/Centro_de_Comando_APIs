@@ -874,9 +874,9 @@
                 
                 let rcStatusHtml = '';
                 if (ev.status === 'sent') {
-                    rcStatusHtml = `<span style="color:var(--color-white)">${ev.time_sent}</span>`;
+                    rcStatusHtml = `<span style="color:var(--color-white)">${ev.time_received_rc}</span>`;
                 } else if (ev.status === 'failed') {
-                    rcStatusHtml = `<span class="badge failed" style="${badgeStyle}">Error</span>` + (ev.time_sent !== 'Fallido' ? ` <span style="color:var(--color-white)">${ev.time_sent}</span>` : '');
+                    rcStatusHtml = `<span class="badge failed" style="${badgeStyle}">Error</span>` + (ev.time_received_rc !== 'Fallido' ? ` <span style="color:var(--color-white)">${ev.time_received_rc}</span>` : '');
                 } else {
                     rcStatusHtml = `<span class="badge ${statusClass}" style="${badgeStyle}">${statusText}</span>`;
                 }

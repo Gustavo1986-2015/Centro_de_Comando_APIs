@@ -2,7 +2,7 @@ from fastapi import APIRouter, Request, Query
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 import os
 import glob
 import json
@@ -114,14 +114,22 @@ async def get_stats(
     recent_list = []
     
     for ev in recent_events_global:
+        # Tiempos de inicio de envío y recepción a RC
+        time_sent_dt = ev.updated_at
+        time_received_rc_dt = ev.updated_at
+        
+        rc_latency_val = getattr(ev, 'rc_latency_sec', None)
+        if ev.status in ('sent', 'failed') and ev.updated_at and rc_latency_val is not None:
+            # El envío comenzó rc_latency_val segundos antes de completarse (updated_at)
+            time_sent_dt = ev.updated_at - timedelta(seconds=rc_latency_val)
+            
         latency_sec = None
-        if ev.status == 'sent' and ev.updated_at and ev.created_at:
-            latency_sec = (ev.updated_at - ev.created_at).total_seconds()
+        if ev.status in ('sent', 'failed') and time_sent_dt and ev.created_at:
+            latency_sec = max(0.0, (time_sent_dt - ev.created_at).total_seconds())
             total_latency_seconds += latency_sec
             latency_samples += 1
             
-        rc_latency_val = getattr(ev, 'rc_latency_sec', None)
-        if ev.status == 'sent' and rc_latency_val is not None:
+        if ev.status in ('sent', 'failed') and rc_latency_val is not None:
             total_rc_latency_seconds += rc_latency_val
             rc_latency_samples += 1
 
@@ -147,7 +155,8 @@ async def get_stats(
             "status": ev.status,
             "time": ev.updated_at.strftime("%Y-%m-%d %H:%M:%S (UTC)") if ev.updated_at else ev.created_at.strftime("%Y-%m-%d %H:%M:%S (UTC)"),
             "time_received": ev.created_at.strftime("%Y-%m-%d %H:%M:%S (UTC)"),
-            "time_sent": ev.updated_at.strftime("%Y-%m-%d %H:%M:%S (UTC)") if ev.status in ('sent', 'failed') and ev.updated_at else "Pendiente" if ev.status == 'pending' else "Fallido",
+            "time_sent": time_sent_dt.strftime("%Y-%m-%d %H:%M:%S (UTC)") if ev.status in ('sent', 'failed') and time_sent_dt else "Pendiente" if ev.status == 'pending' else "Fallido",
+            "time_received_rc": time_received_rc_dt.strftime("%Y-%m-%d %H:%M:%S (UTC)") if ev.status in ('sent', 'failed') and time_received_rc_dt else "Pendiente" if ev.status == 'pending' else "Fallido",
             "latency_sec": round(latency_sec, 2) if latency_sec is not None else None,
             "rc_latency_sec": round(rc_latency_val, 2) if rc_latency_val is not None else None,
             "transmission_latency_sec": transmission_latency_sec,
