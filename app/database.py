@@ -16,7 +16,7 @@ def get_db_url(provider: str, env: str) -> str:
     return f"sqlite:///./db/{provider}_{env}.db"
 
 def check_and_migrate_db():
-    """Ejecuta una migración automática para agregar run_interval_sec a provider_config en sqlite."""
+    """Ejecuta una migración automática para agregar campos que falten en sqlite."""
     import sqlite3
     db_path = "./db/telematics_hub.db"
     if not os.path.exists(db_path):
@@ -24,11 +24,24 @@ def check_and_migrate_db():
     try:
         conn = sqlite3.connect(db_path)
         cursor = conn.cursor()
+        
+        # 1. Migración para provider_config
         cursor.execute("PRAGMA table_info(provider_config)")
         columns = [row[1] for row in cursor.fetchall()]
         if columns and "run_interval_sec" not in columns:
             cursor.execute("ALTER TABLE provider_config ADD COLUMN run_interval_sec INTEGER DEFAULT 5")
             conn.commit()
+            
+        # 2. Migración para daily_stats
+        cursor.execute("PRAGMA table_info(daily_stats)")
+        columns_stats = [row[1] for row in cursor.fetchall()]
+        if columns_stats:
+            if "avg_transmission_latency_sec" not in columns_stats:
+                cursor.execute("ALTER TABLE daily_stats ADD COLUMN avg_transmission_latency_sec REAL")
+                conn.commit()
+            if "avg_hub_latency_sec" not in columns_stats:
+                cursor.execute("ALTER TABLE daily_stats ADD COLUMN avg_hub_latency_sec REAL")
+                conn.commit()
     except Exception:
         pass
 
