@@ -223,7 +223,9 @@ def update_daily_stats(provider: str, env: str):
         
         for ev in sent_events:
             if ev.updated_at and ev.created_at:
-                hub_latencies.append((ev.updated_at - ev.created_at).total_seconds())
+                rc_lat = getattr(ev, 'rc_latency_sec', None) or 0.0
+                hub_lat = max(0.0, (ev.updated_at - ev.created_at).total_seconds() - rc_lat)
+                hub_latencies.append(hub_lat)
             if ev.date and ev.created_at:
                 created_naive = ev.created_at.replace(tzinfo=None)
                 transmission_latencies.append(max(0.0, (created_naive - ev.date).total_seconds()))
