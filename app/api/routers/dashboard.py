@@ -122,6 +122,8 @@ async def get_stats(
         if ev.status in ('sent', 'failed') and ev.updated_at and rc_latency_val is not None:
             # El envío comenzó rc_latency_val segundos antes de completarse (updated_at)
             time_sent_dt = ev.updated_at - timedelta(seconds=rc_latency_val)
+            if time_sent_dt < ev.created_at:
+                time_sent_dt = ev.created_at
             
         latency_sec = None
         if ev.status in ('sent', 'failed') and time_sent_dt and ev.created_at:
