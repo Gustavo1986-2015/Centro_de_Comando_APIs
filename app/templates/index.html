@@ -780,7 +780,7 @@
                 else if (ev.status === 'pending' && ev.retry_count && ev.retry_count > 0) {
                     statusClass = 'pending';
                     statusText = `Reintento ${ev.retry_count}/4`;
-                    badgeStyle = 'background: rgba(251, 191, 36, 0.2); color: var(--color-yellow); border: 1px dashed var(--color-yellow);';
+                    badgeStyle = 'background: rgba(251, 191, 36, 0.15); color: var(--color-yellow); border: 1px solid rgba(251, 191, 36, 0.4); padding: 0.15rem 0.6rem; font-size: 0.75rem;';
                 }
 
                 let badgeClass = 'pending';
@@ -821,7 +821,7 @@
                 
                 rcHtml += `<div>Recepcionado RC: <span class="badge ${statusClass}" style="${badgeStyle}">${statusText}</span>${latencyBadge}</div>`;
                 if (ev.status === 'pending' && ev.retry_count && ev.retry_count > 0 && ev.next_retry_in_sec !== undefined) {
-                    rcHtml += `<div style="font-size:0.7rem; color:var(--color-yellow); margin-top:2px;">⏳ sgte: ${ev.next_retry_in_sec}s</div>`;
+                    rcHtml += `<div style="font-size:0.7rem; color:var(--color-yellow); margin-top:2px; cursor:help;" title="Intervalos de reintentos programados:&#10;• 1° reintento: 10 segundos&#10;• 2° reintento: 45 segundos&#10;• 3° reintento: 120 segundos&#10;• 4° reintento: 300 segundos">⏳ Siguiente reintento en: ${ev.next_retry_in_sec}s</div>`;
                 }
                 
                 const jsonPayload = encodeURIComponent(JSON.stringify(ev.rc_format, null, 2));
@@ -845,7 +845,7 @@
                 
                 let statusHtml = `<span class="badge ${statusClass}" style="${badgeStyle}">${statusText.toUpperCase()}</span>`;
                 if (ev.status === 'pending' && ev.retry_count && ev.retry_count > 0 && ev.next_retry_in_sec !== undefined) {
-                    statusHtml += `<br><span style="font-size:0.7rem; color:var(--color-yellow); display:inline-block; margin-top:2px;">⏳ sgte: ${ev.next_retry_in_sec}s</span>`;
+                    statusHtml += `<br><span style="font-size:0.7rem; color:var(--color-yellow); display:inline-block; margin-top:2px; cursor:help;" title="Intervalos de reintentos programados:&#10;• 1° reintento: 10 segundos&#10;• 2° reintento: 45 segundos&#10;• 3° reintento: 120 segundos&#10;• 4° reintento: 300 segundos">⏳ Siguiente reintento en: ${ev.next_retry_in_sec}s</span>`;
                 }
                 statusHtml += `<br><span style="font-size:0.75rem; color:var(--color-gray); display:inline-block; margin-top:4px;">${fallbackTime}</span>`;
                 

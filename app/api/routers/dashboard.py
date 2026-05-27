@@ -135,7 +135,7 @@ async def get_stats(
             "status": ev.status,
             "time": ev.updated_at.strftime("%Y-%m-%d %H:%M:%S (UTC)") if ev.updated_at else ev.created_at.strftime("%Y-%m-%d %H:%M:%S (UTC)"),
             "time_received": ev.created_at.strftime("%Y-%m-%d %H:%M:%S (UTC)"),
-            "time_sent": ev.updated_at.strftime("%Y-%m-%d %H:%M:%S (UTC)") if ev.updated_at else "Pendiente",
+            "time_sent": ev.updated_at.strftime("%Y-%m-%d %H:%M:%S (UTC)") if ev.status == 'sent' and ev.updated_at else "Pendiente" if ev.status == 'pending' else "Fallido",
             "latency_sec": round(latency_sec, 2) if latency_sec is not None else None,
             "rc_response": getattr(ev, 'rc_response', ""),
             "provider": getattr(ev, 'provider_name', "N/A").upper(),
