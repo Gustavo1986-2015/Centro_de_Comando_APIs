@@ -440,6 +440,7 @@
                         <option value="high" style="color: black; background: white;">Alta (≥ 10s)</option>
                     </select>
                     <button class="btn-save" onclick="resetFilters()" style="background: rgba(255,255,255,0.1); color: white; padding: 4px 8px;">Quitar Filtros</button>
+                    <button class="btn-save" onclick="downloadExcel()" style="background: #10B981; color: white; padding: 4px 8px;" title="Descargar registros filtrados en formato Excel (CSV)">📥 Descargar Excel</button>
                 </div>
             </div>
             <div class="table-container" style="max-height: 500px; overflow-y: auto;">
@@ -626,6 +627,121 @@
             document.getElementById('filter-provider').value = 'all';
             document.getElementById('filter-latency').value = 'all';
             renderRecentTable();
+        }
+
+        function downloadExcel() {
+            let filtered = allRecentEvents;
+            
+            if (currentStatusFilter !== 'all') {
+                filtered = filtered.filter(ev => ev.status === currentStatusFilter);
+            }
+            if (currentProviderFilter !== 'all') {
+                filtered = filtered.filter(ev => ev.provider.toLowerCase() === currentProviderFilter);
+            }
+            if (currentLatencyFilter !== 'all') {
+                filtered = filtered.filter(ev => {
+                    const lat = ev.rc_latency_sec !== null && ev.rc_latency_sec !== undefined ? ev.rc_latency_sec : ev.latency_sec;
+                    if (lat === null || lat === undefined) return false;
+                    if (currentLatencyFilter === 'low') return lat <= 2;
+                    if (currentLatencyFilter === 'medium') return lat > 2 && lat <= 9;
+                    if (currentLatencyFilter === 'high') return lat >= 10;
+                    return true;
+                });
+            }
+            
+            if (filtered.length === 0) {
+                alert("No hay datos en pantalla para exportar.");
+                return;
+            }
+            
+            const headers = [
+                "Proveedor", "Entorno", "Activo / Patente", "Estado", "Última Actualización",
+                "Fecha GPS", "Latencia Transmisión", "Coordenadas", "Dirección", "Altitud",
+                "Velocidad", "Ignición", "Batería", "Temperatura", "Odómetro", "Código EV",
+                "Job ID", "Recepcionado Assistcargo", "Enviado a RC", "Latencia Hub AC",
+                "Recepcionado RC", "Latencia RC", "Respuesta RC (Error)"
+            ];
+            
+            let csvRows = [];
+            csvRows.push(headers.join(";"));
+            
+            filtered.forEach(ev => {
+                let statusText = 'En Cola';
+                if (ev.status === 'sent') statusText = 'Enviado';
+                else if (ev.status === 'failed') statusText = 'Error';
+                else if (ev.status === 'pending' && ev.retry_count > 0) statusText = `Reintento ${ev.retry_count}/4`;
+                
+                let transSec = ev.transmission_latency_sec;
+                let displayTrans = 'N/A';
+                if (transSec !== null && transSec !== undefined) {
+                    displayTrans = transSec >= 60 ? `${Math.floor(transSec / 60)}m ${Math.round(transSec % 60)}s` : `${transSec.toFixed(1)}s`;
+                }
+                
+                let lat = ev.latency_sec;
+                let displayHub = 'N/A';
+                if (lat !== null && lat !== undefined) {
+                    displayHub = lat >= 60 ? `${Math.floor(lat / 60)}m ${Math.round(lat % 60)}s` : `${lat.toFixed(2)}s`;
+                }
+
+                let rcLat = ev.rc_latency_sec;
+                let displayRc = 'N/A';
+                if (rcLat !== null && rcLat !== undefined) {
+                    displayRc = `${rcLat.toFixed(2)}s`;
+                }
+                
+                let timeSentText = ev.time_sent || 'N/A';
+                let timeReceivedRcText = ev.time_received_rc || 'N/A';
+                
+                const row = [
+                    ev.provider.toUpperCase(),
+                    ev.env.toUpperCase(),
+                    ev.chassis,
+                    statusText.toUpperCase(),
+                    ev.time || 'N/A',
+                    ev.device_date || 'N/A',
+                    displayTrans,
+                    ev.coords || 'Sin GPS',
+                    ev.course !== null ? ev.course + '°' : 'N/A',
+                    ev.altitude !== null ? ev.altitude + 'm' : 'N/A',
+                    ev.speed + ' km/h',
+                    ev.ignition,
+                    ev.battery !== null ? ev.battery + '%' : 'N/A',
+                    ev.temperature !== null ? ev.temperature + '°' : 'N/A',
+                    ev.odometer !== null ? ev.odometer : 'N/A',
+                    ev.code || 'N/A',
+                    ev.job_id || 'N/A',
+                    ev.time_received || 'N/A',
+                    timeSentText,
+                    displayHub,
+                    timeReceivedRcText,
+                    displayRc,
+                    ev.rc_response ? ev.rc_response.replace(/[\n\r;]/g, " ") : ""
+                ];
+                
+                const sanitizedRow = row.map(val => {
+                    let s = String(val);
+                    if (s.includes(";") || s.includes('"') || s.includes("\n")) {
+                        s = '"' + s.replace(/"/g, '""') + '"';
+                    }
+                    return s;
+                });
+                
+                csvRows.push(sanitizedRow.join(";"));
+            });
+            
+            const csvString = "\uFEFF" + csvRows.join("\n");
+            const blob = new Blob([csvString], { type: "text/csv;charset=utf-8;" });
+            
+            const link = document.createElement("a");
+            const url = URL.createObjectURL(blob);
+            link.setAttribute("href", url);
+            
+            const cleanDate = new Date().toISOString().slice(0, 10);
+            link.setAttribute("download", `reporte_actividad_comando_${cleanDate}.csv`);
+            link.style.visibility = 'hidden';
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
         }
 
         // Vistas
