@@ -39,3 +39,4 @@ class NormalizedRCEvent(Base):
     # Trazabilidad
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+    rc_latency_sec = Column(Float, nullable=True)

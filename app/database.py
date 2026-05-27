@@ -42,6 +42,27 @@ def check_and_migrate_db():
             if "avg_hub_latency_sec" not in columns_stats:
                 cursor.execute("ALTER TABLE daily_stats ADD COLUMN avg_hub_latency_sec REAL")
                 conn.commit()
+            if "avg_rc_latency_sec" not in columns_stats:
+                cursor.execute("ALTER TABLE daily_stats ADD COLUMN avg_rc_latency_sec REAL")
+                conn.commit()
+    except Exception:
+        pass
+
+def check_and_migrate_provider_db(provider: str, env: str):
+    """Ejecuta una migración automática para agregar rc_latency_sec a normalized_rc_events en sqlite."""
+    import sqlite3
+    url = get_db_url(provider, env)
+    db_path = url.replace("sqlite:///./", "./")
+    if not os.path.exists(db_path):
+        return
+    try:
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        cursor.execute("PRAGMA table_info(normalized_rc_events)")
+        columns = [row[1] for row in cursor.fetchall()]
+        if columns and "rc_latency_sec" not in columns:
+            cursor.execute("ALTER TABLE normalized_rc_events ADD COLUMN rc_latency_sec REAL")
+            conn.commit()
     except Exception:
         pass
 
@@ -61,9 +82,11 @@ def get_engine(provider: str, env: str = "prod"):
         # Crear tablas
         Base.metadata.create_all(bind=engine)
         
-        # Migración automática si es la base de datos de configuración global
+        # Migración automática
         if provider == "system_config":
             check_and_migrate_db()
+        else:
+            check_and_migrate_provider_db(provider, env)
             
         _engines[key] = engine
         _sessions[key] = sessionmaker(autocommit=False, autoflush=False, bind=engine)

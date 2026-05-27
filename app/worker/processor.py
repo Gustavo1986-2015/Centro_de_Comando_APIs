@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import time
 from sqlalchemy.orm import Session
 from datetime import datetime, timezone, timedelta, date
 
@@ -14,6 +15,12 @@ logger = logging.getLogger(__name__)
 
 # Caché en memoria para rastrear reintentos por eventos fallidos debido a errores de autenticación o red
 RETRIES_CACHE = {}
+
+async def send_batch_and_measure(canonical_events):
+    start_time = time.time()
+    results = await rc_client.send_events_batch(canonical_events)
+    elapsed = time.time() - start_time
+    return results, elapsed
 
 def get_active_providers():
     db = get_session("system_config", "global")
@@ -78,8 +85,8 @@ async def process_provider_events(provider: str, env: str):
                 )
                 canonical_events.append(canonical_event)
             
-            # Agregar tarea de despacho SOAP asíncrona
-            soap_tasks.append(rc_client.send_events_batch(canonical_events))
+            # Agregar tarea de despacho SOAP asíncrona midiendo su tiempo
+            soap_tasks.append(send_batch_and_measure(canonical_events))
             
         # 3. Disparar todos los sub-lotes en paralelo (concurrencia de red)
         logger.info(f"Enviando {len(pendings)} eventos en {len(batches)} sub-lote(s) en paralelo para {provider}_{env}")
@@ -87,14 +94,15 @@ async def process_provider_events(provider: str, env: str):
         
         # 4. Procesar y guardar resultados de forma secuencial en una única transacción de base de datos
         for batch_idx, batch in enumerate(batches):
-            results = batches_results[batch_idx]
+            batch_outcome = batches_results[batch_idx]
             
             # Manejar excepciones completas de red/transporte para todo el sub-lote
-            if isinstance(results, Exception):
-                logger.error(f"Excepción general en sub-lote {batch_idx + 1} para {provider}_{env}: {results}")
+            if isinstance(batch_outcome, Exception):
+                logger.error(f"Excepción general en sub-lote {batch_idx + 1} para {provider}_{env}: {batch_outcome}")
                 for db_event in batch:
-                    db_event.rc_response = f"Excepción de transporte: {str(results)}"
+                    db_event.rc_response = f"Excepción de transporte: {str(batch_outcome)}"
                     db_event.job_id = f"rc_conn_err_{int(datetime.now().timestamp())}"
+                    db_event.rc_latency_sec = None
                     
                     event_key = f"{provider}_{env}_{db_event.id}"
                     current_retries = RETRIES_CACHE.get(event_key, {}).get("count", 0)
@@ -117,6 +125,8 @@ async def process_provider_events(provider: str, env: str):
                         logger.error(f"Excedidos los 4 reintentos de red para evento {db_event.id}. Marcado FAILED definitivo.")
                 continue
                 
+            results, elapsed_sec = batch_outcome
+            
             # Procesar acuse de recibo de eventos individuales dentro del sub-lote
             for idx, db_event in enumerate(batch):
                 try:
@@ -124,6 +134,7 @@ async def process_provider_events(provider: str, env: str):
                     
                     db_event.rc_response = rc_response
                     db_event.job_id = job_id
+                    db_event.rc_latency_sec = elapsed_sec
                     
                     if success:
                         db_event.status = "sent"
@@ -196,6 +207,7 @@ def update_daily_stats(provider: str, env: str):
         
         hub_latencies = []
         transmission_latencies = []
+        rc_latencies = []
         
         for ev in sent_events:
             if ev.updated_at and ev.created_at:
@@ -203,14 +215,19 @@ def update_daily_stats(provider: str, env: str):
             if ev.date and ev.created_at:
                 created_naive = ev.created_at.replace(tzinfo=None)
                 transmission_latencies.append(max(0.0, (created_naive - ev.date).total_seconds()))
+            if getattr(ev, 'rc_latency_sec', None) is not None:
+                rc_latencies.append(ev.rc_latency_sec)
                 
         for ev in failed_events:
             if ev.date and ev.created_at:
                 created_naive = ev.created_at.replace(tzinfo=None)
                 transmission_latencies.append(max(0.0, (created_naive - ev.date).total_seconds()))
+            if getattr(ev, 'rc_latency_sec', None) is not None:
+                rc_latencies.append(ev.rc_latency_sec)
                 
         avg_hub = sum(hub_latencies) / len(hub_latencies) if hub_latencies else None
         avg_transmission = sum(transmission_latencies) / len(transmission_latencies) if transmission_latencies else None
+        avg_rc = sum(rc_latencies) / len(rc_latencies) if rc_latencies else None
         
     except Exception as e:
         logger.error(f"Error al contar estadísticas de hoy para {provider}_{env}: {e}")
@@ -235,7 +252,8 @@ def update_daily_stats(provider: str, env: str):
                 sent_count=sent_count,
                 failed_count=failed_count,
                 avg_transmission_latency_sec=avg_transmission,
-                avg_hub_latency_sec=avg_hub
+                avg_hub_latency_sec=avg_hub,
+                avg_rc_latency_sec=avg_rc
             )
             db_global.add(stat)
         else:
@@ -243,6 +261,7 @@ def update_daily_stats(provider: str, env: str):
             stat.failed_count = failed_count
             stat.avg_transmission_latency_sec = avg_transmission
             stat.avg_hub_latency_sec = avg_hub
+            stat.avg_rc_latency_sec = avg_rc
             
         db_global.commit()
     except Exception as e:

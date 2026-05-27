@@ -109,6 +109,8 @@ async def get_stats(
 
     total_latency_seconds = 0
     latency_samples = 0
+    total_rc_latency_seconds = 0
+    rc_latency_samples = 0
     recent_list = []
     
     for ev in recent_events_global:
@@ -118,6 +120,11 @@ async def get_stats(
             total_latency_seconds += latency_sec
             latency_samples += 1
             
+        rc_latency_val = getattr(ev, 'rc_latency_sec', None)
+        if ev.status == 'sent' and rc_latency_val is not None:
+            total_rc_latency_seconds += rc_latency_val
+            rc_latency_samples += 1
+
         transmission_latency_sec = None
         if ev.date and ev.created_at:
             created_naive = ev.created_at.replace(tzinfo=None)
@@ -142,6 +149,7 @@ async def get_stats(
             "time_received": ev.created_at.strftime("%Y-%m-%d %H:%M:%S (UTC)"),
             "time_sent": ev.updated_at.strftime("%Y-%m-%d %H:%M:%S (UTC)") if ev.status == 'sent' and ev.updated_at else "Pendiente" if ev.status == 'pending' else "Fallido",
             "latency_sec": round(latency_sec, 2) if latency_sec is not None else None,
+            "rc_latency_sec": round(rc_latency_val, 2) if rc_latency_val is not None else None,
             "transmission_latency_sec": transmission_latency_sec,
             "rc_response": getattr(ev, 'rc_response', ""),
             "provider": getattr(ev, 'provider_name', "N/A").upper(),
@@ -188,6 +196,7 @@ async def get_stats(
         })
 
     avg_latency = round(total_latency_seconds / latency_samples, 2) if latency_samples > 0 else 0
+    avg_rc_latency = round(total_rc_latency_seconds / rc_latency_samples, 2) if rc_latency_samples > 0 else 0
 
     return {
         "pending": total_pending,
@@ -195,6 +204,7 @@ async def get_stats(
         "failed": total_failed,
         "retries": len(RETRIES_CACHE),
         "avg_latency_sec": avg_latency,
+        "avg_rc_latency_sec": avg_rc_latency,
         "recent": recent_list
     }
 
@@ -303,7 +313,8 @@ async def get_daily_history():
             "sent_count": s.sent_count,
             "failed_count": s.failed_count,
             "avg_transmission_latency_sec": round(s.avg_transmission_latency_sec, 2) if s.avg_transmission_latency_sec is not None else None,
-            "avg_hub_latency_sec": round(s.avg_hub_latency_sec, 2) if s.avg_hub_latency_sec is not None else None
+            "avg_hub_latency_sec": round(s.avg_hub_latency_sec, 2) if s.avg_hub_latency_sec is not None else None,
+            "avg_rc_latency_sec": round(s.avg_rc_latency_sec, 2) if s.avg_rc_latency_sec is not None else None
         } for s in stats]
     finally:
         db.close()
