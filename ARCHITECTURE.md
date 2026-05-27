@@ -93,6 +93,8 @@ Contiene los esquemas globales y la parametrización de comportamiento de las AP
   * `provider` (string): Nombre de la API.
   * `env` (string): Entorno.
   * `sent_count` / `failed_count` (integers): Histórico permanente diario.
+  * `avg_transmission_latency_sec` (float): Promedio de latencia de red/satelital del proveedor del día.
+  * `avg_hub_latency_sec` (float): Promedio de procesamiento y cola del Hub de Assistcargo del día.
 
 ### 2. Bases de Datos de Proveedores (Ej. `schmitz_prod.db`, `schmitz_test.db`)
 Contienen una única tabla central optimizada para indexación y consumo rápido:
