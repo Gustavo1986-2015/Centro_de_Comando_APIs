@@ -5,8 +5,9 @@ Hub Telemático corporativo para recibir, parsear y encolar eventos GPS provenie
 ## 🚀 Arquitectura del Sistema
 El sistema ha sido diseñado para escalar a más de 15 proveedores simultáneos con cero pérdida de rendimiento, empleando un diseño moderno y seguro.
 
-- **Multi-Base de Datos (SQLite Aisaldo):** Cada proveedor y entorno genera su propio archivo de base de datos dinámico (`schmitz_prod.db`, `schmitz_test.db`). Esto previene bloqueos por concurrencia y mantiene los datos de pruebas separados de producción.
-- **Worker Concurrente (`asyncio.gather`):** El procesamiento en segundo plano no lee los proveedores uno a uno. Lee todas las bases de datos simultáneamente en paralelo, maximizando el rendimiento (Real-time data stream).
+- **Multi-Base de Datos (SQLite Aislado):** Cada proveedor y entorno genera su propio archivo de base de datos dinámico (`schmitz_prod.db`, `schmitz_test.db`). Esto previene bloqueos por concurrencia y mantiene los datos de pruebas separados de producción.
+- **Worker Concurrente Multi-Lote (`asyncio.gather`):** El procesamiento en segundo plano paraleliza el envío. Si se detecta un gran volumen de pendientes, los agrupa en sub-lotes de 50 eventos y los envía concurrentemente a Recurso Confiable. Los resultados se guardan secuencialmente en una sola transacción atómica, evitando el bloqueo de SQLite.
+- **Reintentos Asíncronos con Backoff Lineal:** Cuando un envío falla por problemas temporales de red o autenticación, el evento permanece en base de datos como `pending`. Se encola en memoria (`RETRIES_CACHE`) con tiempos de espera progresivos (1° intento: +10s, 2° intento: +45s, 3° intento: +120s, 4° intento: +300s, máx 4 intentos). El worker omite de forma inteligente estos eventos hasta cumplir su backoff, dejando que el resto del tráfico fluya de inmediato.
 - **Modelo Canónico (Pydantic):** Validación estricta. Todo lo que ingresa de un externo se transforma a un formato estándar de Assistcargo antes de viajar a Recurso Confiable.
 - **Seguridad Perimetral (Toggle Switch):** Los Webhooks receptores cuentan con validación de "API Keys" mediante cabeceras HTTP, las cuales pueden activarse/desactivarse en caliente desde el archivo `.env` para facilitar pruebas.
 - **Auditoría Dinámica:** Cada payload crudo recibido se guarda instantáneamente en un `.jsonl` rotativo por proveedor, actuando como la "caja negra" del sistema.
@@ -21,10 +22,15 @@ El sistema ha sido diseñado para escalar a más de 15 proveedores simultáneos 
 ## 🎛️ Dashboard y Panel de Administración
 El servidor incluye una interfaz web interactiva (Vanilla JS, CSS Premium, sin frameworks pesados) para la gestión visual del Hub.
 
-- **Dashboard Principal:** Métricas en tiempo real (Pendientes, Enviados, Fallidos) y streaming de la última actividad global.
+- **Dashboard Principal:** Métricas en tiempo real (Pendientes, Enviados, Fallidos, Reintentos) y streaming de la última actividad global.
+- **Doble Capa de Visibilidad de Latencia:** 
+  - *Latencia de Transmisión:* Muestra en la columna Localización el retraso satelital/celular externo desde que el GPS del camión reportó el dato hasta que ingresó a Assistcargo.
+  - *Latencia del Hub (Hub: Xs):* Muestra de forma destacada en verde brillante cuánto tiempo exacto demoró el Hub de Assistcargo en procesar y despachar el dato a RC una vez recibido en nuestra API.
+- **Filtros Interactivos:** Filtrado dinámico instantáneo en el DOM por proveedor y por rangos de latencia de RC (Baja $\le$ 2s, Media 3-9s, Alta $\ge$ 10s).
+- **Historial Diario:** Pestaña dedicada con un registro histórico consolidado persistente (`daily_stats`) de procesados, enviados y fallidos por día calendario de forma permanente.
 - **Configuración Global:** Panel visual para activar/desactivar el procesamiento de cada proveedor, establecer credenciales de RC y ajustar los intervalos de purga. Modifica dinámicamente el archivo `system_config_global.db`.
 - **Logs de Auditoría:** Pantalla para inspeccionar en vivo los JSONs crudos que están ingresando al sistema.
-- **Simulador de Webhooks:** Herramienta interna para inyectar payloads de prueba. Permite copiar/pegar un JSON real de un proveedor (ej. Schmitz) y dispararlo directamente al entorno de `TEST` para validar el comportamiento del sistema sin ensuciar producción.
+- **Simulador de Webhooks:** Herramienta interna para inyectar payloads de prueba. Permite copiar/pegar un JSON real de un proveedor (ej. Schmitz) y dispararlo directamente al entorno de `TEST` para validar el comportamiento del sistema sin ensuciar producción. Incorpora dispersión horaria europea para simular escenarios reales de tráfico.
 
 ## 💻 Ejecución en Desarrollo (Local)
 1. Instalar dependencias:

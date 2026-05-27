@@ -33,8 +33,11 @@ Cuando en cualquier parte del código llamas a la función `get_session("nombre_
 - **`rc_soap.py`**: Implementa la clase `RCSOAPClient`. Se encarga de construir el XML feo que requiere el protocolo SOAP y dispararlo a la URL real de Recurso Confiable. Mantiene el Token en memoria.
 
 ### Carpeta `app/worker/`
-- **`processor.py`**: Es un gestor de sub-workers asíncronos independientes. En lugar de un loop global y secuencial, levanta tareas independientes (`asyncio.create_task`) para cada proveedor-entorno configurado. Cada sub-worker se ejecuta de forma paralela leyendo dinámicamente de la base de datos de configuración global en cada iteración. Esto permite ajustar su intervalo de ejecución (`run_interval_sec`) o activar/desactivar proveedores en caliente desde el dashboard sin requerir reinicios. También limpia datos históricos de manera independiente.
-
+- **`processor.py`**: Es un gestor de sub-workers asíncronos independientes. En lugar de un loop global y secuencial, levanta tareas independientes (`asyncio.create_task`) para cada proveedor-entorno configurado. 
+  - **Concurrencia por Sub-Lotes:** En cada iteración, si hay más de 50 eventos pendientes, el procesador los particiona en sub-lotes de 50 y ejecuta llamadas SOAP concurrentes en paralelo con `asyncio.gather(*tasks)`, reduciendo el cuello de botella de red y optimizando la tasa de transferencia.
+  - **Caché en Memoria para Reintentos con Backoff:** Para fallas temporales de red o de autenticación, el worker mantiene la caché en memoria `RETRIES_CACHE` donde asocia el ID del evento con su número de intentos y una marca de tiempo futura (`next_retry_at`). Esto aplica un backoff progresivo (10s, 45s, 120s y 300s) y evita que eventos fallidos bloqueen el despacho del tráfico en tiempo real.
+  - **Estadísticas Diarias (`DailyStat`):** Al concluir el ciclo, se ejecuta `update_daily_stats()` de forma asincrónica. Cuenta los totales procesados en el día en curso en la BD del proveedor y los persiste en la tabla global de estadísticas `daily_stats` dentro del `.db` maestro, garantizando históricos permanentes para la interfaz de administración.
+  
 ---
 
 ## 3. El Traductor (Mapper) y el Paradigma Push vs Pull
