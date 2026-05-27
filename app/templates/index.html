@@ -789,8 +789,21 @@
 
                 let rawHtml = `<pre style="font-size:0.7rem; background:rgba(0,0,0,0.5); padding:10px; border-radius:4px; max-height:150px; overflow-y:auto; color:var(--color-green-bright); margin-top:5px; white-space:pre-wrap;">${JSON.stringify(ev.rc_format, null, 2)}</pre>`;
 
+                let transmissionHtml = '';
+                if (ev.transmission_latency_sec !== null && ev.transmission_latency_sec !== undefined) {
+                    let transSec = ev.transmission_latency_sec;
+                    let displayTime = transSec + 's';
+                    if (transSec >= 60) {
+                        let m = Math.floor(transSec / 60);
+                        let s = transSec % 60;
+                        displayTime = `${m}m ${s}s`;
+                    }
+                    transmissionHtml = `<div>Latencia Transmisión: <span style="color:var(--color-yellow); font-weight:bold;" title="Tiempo transcurrido entre el reporte del equipo GPS en el camión y la recepción del dato en Assistcargo">${displayTime}</span></div>`;
+                }
+
                 let locHtml = `<div style="font-size:0.8rem; color:var(--color-gray); line-height: 1.4;">`;
                 locHtml += `<div>Fecha GPS: <span style="color:var(--color-white); font-weight:bold;">${ev.device_date}</span></div>`;
+                locHtml += transmissionHtml;
                 locHtml += `<div>Coords: <span style="color:var(--color-white)">${ev.coords}</span></div>`;
                 locHtml += `<div>Dir: <span style="color:var(--color-white)">${ev.course !== null ? ev.course + '°' : 'N/A'}</span> | Alt: <span style="color:var(--color-white)">${ev.altitude !== null ? ev.altitude + 'm' : 'N/A'}</span></div>`;
                 locHtml += `</div>`;
@@ -811,7 +824,19 @@
                 }
                 rcHtml += `<div>Job ID: <span style="${jobStyle}">${ev.job_id || 'N/A'}</span></div>`;
                 rcHtml += `<div>Recepcionado Assistcargo: <span style="color:var(--color-white)">${ev.time_received || 'N/A'}</span></div>`;
-                rcHtml += `<div>Enviado a RC: <span style="color:var(--color-white)">${ev.time_sent || 'N/A'}</span></div>`;
+                
+                let internalLatencyHtml = '';
+                if (ev.status === 'sent' && ev.latency_sec !== null && ev.latency_sec !== undefined) {
+                    let lat = ev.latency_sec;
+                    let displayLat = lat + 's';
+                    if (lat >= 60) {
+                        let m = Math.floor(lat / 60);
+                        let s = Math.round(lat % 60);
+                        displayLat = `${m}m ${s}s`;
+                    }
+                    internalLatencyHtml = ` <span style="color:var(--color-green-bright); font-size:0.75rem; font-weight:bold;" title="Tiempo total de procesamiento y espera en cola en el Hub de Assistcargo">(Hub: ${displayLat})</span>`;
+                }
+                rcHtml += `<div>Enviado a RC: <span style="color:var(--color-white)">${ev.time_sent || 'N/A'}</span>${internalLatencyHtml}</div>`;
                 
                 let latencyBadge = '';
                 if (ev.latency_sec !== null && ev.latency_sec !== undefined) {
