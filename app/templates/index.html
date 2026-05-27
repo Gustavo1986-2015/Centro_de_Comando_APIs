@@ -527,6 +527,8 @@
                             <th style="color: var(--color-green-bright);">Enviados Exitosamente</th>
                             <th style="color: var(--color-red);">Fallidos / Errores</th>
                             <th>Total Procesados</th>
+                            <th style="color: var(--color-yellow);">Lat. Transmisión Promedio (GPS -> Hub)</th>
+                            <th style="color: var(--color-green-bright);">Lat. Hub Promedio (Hub -> RC)</th>
                         </tr>
                     </thead>
                     <tbody id="history-table-body">
@@ -655,13 +657,26 @@
                 tbody.innerHTML = '';
                 
                 if (data.length === 0) {
-                    tbody.innerHTML = '<tr><td colspan="6" style="text-align:center; color: var(--color-gray)">No hay registros históricos consolidados aún.</td></tr>';
+                    tbody.innerHTML = '<tr><td colspan="8" style="text-align:center; color: var(--color-gray)">No hay registros históricos consolidados aún.</td></tr>';
                     return;
                 }
                 
                 data.forEach(row => {
                     const tr = document.createElement('tr');
                     const total = (row.sent_count || 0) + (row.failed_count || 0);
+                    
+                    let transText = 'N/A';
+                    if (row.avg_transmission_latency_sec !== null && row.avg_transmission_latency_sec !== undefined) {
+                        let t = row.avg_transmission_latency_sec;
+                        transText = t >= 60 ? `${Math.floor(t / 60)}m ${Math.round(t % 60)}s` : `${t.toFixed(1)}s`;
+                    }
+                    
+                    let hubText = 'N/A';
+                    if (row.avg_hub_latency_sec !== null && row.avg_hub_latency_sec !== undefined) {
+                        let h = row.avg_hub_latency_sec;
+                        hubText = h >= 60 ? `${Math.floor(h / 60)}m ${Math.round(h % 60)}s` : `${h.toFixed(1)}s`;
+                    }
+
                     tr.innerHTML = `
                         <td style="font-weight:bold; color:var(--color-white)">${row.date}</td>
                         <td style="font-weight:bold; color:var(--color-white)">${row.provider}</td>
@@ -669,6 +684,8 @@
                         <td style="color: var(--color-green-bright); font-weight: bold;">${row.sent_count}</td>
                         <td style="color: var(--color-red); font-weight: bold;">${row.failed_count}</td>
                         <td style="font-weight: bold; color: var(--color-white);">${total}</td>
+                        <td style="color: var(--color-yellow); font-weight: bold;">${transText}</td>
+                        <td style="color: var(--color-green-bright); font-weight: bold;">${hubText}</td>
                     `;
                     tbody.appendChild(tr);
                 });

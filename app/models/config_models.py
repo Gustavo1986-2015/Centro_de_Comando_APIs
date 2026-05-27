@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Boolean, Date
+from sqlalchemy import Column, Integer, String, Boolean, Date, Float
 from app.database import Base
 
 class ProviderConfig(Base):
@@ -22,3 +22,5 @@ class DailyStat(Base):
     env = Column(String, index=True)
     sent_count = Column(Integer, default=0)
     failed_count = Column(Integer, default=0)
+    avg_transmission_latency_sec = Column(Float, nullable=True)
+    avg_hub_latency_sec = Column(Float, nullable=True)

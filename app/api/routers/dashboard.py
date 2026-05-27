@@ -301,7 +301,9 @@ async def get_daily_history():
             "provider": s.provider.upper(),
             "env": s.env.upper(),
             "sent_count": s.sent_count,
-            "failed_count": s.failed_count
+            "failed_count": s.failed_count,
+            "avg_transmission_latency_sec": round(s.avg_transmission_latency_sec, 2) if s.avg_transmission_latency_sec is not None else None,
+            "avg_hub_latency_sec": round(s.avg_hub_latency_sec, 2) if s.avg_hub_latency_sec is not None else None
         } for s in stats]
     finally:
         db.close()

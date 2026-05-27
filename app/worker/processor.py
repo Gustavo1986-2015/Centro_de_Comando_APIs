@@ -181,15 +181,37 @@ def update_daily_stats(provider: str, env: str):
     
     db_prov = get_session(provider, env)
     try:
-        sent_count = db_prov.query(NormalizedRCEvent).filter(
+        sent_events = db_prov.query(NormalizedRCEvent).filter(
             NormalizedRCEvent.status == "sent",
             NormalizedRCEvent.created_at >= today_start
-        ).count()
+        ).all()
         
-        failed_count = db_prov.query(NormalizedRCEvent).filter(
+        failed_events = db_prov.query(NormalizedRCEvent).filter(
             NormalizedRCEvent.status == "failed",
             NormalizedRCEvent.created_at >= today_start
-        ).count()
+        ).all()
+        
+        sent_count = len(sent_events)
+        failed_count = len(failed_events)
+        
+        hub_latencies = []
+        transmission_latencies = []
+        
+        for ev in sent_events:
+            if ev.updated_at and ev.created_at:
+                hub_latencies.append((ev.updated_at - ev.created_at).total_seconds())
+            if ev.date and ev.created_at:
+                created_naive = ev.created_at.replace(tzinfo=None)
+                transmission_latencies.append(max(0.0, (created_naive - ev.date).total_seconds()))
+                
+        for ev in failed_events:
+            if ev.date and ev.created_at:
+                created_naive = ev.created_at.replace(tzinfo=None)
+                transmission_latencies.append(max(0.0, (created_naive - ev.date).total_seconds()))
+                
+        avg_hub = sum(hub_latencies) / len(hub_latencies) if hub_latencies else None
+        avg_transmission = sum(transmission_latencies) / len(transmission_latencies) if transmission_latencies else None
+        
     except Exception as e:
         logger.error(f"Error al contar estadísticas de hoy para {provider}_{env}: {e}")
         return
@@ -211,12 +233,16 @@ def update_daily_stats(provider: str, env: str):
                 provider=provider,
                 env=env,
                 sent_count=sent_count,
-                failed_count=failed_count
+                failed_count=failed_count,
+                avg_transmission_latency_sec=avg_transmission,
+                avg_hub_latency_sec=avg_hub
             )
             db_global.add(stat)
         else:
             stat.sent_count = sent_count
             stat.failed_count = failed_count
+            stat.avg_transmission_latency_sec = avg_transmission
+            stat.avg_hub_latency_sec = avg_hub
             
         db_global.commit()
     except Exception as e:
