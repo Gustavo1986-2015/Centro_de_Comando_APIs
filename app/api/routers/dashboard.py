@@ -128,7 +128,7 @@ async def get_stats(
         transmission_latency_sec = None
         if ev.date and ev.created_at:
             created_naive = ev.created_at.replace(tzinfo=None)
-            transmission_latency_sec = max(0, int((created_naive - ev.date).total_seconds()))
+            transmission_latency_sec = max(0.0, round((created_naive - ev.date).total_seconds(), 2))
             
         # Determinar reintentos en memoria
         event_key = f"{getattr(ev, 'provider_name', '').lower()}_{getattr(ev, 'env', '').lower()}_{ev.id}"
