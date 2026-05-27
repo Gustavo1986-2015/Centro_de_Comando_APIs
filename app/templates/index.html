@@ -415,13 +415,13 @@
                 <div class="card-title">En Reintento</div>
                 <div class="card-value" id="val-retries" style="color: var(--color-yellow);">0</div>
             </div>
-            <div class="card" style="border-top: 4px solid #8b5cf6;" title="Tiempo promedio de espera y procesamiento interno en el Hub de Assistcargo antes del envío (segundos)">
-                <div class="card-title">Latencia Hub Promedio</div>
-                <div class="card-value" id="val-latency" style="color: #8b5cf6;">0s</div>
+            <div class="card" style="border-top: 4px solid #8b5cf6;" title="Tiempo promedio de espera y procesamiento interno en el Hub de Assistcargo antes del envío a Recurso Confiable (segundos)">
+                <div class="card-title">Latencia Hub AC Promedio</div>
+                <div class="card-value" id="val-latency" style="color: #8b5cf6;">0.00s</div>
             </div>
-            <div class="card" style="border-top: 4px solid #3b82f6;" title="Tiempo de respuesta SOAP promedio de Recurso Confiable desde que enviamos el dato hasta obtener el ID de Job (segundos)">
+            <div class="card" style="border-top: 4px solid #3b82f6;" title="Tiempo de respuesta SOAP promedio de Recurso Confiable desde que hacemos el envío hasta obtener el ID de Job (segundos)">
                 <div class="card-title">Latencia RC Promedio</div>
-                <div class="card-value" id="val-rc-latency" style="color: #3b82f6;">0s</div>
+                <div class="card-value" id="val-rc-latency" style="color: #3b82f6;">0.00s</div>
             </div>
         </div>
 
@@ -448,10 +448,10 @@
                         <tr>
                             <th style="white-space: nowrap;">Proveedor</th>
                             <th style="white-space: nowrap;">Activo / Patente</th>
-                            <th style="white-space: nowrap;">Estado & Hora</th>
-                            <th style="white-space: nowrap;">Localización</th>
-                            <th style="white-space: nowrap;">Sensores (Telemetría)</th>
-                            <th style="white-space: nowrap;">HUB RC</th>
+                             <th style="white-space: nowrap;" title="Estado actual del evento en el Hub de Assistcargo y fecha/hora del último cambio de estado">Estado & Actualización (UTC)</th>
+                             <th style="white-space: nowrap;">Localización</th>
+                             <th style="white-space: nowrap;">Sensores (Telemetría)</th>
+                             <th style="white-space: nowrap;" title="Tiempos detallados de procesamiento en el Hub de Assistcargo y envío a Recurso Confiable">Trazabilidad AC -> RC</th>
                         </tr>
                     </thead>
                     <tbody id="recent-table-body">
@@ -829,13 +829,8 @@
                 let transmissionHtml = '';
                 if (ev.transmission_latency_sec !== null && ev.transmission_latency_sec !== undefined) {
                     let transSec = ev.transmission_latency_sec;
-                    let displayTime = transSec + 's';
-                    if (transSec >= 60) {
-                        let m = Math.floor(transSec / 60);
-                        let s = transSec % 60;
-                        displayTime = `${m}m ${s}s`;
-                    }
-                    transmissionHtml = `<div>Latencia Transmisión: <span style="color:var(--color-yellow); font-weight:bold;" title="Tiempo transcurrido entre el reporte del equipo GPS en el camión y la recepción del dato en Assistcargo">${displayTime}</span></div>`;
+                    let displayTime = transSec >= 60 ? `${Math.floor(transSec / 60)}m ${Math.round(transSec % 60)}s` : `${transSec.toFixed(1)}s`;
+                    transmissionHtml = `<div>Latencia Transmisión: <span style="color:var(--color-yellow); font-weight:bold;" title="Tiempo transcurrido entre el reporte del equipo GPS en el camión y la recepción del dato en Assistcargo (del AVL a nosotros)">${displayTime}</span></div>`;
                 }
 
                 let locHtml = `<div style="font-size:0.8rem; color:var(--color-gray); line-height: 1.4;">`;
@@ -865,13 +860,8 @@
                 let internalLatencyHtml = '';
                 if (ev.status === 'sent' && ev.latency_sec !== null && ev.latency_sec !== undefined) {
                     let lat = ev.latency_sec;
-                    let displayLat = lat + 's';
-                    if (lat >= 60) {
-                        let m = Math.floor(lat / 60);
-                        let s = Math.round(lat % 60);
-                        displayLat = `${m}m ${s}s`;
-                    }
-                    internalLatencyHtml = ` <span style="color:var(--color-green-bright); font-size:0.75rem; font-weight:bold;" title="Tiempo total de procesamiento y espera en cola en el Hub de Assistcargo">(Hub: ${displayLat})</span>`;
+                    let displayLat = lat >= 60 ? `${Math.floor(lat / 60)}m ${Math.round(lat % 60)}s` : `${lat.toFixed(2)}s`;
+                    internalLatencyHtml = ` <span style="color:var(--color-green-bright); font-size:0.75rem; font-weight:bold;" title="Tiempo total de procesamiento y espera en cola en el Hub de Assistcargo (Hub AC)">(Hub AC: ${displayLat})</span>`;
                 }
                 rcHtml += `<div>Enviado a RC: <span style="color:var(--color-white)">${ev.time_sent || 'N/A'}</span>${internalLatencyHtml}</div>`;
                 
