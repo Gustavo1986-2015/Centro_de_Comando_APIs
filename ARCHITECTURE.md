@@ -93,8 +93,9 @@ Contiene los esquemas globales y la parametrización de comportamiento de las AP
   * `provider` (string): Nombre de la API.
   * `env` (string): Entorno.
   * `sent_count` / `failed_count` (integers): Histórico permanente diario.
-  * `avg_transmission_latency_sec` (float): Promedio de latencia de red/satelital del proveedor del día.
-  * `avg_hub_latency_sec` (float): Promedio de procesamiento y cola del Hub de Assistcargo del día.
+  * `avg_transmission_latency_sec` (float): Promedio de latencia de transmisión (satelital/red del AVL a nuestro Hub) del día.
+  * `avg_hub_latency_sec` (float): Promedio de latencia de procesamiento interno y cola del Hub de Assistcargo del día.
+  * `avg_rc_latency_sec` (float): Promedio de latencia de red SOAP (tiempo de respuesta de Recurso Confiable) del día.
 
 ### 2. Bases de Datos de Proveedores (Ej. `schmitz_prod.db`, `schmitz_test.db`)
 Contienen una única tabla central optimizada para indexación y consumo rápido:
@@ -104,6 +105,7 @@ Contienen una única tabla central optimizada para indexación y consumo rápido
   * `raw_data` (Text): Payload crudo JSON original (para trazabilidad/auditoría rápida).
   * `rc_response` (Text): Respuesta XML o mensaje de excepción de red retornado por RC.
   * `job_id` (indexada): Identificador único o acuse de recibo de RC.
+  * `rc_latency_sec` (Float): Tiempo exacto de red (en segundos) que demoró la llamada SOAP a Recurso Confiable para este evento.
   * **18 Columnas Normalizadas:** Campos del modelo canónico (`chassis_number`, `latitude`, `speed`, `date`, `ignition`, etc.) validados por Pydantic.
   * `created_at` / `updated_at` (DateTime): Auditoría de tiempos del Hub.
 

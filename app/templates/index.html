@@ -409,9 +409,13 @@
                 <div class="card-title">En Reintento</div>
                 <div class="card-value" id="val-retries" style="color: var(--color-yellow);">0</div>
             </div>
-            <div class="card" style="border-top: 4px solid #3b82f6;" title="Tiempo promedio entre que nuestro Hub recibe el dato (incluyendo la transformación interna) y lo despacha exitosamente a Recurso Confiable (en segundos)">
+            <div class="card" style="border-top: 4px solid #8b5cf6;" title="Tiempo promedio de espera y procesamiento interno en el Hub de Assistcargo antes del envío (segundos)">
+                <div class="card-title">Latencia Hub Promedio</div>
+                <div class="card-value" id="val-latency" style="color: #8b5cf6;">0s</div>
+            </div>
+            <div class="card" style="border-top: 4px solid #3b82f6;" title="Tiempo de respuesta SOAP promedio de Recurso Confiable desde que enviamos el dato hasta obtener el ID de Job (segundos)">
                 <div class="card-title">Latencia RC Promedio</div>
-                <div class="card-value" id="val-latency" style="color: #3b82f6;">0s</div>
+                <div class="card-value" id="val-rc-latency" style="color: #3b82f6;">0s</div>
             </div>
         </div>
 
@@ -529,6 +533,7 @@
                             <th>Total Procesados</th>
                             <th style="color: var(--color-yellow);">Lat. Transmisión Promedio (GPS -> Hub)</th>
                             <th style="color: var(--color-green-bright);">Lat. Hub Promedio (Hub -> RC)</th>
+                            <th style="color: #3b82f6;">Lat. SOAP RC Promedio (Red)</th>
                         </tr>
                     </thead>
                     <tbody id="history-table-body">
@@ -657,7 +662,7 @@
                 tbody.innerHTML = '';
                 
                 if (data.length === 0) {
-                    tbody.innerHTML = '<tr><td colspan="8" style="text-align:center; color: var(--color-gray)">No hay registros históricos consolidados aún.</td></tr>';
+                    tbody.innerHTML = '<tr><td colspan="9" style="text-align:center; color: var(--color-gray)">No hay registros históricos consolidados aún.</td></tr>';
                     return;
                 }
                 
@@ -677,6 +682,12 @@
                         hubText = h >= 60 ? `${Math.floor(h / 60)}m ${Math.round(h % 60)}s` : `${h.toFixed(1)}s`;
                     }
 
+                    let rcText = 'N/A';
+                    if (row.avg_rc_latency_sec !== null && row.avg_rc_latency_sec !== undefined) {
+                        let rc = row.avg_rc_latency_sec;
+                        rcText = rc >= 60 ? `${Math.floor(rc / 60)}m ${Math.round(rc % 60)}s` : `${rc.toFixed(1)}s`;
+                    }
+
                     tr.innerHTML = `
                         <td style="font-weight:bold; color:var(--color-white)">${row.date}</td>
                         <td style="font-weight:bold; color:var(--color-white)">${row.provider}</td>
@@ -686,6 +697,7 @@
                         <td style="font-weight: bold; color: var(--color-white);">${total}</td>
                         <td style="color: var(--color-yellow); font-weight: bold;">${transText}</td>
                         <td style="color: var(--color-green-bright); font-weight: bold;">${hubText}</td>
+                        <td style="color: #3b82f6; font-weight: bold;">${rcText}</td>
                     `;
                     tbody.appendChild(tr);
                 });
@@ -710,6 +722,7 @@
                 updateValue('val-failed', data.failed);
                 updateValue('val-retries', data.retries);
                 updateValue('val-latency', (data.avg_latency_sec || 0).toFixed(2) + 's');
+                updateValue('val-rc-latency', (data.avg_rc_latency_sec || 0).toFixed(2) + 's');
 
                 allRecentEvents = data.recent;
                 
@@ -763,10 +776,11 @@
             }
             if (currentLatencyFilter !== 'all') {
                 filtered = filtered.filter(ev => {
-                    if (ev.latency_sec === null || ev.latency_sec === undefined) return false;
-                    if (currentLatencyFilter === 'low') return ev.latency_sec <= 2;
-                    if (currentLatencyFilter === 'medium') return ev.latency_sec > 2 && ev.latency_sec <= 9;
-                    if (currentLatencyFilter === 'high') return ev.latency_sec >= 10;
+                    const lat = ev.rc_latency_sec !== null && ev.rc_latency_sec !== undefined ? ev.rc_latency_sec : ev.latency_sec;
+                    if (lat === null || lat === undefined) return false;
+                    if (currentLatencyFilter === 'low') return lat <= 2;
+                    if (currentLatencyFilter === 'medium') return lat > 2 && lat <= 9;
+                    if (currentLatencyFilter === 'high') return lat >= 10;
                     return true;
                 });
             }
@@ -856,9 +870,10 @@
                 rcHtml += `<div>Enviado a RC: <span style="color:var(--color-white)">${ev.time_sent || 'N/A'}</span>${internalLatencyHtml}</div>`;
                 
                 let latencyBadge = '';
-                if (ev.latency_sec !== null && ev.latency_sec !== undefined) {
-                    let c = ev.latency_sec <= 2 ? 'var(--color-green-bright)' : (ev.latency_sec <= 9 ? 'var(--color-orange)' : 'var(--color-red)');
-                    latencyBadge = `<span style="font-size: 0.7rem; background: ${c}; color: var(--color-black); font-weight: bold; padding: 2px 4px; border-radius: 4px; margin-left: 5px;">${ev.latency_sec}s</span>`;
+                if (ev.rc_latency_sec !== null && ev.rc_latency_sec !== undefined) {
+                    let rcLat = ev.rc_latency_sec;
+                    let c = rcLat <= 2 ? 'var(--color-green-bright)' : (rcLat <= 9 ? 'var(--color-orange)' : 'var(--color-red)');
+                    latencyBadge = `<span style="font-size: 0.7rem; background: ${c}; color: var(--color-black); font-weight: bold; padding: 2px 4px; border-radius: 4px; margin-left: 5px;" title="Tiempo de respuesta (latencia de red SOAP) de Recurso Confiable">${rcLat.toFixed(2)}s</span>`;
                 }
                 
                 rcHtml += `<div>Recepcionado RC: <span class="badge ${statusClass}" style="${badgeStyle}">${statusText}</span>${latencyBadge}</div>`;
