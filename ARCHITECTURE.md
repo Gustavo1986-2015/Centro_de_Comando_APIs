@@ -1,119 +1,144 @@
-# Arquitectura Interna del Centro de Comando APIs
+# Arquitectura Interna y Mapa de Datos del Centro de Comando APIs
 
-Este documento sirve como guía técnica para desarrolladores e ingenieros que necesiten mantener o escalar el Hub Telemático.
-
-## 1. El Paradigma "Cero Creación Manual de Bases de Datos"
-
-**Pregunta Frecuente:** *"¿Cómo genero la Base de Datos para una futura API?"*
-**Respuesta:** ¡No haces nada! El sistema utiliza generación dinámica. 
-Cuando en cualquier parte del código llamas a la función `get_session("nombre_proveedor", "entorno")` (ubicada en `app/database.py`), SQLAlchemy revisa la carpeta `/db`. Si el archivo `nombre_proveedor_entorno.db` no existe, **lo crea automáticamente en ese milisegundo**, con todas las tablas perfectamente formateadas, y te devuelve la conexión abierta. El motor se auto-construye.
+Este documento sirve como guía de ingeniería y mapa técnico del Hub Telemático corporativo de Assistcargo. Detalla el flujo de ejecución extremo a extremo, la interacción entre scripts, la arquitectura de bases de datos aisladas y el comportamiento de la concurrencia y los reintentos.
 
 ---
 
-## 2. Estructura de Módulos (El Core)
+## 1. Mapa de Flujo de Datos Extremo a Extremo (E2E)
 
-### Directorio Raíz
-- **`main.py`**: Es el punto de entrada de la aplicación. Aquí se registran los routers (URLs) de cada proveedor y arranca el servidor web.
-- **`requirements.txt`**: Listado estricto de dependencias para clonar el entorno en AWS usando `pip install -r requirements.txt`.
+El siguiente diagrama detalla cómo viaja la información desde que el camión reporta su telemetría hasta que es procesada por Assistcargo y despachada a Recurso Confiable (RC):
 
-### Carpeta `app/core/` (Lógica de Negocio Central)
-- **`auditor.py`**: Su función `audit_event()` toma el JSON puro recibido y lo escribe en la carpeta `/audit`. Implementa rotación diaria de archivos (JSONL) para que el disco duro no se llene.
-- **`sender.py`**: Intermediario entre la Base de Datos local y Recurso Confiable.
+```mermaid
+graph TD
+    %% Bloque Ingesta Webhook (PUSH)
+    subgraph 1. Ingesta y Normalización
+        A[Proveedor: Schmitz/Otros] -->|POST HTTP /provider/webhook?env=test| B[FastAPI: app/api/routers/schmitz.py]
+        B -->|1. Resguardo Crudo| C[Auditor: app/core/auditor.py]
+        C -->|Escribe logs diarios| D[(audit/schmitz_test/schmitz_test.jsonl)]
+        B -->|2. Adaptación| E[Mapper: app/providers/schmitz/mapper.py]
+        E -->|Mapea JSON a Canonical Model| F[Validador Pydantic: app/schemas/canonical.py]
+        F -->|3. Persistencia Local| G[(db/schmitz_test.db)]
+        B -->|Retorna HTTP 202 Accepted| A
+    end
 
-### Carpeta `app/database.py` y el directorio `db/` (Magia Multi-DB)
-- **Directorio `db/`**: Aquí viven todos los archivos SQLite. Esto incluye `telematics_hub.db` (configuración global) y las bases de datos dinámicas generadas por proveedor (ej. `schmitz_test.db`). Mantener todo aquí asegura que el directorio raíz del proyecto permanezca limpio.
-- **`app/database.py`**: Mantiene en memoria diccionarios (`_engines`, `_sessions`) para reciclar conexiones abiertas. Instancia las bases de datos de SQLite al vuelo dependiendo del proveedor que se le pida.
+    %% Bloque Worker de Despacho (Asíncrono)
+    subgraph 2. Procesamiento y Despacho Asíncrono (Worker)
+        H[Worker Core: app/worker/processor.py] -->|1. Consulta APIs Activas| I[(db/system_config_global.db)]
+        H -->|2. Lee eventos 'pending'| G
+        H -->|3. Filtra con Backoff in-memory| J[RETRIES_CACHE]
+        H -->|4. Agrupa en sub-lotes de 50| K{soap_tasks}
+        K -->|5. Gather paralelo| L[Client SOAP: app/services/rc_soap.py]
+        L -->|Caché Token| M[(db/rc_token_cache.json)]
+        L -->|Llamada SOAP: send_events_batch| N[Web Service de Recurso Confiable]
+        N -->|Retorna JobID / CGI:UNKNOWN_TOKEN| L
+        L -->|Retorna Éxito / Error| H
+        H -->|6. Actualiza status y job_id| G
+        H -->|7. Consolida totales del día| O[update_daily_stats]
+        O -->|Escribe DailyStat| I
+    end
 
-### Carpeta `app/models/` y `app/schemas/`
-- **`db_models.py`**: Define la estructura de SQLite (Tabla `NormalizedRCEvent`).
-- **`config_models.py`**: Define la tabla de la base de datos maestra de configuración (`system_config_global.db`).
-- **`canonical.py`**: El guardaespaldas del sistema. Usa **Pydantic** para forzar tipos de datos. Aquí se encuentra el interceptor global (`@field_validator`) que asegura que toda patente sea siempre mayúscula y alfanumérica pura.
-
-### Carpeta `app/services/`
-- **`rc_soap.py`**: Implementa la clase `RCSOAPClient`. Se encarga de construir el XML feo que requiere el protocolo SOAP y dispararlo a la URL real de Recurso Confiable. Mantiene el Token en memoria.
-
-### Carpeta `app/worker/`
-- **`processor.py`**: Es un gestor de sub-workers asíncronos independientes. En lugar de un loop global y secuencial, levanta tareas independientes (`asyncio.create_task`) para cada proveedor-entorno configurado. 
-  - **Concurrencia por Sub-Lotes:** En cada iteración, si hay más de 50 eventos pendientes, el procesador los particiona en sub-lotes de 50 y ejecuta llamadas SOAP concurrentes en paralelo con `asyncio.gather(*tasks)`, reduciendo el cuello de botella de red y optimizando la tasa de transferencia.
-  - **Caché en Memoria para Reintentos con Backoff:** Para fallas temporales de red o de autenticación, el worker mantiene la caché en memoria `RETRIES_CACHE` donde asocia el ID del evento con su número de intentos y una marca de tiempo futura (`next_retry_at`). Esto aplica un backoff progresivo (10s, 45s, 120s y 300s) y evita que eventos fallidos bloqueen el despacho del tráfico en tiempo real.
-  - **Estadísticas Diarias (`DailyStat`):** Al concluir el ciclo, se ejecuta `update_daily_stats()` de forma asincrónica. Cuenta los totales procesados en el día en curso en la BD del proveedor y los persiste en la tabla global de estadísticas `daily_stats` dentro del `.db` maestro, garantizando históricos permanentes para la interfaz de administración.
-  
----
-
-## 3. El Traductor (Mapper) y el Paradigma Push vs Pull
-
-La Base de Datos Dinámica almacena **únicamente el Modelo Canónico** (las 18 columnas universales como `latitude`, `temperature`, `code`, etc.). Jamás guarda los nombres de campos extraños que envían los proveedores.
-
-Por lo tanto, no importa si un dato llega porque el proveedor nos lo envió (Webhooks / PUSH) o porque nosotros corrimos un CronJob para ir a buscarlo (PULL). El flujo es siempre el mismo:
-
-1. **Ingesta Cruda:** Llega el JSON inentendible (ej. `{"pos_x": -34, "temp_door": 12}`). Se guarda intacto en los **Logs de Auditoría** para respaldo.
-2. **El Mapper (La única tarea humana):** Alguien del equipo programa un archivo `mapper.py` exclusivo para este proveedor. Este script traduce los campos de entrada y realiza la **sanitización y normalización de tipos**. Por ejemplo, si el proveedor nos envía una velocidad nula, vacía o en formato de texto como `"null"`, el mapper la convierte automáticamente a `0.0` (float) antes de guardarla.
-3. **Guardado Transparente:** Se pasa el objeto canónico ya traducido y normalizado a la base de datos `proveedor_entorno.db`, la cual lo almacena de forma consistente.
-
----
-
-## 5. El archivo `.env` (Credenciales Push vs Pull)
-
-El archivo `.env` en la raíz del proyecto (basado en la plantilla `.env.example`) es la **única** bóveda de secretos del sistema. Jamás se debe escribir una contraseña en el código fuente de los `.py`.
-
-Dependiendo de la arquitectura de la API, las credenciales se manejan distinto:
-
-### APIs PULL (Polling a proveedores externos)
-Para conectarse a los sistemas legacy de la industria (Ej. Recurso Confiable), el `Worker` asíncrono utiliza librerías industriales y de alto rendimiento.
-
-**El caso de Recurso Confiable (SOAP):**
-En lugar de ensamblar strings de XML manualmente (propenso a fallas críticas de deserialización), el Hub utiliza **Zeep** (`zeep.Client`) delegado a hilos nativos (`asyncio.to_thread`) y optimizado para **envío por lotes (batching)**:
-1. **Envío por Lotes (Batching):** El worker asíncrono agrupa los eventos pendientes (hasta un límite de 50) y los envía en una única llamada SOAP a `GPSAssetTracking` usando una lista de eventos dentro de la estructura `{'Event': [...]}`. Esto reduce significativamente la latencia total y la sobrecarga de red en entornos con múltiples APIs concurrentes.
-2. **Autenticación Optimizada en Caché:** Para cumplir con la restricción de que el Token de RC dura 24 horas y no debe solicitarse en cada envío, se implementó una caché en disco (`./db/rc_token_cache.json`) y en memoria. El Hub reutiliza el token existente y solo invoca a `GetUserToken` al expirar la caché (cada 23.5 horas), al iniciar sin caché, o tras ser rechazado explícitamente por RC.
-3. **Mecanismo Robusto de Tokenización:** Si el servidor de RC responde de forma síncrona con `idJob: 0` y la excepción de negocio `CGI:UNKNOWN_TOKEN` (lo cual ocurre si el token es invalidado prematuramente por RC), el Hub invalida automáticamente el token en caché (`self._token = None`) y marca individualmente los eventos del lote como fallidos, obligando al sistema a re-autenticarse limpiamente en el siguiente ciclo.
-4. **Parseo y Trazabilidad:** Extrae posicionalmente el `idJob` (Acuse de recibo) de cada respuesta correspondiente dentro del lote, registrándolo en las bases de datos de auditoría individuales para mantener trazabilidad unitaria.
-
-**APIs REST genéricas (Ej. Samsara, Geotab):**
-Se utiliza la librería asíncrona `httpx`.
-- **Ejemplo en `.env`:** `SAMSARA_API_TOKEN=xxx`
-- **Uso:** El `Worker` lee esta variable y arma las cabeceras (Headers) de la petición GET saliente.
-
-### APIs PUSH (Webhooks) y el Toggle Switch (Seguridad Activable)
-Cuando los proveedores nos envían datos a nuestra URL (Ej. Schmitz), debemos blindar nuestros endpoints para que no cualquiera nos inyecte basura. 
-
-Para facilitar las pruebas, todos los Webhooks en esta arquitectura nacen con un **"Interruptor de Seguridad" (Toggle Switch)** en el archivo `.env`.
-
-**Mecánica (El estándar del Hub):**
-1. En `.env` definimos el interruptor y la clave:
-   - `REQUIRE_SCHMITZ_AUTH=False`
-   - `SCHMITZ_API_KEY=Schmitz_2026_UltraSecreta`
-2. En `router.py` (ej. `app/providers/schmitz/router.py`) inyectamos la dependencia `Depends(verify_api_key)`.
-3. Si el interruptor está en `False`, el endpoint es público (ideal para inyectar datos falsos y testear rápido).
-4. Si el interruptor se pasa a `True`, el endpoint exige que el proveedor envíe la cabecera `x-api-key: Schmitz_2026_UltraSecreta`. De lo contrario, devuelve un `401 Unauthorized`.
-
-> **Escalabilidad:** Esta misma dupla de variables (`REQUIRE_NUEVO_AUTH` y `NUEVO_API_KEY`) se debe replicar en el `.env` para cada futuro proveedor PUSH que agreguemos (Ej. Carrier, Trackimo, etc.), garantizando que la seguridad se maneja centralizadamente.
+    %% Bloque Dashboard (Visualización)
+    subgraph 3. Visualización y Control (Dashboard)
+        P[API Dashboard: app/api/routers/dashboard.py] -->|Lee Config y DailyStats| I
+        P -->|Lee últimos 200 eventos globales| G
+        P -->|Calcula latencias de red y transmisión| P
+        P -->|Inyecta RETRIES_CACHE| P
+        P -->|Retorna JSON de estadísticas| Q[Frontend UI: app/templates/index.html]
+    end
+```
 
 ---
 
-## 6. Configuración en Producción (Cloudflare Tunnels)
+## 2. Mapa detallado de Scripts y Dependencias (Qué impacta en qué)
 
-Para evitar exponer puertos de la máquina virtual (VM) en AWS y maximizar la seguridad (Zero Trust), se recomienda el uso de **Cloudflare Tunnels** (`cloudflared`).
+A continuación se detalla la matriz de impacto y el rol de cada script en el sistema:
 
-Es **mandatorio** crear dos (2) túneles separados (o dos subdominios enrutados por Cloudflare) para mantener una separación física de los entornos antes de enviar a Recurso Confiable:
-
-- **Túnel PROD:** Ej. `https://prod-hub.assistcargo.com` -> Apuntando al puerto 8000 local. (La URL para el proveedor será: `.../webhook?env=prod`)
-- **Túnel TEST:** Ej. `https://test-hub.assistcargo.com` -> Apuntando al mismo puerto 8000 local. (La URL para el proveedor será: `.../webhook?env=test`)
-
-Ambas URLs convergen en la misma aplicación interna, pero obligan a los proveedores externos (y a las integraciones) a definir claramente a qué subdominio disparan, blindando así los datos productivos.
+| Script / Componente | Frecuencia / Gatillo | Entrada | Salida / Impacto | Rol Principal |
+| :--- | :--- | :--- | :--- | :--- |
+| **`main.py`** | Al arrancar la aplicación | Ninguna | Inicializa FastAPI y crea la tarea del Worker en background | Punto de entrada del Hub. Registra todos los routers del sistema. |
+| **`app/api/routers/schmitz.py`** | Evento PUSH del proveedor | Payload JSON de Schmitz | Escribe en Logs de Auditoría y guarda el evento normalizado en `schmitz_{env}.db` | Webhook receptor de Schmitz. Realiza la autenticación, auditoría y encolamiento inicial. |
+| **`app/providers/schmitz/mapper.py`** | Llamado por `schmitz.py` | JSON crudo de Schmitz | Modelo de datos `RCCanonicalModel` (Pydantic) | Adapta, parsea a UTC 0 y normaliza la telemetría (ej. limpia coordenadas y fuerza velocidad nula a `0.0`). |
+| **`app/core/auditor.py`** | Llamado por routers de webhooks | Payload JSON original | Archivos diarios `.jsonl` bajo `audit/{provider}_{env}/` | Caja negra. Asegura el resguardo permanente de la información cruda antes de cualquier transformación. |
+| **`app/worker/processor.py`** | En ejecución 24/7 (Loop asíncrono) | Parámetros de `system_config_global.db` | Consume eventos de las DBs de proveedores, los envía a RC y escribe estadísticas de éxito/falla | Core del despacho. Orquesta sub-workers independientes, concurrencia por sub-lotes, reintentos con backoff y purga. |
+| **`app/services/rc_soap.py`** | Llamado por el Worker | Objetos de datos `RCCanonicalModel` | Construye el XML SOAP, interactúa con el WSDL de RC y gestiona la caché de tokens | Integrador SOAP. Controla la autenticación persistente y re-autenticación automática si expira el token. |
+| **`app/api/routers/dashboard.py`** | Consulta del Frontend (cada 2 seg) | Datos de bases de datos globales e individuales | Payload JSON formateado con métricas y lista de eventos | API de control. consolida estadísticas, calcula desfase satelital y tiempo de cola en el Hub. |
+| **`app/templates/index.html`** | Cargado en navegador por operador | Respuestas JSON de `/api/stats` e `/api/config` | Renderiza grillas en caliente, temporizadores de backoff e histórico consolidado | Consola de visualización. Provee filtros interactivos y el simulador de webhooks. |
 
 ---
 
-## 7. ¿Cómo agregar una Nueva API en el futuro? (Guía Paso a Paso)
+## 3. Arquitectura de Base de Datos y Aislamiento (`.db`)
 
-Supongamos que Assistcargo firma con un proveedor llamado **"Samsara"**.
+El sistema implementa el **Paradigma de Bases de Datos Aisladas** para prevenir cuellos de botella en SQLite, optimizar bloqueos de escritura y garantizar aislamiento físico total entre entornos (`TEST` y `PROD`).
 
-1. **Crear Carpeta:** Crea la carpeta `app/providers/samsara/`.
-2. **Crear Traductor:** Crea `app/providers/samsara/mapper.py`. Aquí escribes una función que tome el JSON raro de Samsara y devuelva un objeto `RCCanonicalModel` limpio.
-3. **Crear Router:** Crea `app/providers/samsara/router.py`. Haces un `@router.post("/samsara/webhook")` que escuche los eventos.
-   - Adentro de ese endpoint, llamas a `audit_event()`.
-   - Llamas a tu mapper.
-   - Pides la base de datos `get_session("samsara", "prod")` y haces el `db.add()`.
-4. **Registrar Router:** Vas a `app/main.py` y agregas `app.include_router(samsara_router.router)`.
-5. **Activar Proveedor:** Modificas el endpoint `/api/config` en `dashboard.py` o directamente inyectas el proveedor en `system_config_global.db` para que el Worker (procesador asíncrono) sepa que debe empezar a escuchar la base de datos "samsara". (En el futuro se puede agregar un botón "Nuevo Proveedor" en la interfaz).
+### Estructura de Archivos en la carpeta `db/`
+```text
+db/
+├── system_config_global.db   <-- Base de datos Maestra del Sistema
+├── schmitz_prod.db           <-- Eventos productivos de Schmitz
+├── schmitz_test.db           <-- Eventos de prueba del simulador de Schmitz
+└── rc_token_cache.json       <-- Caché del token SOAP (archivo JSON persistente)
+```
 
-¡Eso es todo! Con esos simples pasos, Samsara tendrá su propia base de datos auto-creada, concurrencia total, interfaz visual y conexión a RC asegurada.
+### 1. La Base de Datos Maestra (`system_config_global.db`)
+Contiene los esquemas globales y la parametrización de comportamiento de las APIs:
+* **Tabla `provider_configs` (Modelo `ProviderConfig`):**
+  * `provider_name` (Ej. 'schmitz'): Identifica la API.
+  * `env` (test/prod): Entorno de ejecución.
+  * `is_active` (boolean): Toggle switch para detener/iniciar el sub-worker en caliente desde el UI.
+  * `rc_user` / `rc_password`: Credenciales SOAP específicas de este canal.
+  * `run_interval_sec`: Intervalo del ciclo del worker (ej. cada 5 segundos).
+  * `purge_interval_min`: Intervalo de purga automática (ej. borrar procesados de más de 3 horas).
+* **Tabla `daily_stats` (Modelo `DailyStat`):**
+  * `date` (date): Día calendario.
+  * `provider` (string): Nombre de la API.
+  * `env` (string): Entorno.
+  * `sent_count` / `failed_count` (integers): Histórico permanente diario.
+
+### 2. Bases de Datos de Proveedores (Ej. `schmitz_prod.db`, `schmitz_test.db`)
+Contienen una única tabla central optimizada para indexación y consumo rápido:
+* **Tabla `normalized_rc_events` (Modelo `NormalizedRCEvent`):**
+  * `id` (Clave primaria indexada).
+  * `status` (indexada: `pending`, `sent`, `failed`).
+  * `raw_data` (Text): Payload crudo JSON original (para trazabilidad/auditoría rápida).
+  * `rc_response` (Text): Respuesta XML o mensaje de excepción de red retornado por RC.
+  * `job_id` (indexada): Identificador único o acuse de recibo de RC.
+  * **18 Columnas Normalizadas:** Campos del modelo canónico (`chassis_number`, `latitude`, `speed`, `date`, `ignition`, etc.) validados por Pydantic.
+  * `created_at` / `updated_at` (DateTime): Auditoría de tiempos del Hub.
+
+---
+
+## 4. Lógica de Concurrencia de Red y Transaccionalidad de SQLite
+
+Dado que SQLite no soporta múltiples transacciones de escritura simultáneas (bloqueo por `database is locked`), la arquitectura separa de forma limpia la **ejecución de red** de la **ejecución de base de datos**:
+
+1. **Lectura e Ignorado:** El worker obtiene los eventos `pending` y descarta los que están esperando backoff en memoria (`RETRIES_CACHE`).
+2. **Particionado Asíncrono:** Agrupa los pendientes en bloques de máximo 50 eventos.
+3. **Paralelización de Red SOAP:** Invoca `asyncio.gather(*tasks)` disparando las peticiones SOAP en paralelo contra RC. Esto reduce la latencia de red al máximo, permitiendo procesar cientos de transmisiones simultáneas.
+4. **Escritura Atómica:** Una vez que todas las respuestas de red regresan al script, se actualizan los estados y se ejecuta una **única transacción estructurada** (`db.commit()`) por base de datos, garantizando consistencia, eliminando bloqueos de base de datos y completando la operación en milisegundos.
+
+---
+
+## 5. El Motor de Reintentos Asíncronos con Backoff
+
+Para evitar la saturación de los servidores de RC y evitar bucles infinitos por credenciales desactualizadas o caídas prolongadas de red, el Hub implementa un motor inteligente en memoria:
+
+```text
+               [ Evento falla en despacho SOAP ]
+                               │
+               Verifica contador de reintentos
+              (almacenado en RETRIES_CACHE)
+                               │
+                     ┌─────────┴─────────┐
+                     ▼                   ▼
+                 Intentos < 4        Intentos >= 4
+                     │                   │
+      Calcula Backoff Lineal:            │
+      1°: +10s | 2°: +45s                │
+      3°: +120s | 4°: +300s              ▼
+                     │            Marca status = 'failed'
+                     ▼            Elimina de RETRIES_CACHE
+       Actualiza 'next_retry_at'  (Fallo Definitivo en UI)
+       Estado queda 'pending'
+       (Badge Amarillo en UI)
+```
+* **Comportamiento en Cola:** El sub-worker de la API continúa ejecutándose normalmente cada $N$ segundos procesando paquetes de telemetría nuevos, omitiendo de forma inteligente cualquier evento en cola cuya marca de tiempo actual sea inferior a `next_retry_at`. Esto asegura que el canal de datos permanezca siempre operativo.
