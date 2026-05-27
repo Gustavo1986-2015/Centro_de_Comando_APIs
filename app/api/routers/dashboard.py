@@ -118,6 +118,11 @@ async def get_stats(
             total_latency_seconds += latency_sec
             latency_samples += 1
             
+        transmission_latency_sec = None
+        if ev.date and ev.created_at:
+            created_naive = ev.created_at.replace(tzinfo=None)
+            transmission_latency_sec = max(0, int((created_naive - ev.date).total_seconds()))
+            
         # Determinar reintentos en memoria
         event_key = f"{getattr(ev, 'provider_name', '').lower()}_{getattr(ev, 'env', '').lower()}_{ev.id}"
         retry_count = 0
@@ -137,6 +142,7 @@ async def get_stats(
             "time_received": ev.created_at.strftime("%Y-%m-%d %H:%M:%S (UTC)"),
             "time_sent": ev.updated_at.strftime("%Y-%m-%d %H:%M:%S (UTC)") if ev.status == 'sent' and ev.updated_at else "Pendiente" if ev.status == 'pending' else "Fallido",
             "latency_sec": round(latency_sec, 2) if latency_sec is not None else None,
+            "transmission_latency_sec": transmission_latency_sec,
             "rc_response": getattr(ev, 'rc_response', ""),
             "provider": getattr(ev, 'provider_name', "N/A").upper(),
             "env": getattr(ev, 'env', "N/A").upper(),
