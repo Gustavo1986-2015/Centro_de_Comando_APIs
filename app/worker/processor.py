@@ -45,24 +45,20 @@ def get_active_providers():
     finally:
         db.close()
 
+def get_next_retry_delay(retry_count: int) -> int:
+    """Calcula el retroceso exponencial con Jitter (Full Jitter modificado)."""
+    import random
+    max_delay = min(300, 10 * int(3.5 ** retry_count))
+    min_delay = max(10, max_delay // 2)
+    return random.randint(min_delay, max_delay)
+
 async def process_provider_events(provider: str, env: str):
     """Procesa pendientes de un único proveedor y entorno en lotes concurrentes en paralelo y aplica backoff."""
-    db: Session = get_session(provider, env)
+    from app.core.queue_factory import QueueFactory
+    queue = QueueFactory.get_queue_service()
     try:
-        # 1. Obtener pendientes y filtrar usando Backoff temporal de la caché en memoria
-        all_pendings = db.query(NormalizedRCEvent).filter(NormalizedRCEvent.status == "pending").order_by(NormalizedRCEvent.id.asc()).limit(250).all()
-        
-        now_time = datetime.now()
-        pendings = []
-        for ev in all_pendings:
-            event_key = f"{provider}_{env}_{ev.id}"
-            if event_key in RETRIES_CACHE:
-                next_retry = RETRIES_CACHE[event_key].get("next_retry_at")
-                if next_retry and next_retry > now_time:
-                    continue
-            pendings.append(ev)
-            if len(pendings) >= 150: # Procesar hasta 3 lotes de 50 en paralelo
-                break
+        # 1. Obtener pendientes usando el servicio de colas abstraído
+        pendings = await queue.get_pending_batch(provider, env, limit=150)
                 
         if not pendings:
             return
@@ -104,7 +100,7 @@ async def process_provider_events(provider: str, env: str):
         logger.info(f"Enviando {len(pendings)} eventos en {len(batches)} sub-lote(s) en paralelo para {provider}_{env}")
         batches_results = await asyncio.gather(*soap_tasks, return_exceptions=True)
         
-        # 4. Procesar y guardar resultados de forma secuencial en una única transacción de base de datos
+        # 4. Procesar y guardar resultados de forma secuencial
         for batch_idx, batch in enumerate(batches):
             batch_outcome = batches_results[batch_idx]
             
@@ -112,28 +108,32 @@ async def process_provider_events(provider: str, env: str):
             if isinstance(batch_outcome, Exception):
                 logger.error(f"Excepción general en sub-lote {batch_idx + 1} para {provider}_{env}: {batch_outcome}")
                 for db_event in batch:
-                    db_event.rc_response = f"Excepción de transporte: {str(batch_outcome)}"
-                    db_event.job_id = f"rc_conn_err_{int(datetime.now().timestamp())}"
-                    db_event.rc_latency_sec = None
+                    current_retries = db_event.retry_count or 0
                     
-                    event_key = f"{provider}_{env}_{db_event.id}"
-                    current_retries = RETRIES_CACHE.get(event_key, {}).get("count", 0)
-                    
-                    # Backoff lineal para reintentos de red: 1° -> 10s, 2° -> 45s, 3° -> 120s, 4° -> 300s
-                    backoff_sec = [10, 45, 120, 300][min(current_retries, 3)]
-                    next_retry = datetime.now() + timedelta(seconds=backoff_sec)
-                    
+                    # Backoff exponencial con Jitter: 4 intentos máx.
                     if current_retries < 4:
-                        RETRIES_CACHE[event_key] = {
-                            "count": current_retries + 1,
-                            "next_retry_at": next_retry
-                        }
-                        db_event.status = "pending"
-                        logger.warning(f"Fallo de red en RC para evento {db_event.id}. Reintento {current_retries + 1}/4 programado para {next_retry}. Queda PENDING.")
+                        backoff_sec = get_next_retry_delay(current_retries)
+                        next_retry = datetime.now() + timedelta(seconds=backoff_sec)
+                        await queue.schedule_retry(
+                            provider=provider,
+                            env=env,
+                            event_id=db_event.id,
+                            elapsed_sec=None,
+                            rc_response=f"Excepción de transporte: {str(batch_outcome)}",
+                            job_id=f"rc_conn_err_{int(datetime.now().timestamp())}",
+                            retry_count=current_retries + 1,
+                            next_retry_at=next_retry
+                        )
+                        logger.warning(f"Fallo de red en RC para evento {db_event.id}. Reintento {current_retries + 1}/4 programado en {backoff_sec}s. Queda PENDING.")
                     else:
-                        db_event.status = "failed"
-                        if event_key in RETRIES_CACHE:
-                            del RETRIES_CACHE[event_key]
+                        await queue.mark_as_failed(
+                            provider=provider,
+                            env=env,
+                            event_id=db_event.id,
+                            elapsed_sec=None,
+                            rc_response=f"Excepción de transporte: {str(batch_outcome)}",
+                            job_id=f"rc_conn_err_{int(datetime.now().timestamp())}"
+                        )
                         logger.error(f"Excedidos los 4 reintentos de red para evento {db_event.id}. Marcado FAILED definitivo.")
                 continue
                 
@@ -144,46 +144,68 @@ async def process_provider_events(provider: str, env: str):
                 try:
                     success, job_id, rc_response = results[idx] if results and idx < len(results) else (False, f"rc_err_missing_{int(datetime.now().timestamp())}", "No response mapping for event")
                     
-                    db_event.rc_response = rc_response
-                    db_event.job_id = job_id
-                    db_event.rc_latency_sec = elapsed_sec
-                    
                     if success:
-                        db_event.status = "sent"
-                        event_key = f"{provider}_{env}_{db_event.id}"
-                        if event_key in RETRIES_CACHE:
-                            del RETRIES_CACHE[event_key]
+                        await queue.mark_as_sent(
+                            provider=provider,
+                            env=env,
+                            event_id=db_event.id,
+                            elapsed_sec=elapsed_sec,
+                            rc_response=rc_response,
+                            job_id=job_id
+                        )
                     else:
                         err_lower = str(rc_response).lower()
                         is_auth_error = any(w in err_lower for w in ["unknown_token", "userunk", "autentica", "token", "incorrecta", "contrase", "conn_err", "connection"])
                         
                         if is_auth_error:
-                            event_key = f"{provider}_{env}_{db_event.id}"
-                            current_retries = RETRIES_CACHE.get(event_key, {}).get("count", 0)
-                            
-                            # Backoff lineal para fallas temporales: 1° -> 10s, 2° -> 45s, 3° -> 120s, 4° -> 300s
-                            backoff_sec = [10, 45, 120, 300][min(current_retries, 3)]
-                            next_retry = datetime.now() + timedelta(seconds=backoff_sec)
+                            current_retries = db_event.retry_count or 0
                             
                             if current_retries < 4:
-                                RETRIES_CACHE[event_key] = {
-                                    "count": current_retries + 1,
-                                    "next_retry_at": next_retry
-                                }
-                                db_event.status = "pending"
-                                logger.warning(f"Fallo de autenticación/token en RC para evento {db_event.id}. Reintento {current_retries + 1}/4 programado para {next_retry}. Queda PENDING.")
+                                backoff_sec = get_next_retry_delay(current_retries)
+                                next_retry = datetime.now() + timedelta(seconds=backoff_sec)
+                                await queue.schedule_retry(
+                                    provider=provider,
+                                    env=env,
+                                    event_id=db_event.id,
+                                    elapsed_sec=elapsed_sec,
+                                    rc_response=rc_response,
+                                    job_id=job_id,
+                                    retry_count=current_retries + 1,
+                                    next_retry_at=next_retry
+                                )
+                                logger.warning(f"Fallo de autenticación/token en RC para evento {db_event.id}. Reintento {current_retries + 1}/4 programado en {backoff_sec}s. Queda PENDING.")
                             else:
-                                db_event.status = "failed"
-                                if event_key in RETRIES_CACHE:
-                                    del RETRIES_CACHE[event_key]
+                                await queue.mark_as_failed(
+                                    provider=provider,
+                                    env=env,
+                                    event_id=db_event.id,
+                                    elapsed_sec=elapsed_sec,
+                                    rc_response=rc_response,
+                                    job_id=job_id
+                                )
                                 logger.error(f"Excedidos los 4 reintentos de autenticación para evento {db_event.id}. Marcado FAILED definitivo.")
                         else:
-                            db_event.status = "failed"
+                            await queue.mark_as_failed(
+                                provider=provider,
+                                env=env,
+                                event_id=db_event.id,
+                                elapsed_sec=elapsed_sec,
+                                rc_response=rc_response,
+                                job_id=job_id
+                            )
                 except Exception as inner_e:
                     logger.error(f"Error al guardar resultado de evento individual {db_event.id}: {str(inner_e)}")
-                    db_event.status = "failed"
-                    
-        db.commit()
+                    try:
+                        await queue.mark_as_failed(
+                            provider=provider,
+                            env=env,
+                            event_id=db_event.id,
+                            elapsed_sec=None,
+                            rc_response=f"Excepción interna del worker: {str(inner_e)}",
+                            job_id=f"worker_err_{int(datetime.now().timestamp())}"
+                        )
+                    except Exception:
+                        pass
         
         # 5. Consolidar estadísticas del día de hoy en la base de datos global de forma asincrónica e independiente
         try:
@@ -193,9 +215,6 @@ async def process_provider_events(provider: str, env: str):
         
     except Exception as e:
         logger.error(f"Error general en process_provider_events para {provider}_{env}: {str(e)}")
-        db.rollback()
-    finally:
-        db.close()
 
 def update_daily_stats(provider: str, env: str):
     """Calcula y actualiza las estadísticas de procesamiento del día de hoy en la BD global."""
