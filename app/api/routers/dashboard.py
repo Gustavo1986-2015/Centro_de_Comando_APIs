@@ -23,9 +23,7 @@ class ConfigUpdate(BaseModel):
     rc_password: str
     purge_interval_min: int
     run_interval_sec: int
-
-class SystemSettingsUpdate(BaseModel):
-    active_queue_backend: str
+    queue_backend: str
 
 @router.get("/dashboard", response_class=HTMLResponse)
 async def get_dashboard(request: Request):
@@ -245,7 +243,8 @@ async def get_all_configs():
             "rc_user": c.rc_user,
             "rc_password": c.rc_password,
             "purge_interval_min": c.purge_interval_min,
-            "run_interval_sec": c.run_interval_sec
+            "run_interval_sec": c.run_interval_sec,
+            "queue_backend": c.queue_backend if hasattr(c, 'queue_backend') and c.queue_backend else "sqlite"
         } for c in configs]
     finally:
         db.close()
@@ -262,36 +261,7 @@ async def update_configs(updates: List[ConfigUpdate]):
                 conf.rc_password = u.rc_password
                 conf.purge_interval_min = u.purge_interval_min
                 conf.run_interval_sec = u.run_interval_sec
-        db.commit()
-        return {"status": "ok"}
-    finally:
-        db.close()
-
-@router.get("/api/system-settings")
-async def get_system_settings():
-    from app.models.config_models import SystemSettings
-    db = get_session("system_config", "global")
-    try:
-        setting = db.query(SystemSettings).first()
-        if not setting:
-            setting = SystemSettings()
-            db.add(setting)
-            db.commit()
-            db.refresh(setting)
-        return {"active_queue_backend": setting.active_queue_backend}
-    finally:
-        db.close()
-
-@router.post("/api/system-settings")
-async def update_system_settings(updates: SystemSettingsUpdate):
-    from app.models.config_models import SystemSettings
-    db = get_session("system_config", "global")
-    try:
-        setting = db.query(SystemSettings).first()
-        if not setting:
-            setting = SystemSettings()
-            db.add(setting)
-        setting.active_queue_backend = updates.active_queue_backend.lower()
+                conf.queue_backend = u.queue_backend.lower()
         db.commit()
         return {"status": "ok"}
     finally:

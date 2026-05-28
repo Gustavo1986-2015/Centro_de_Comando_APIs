@@ -466,20 +466,6 @@
 
     <!-- VISTA CONFIGURACIÓN -->
     <main id="view-config" style="display: none;">
-        <div class="recent-section" style="margin-bottom: 2rem;">
-            <h2>Infraestructura del Sistema</h2>
-            <div style="background: rgba(16, 185, 129, 0.1); border-left: 4px solid var(--color-green-vibrant); padding: 1rem; margin-bottom: 1rem; border-radius: 4px; font-size: 0.9rem; color: #E5E7EB;">
-                Seleccione el motor de encolamiento de eventos. <strong>SQLite</strong> es ideal para un entorno local/un solo servidor. <strong>Redis</strong> permite distribuir la carga entre múltiples trabajadores/servidores.
-            </div>
-            <div style="display: flex; align-items: center; gap: 1rem;">
-                <label style="font-weight: bold;">Motor de Colas Activo:</label>
-                <select id="config-queue-backend" class="form-control" style="width: auto; background-color: var(--color-black); cursor: pointer;">
-                    <option value="sqlite">SQLite (Local)</option>
-                    <option value="redis">Redis (Distribuido)</option>
-                </select>
-                <button class="btn-save" onclick="saveSystemSettings()" style="background: var(--color-gray);">Actualizar Infraestructura</button>
-            </div>
-        </div>
 
         <div class="recent-section">
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
@@ -498,6 +484,7 @@
                             <th>RC Password</th>
                             <th>Purga (min)</th>
                             <th>Ejecución (seg)</th>
+                            <th>Motor Cola</th>
                         </tr>
                     </thead>
                     <tbody id="config-table-body">
@@ -822,7 +809,6 @@
             
             if (view === 'config') {
                 loadConfig();
-                loadSystemSettings();
             } else if (view === 'simulator') {
                 loadSimulator();
             } else if (view === 'logs') {
@@ -1157,6 +1143,12 @@
                             <td><input class="form-control" type="password" id="pass_${c._originalIdx}" value="${c.rc_password}"></td>
                             <td><input class="form-control" type="number" id="purge_${c._originalIdx}" value="${c.purge_interval_min}" style="width: 80px;"></td>
                             <td><input class="form-control" type="number" id="run_int_${c._originalIdx}" value="${c.run_interval_sec}" style="width: 80px;"></td>
+                            <td>
+                                <select id="queue_${c._originalIdx}" class="form-control" style="width: 100px; background-color: var(--color-black); cursor: pointer;">
+                                    <option value="sqlite" ${c.queue_backend === 'sqlite' ? 'selected' : ''}>SQLite</option>
+                                    <option value="redis" ${c.queue_backend === 'redis' ? 'selected' : ''}>Redis</option>
+                                </select>
+                            </td>
                         `;
                         tbody.appendChild(tr);
                     });
@@ -1173,7 +1165,8 @@
                 rc_user: document.getElementById(`user_${idx}`).value,
                 rc_password: document.getElementById(`pass_${idx}`).value,
                 purge_interval_min: parseInt(document.getElementById(`purge_${idx}`).value) || 15,
-                run_interval_sec: parseInt(document.getElementById(`run_int_${idx}`).value) || 5
+                run_interval_sec: parseInt(document.getElementById(`run_int_${idx}`).value) || 5,
+                queue_backend: document.getElementById(`queue_${idx}`).value
             }));
 
             try {
@@ -1332,30 +1325,6 @@
         }
 
         // Lógica de Visor de BD y Settings
-        async function loadSystemSettings() {
-            try {
-                const res = await fetch('/api/system-settings');
-                const data = await res.json();
-                document.getElementById('config-queue-backend').value = data.active_queue_backend || 'sqlite';
-            } catch(e) { console.error("Error al cargar settings:", e); }
-        }
-
-        async function saveSystemSettings() {
-            const backend = document.getElementById('config-queue-backend').value;
-            try {
-                const res = await fetch('/api/system-settings', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ active_queue_backend: backend })
-                });
-                if(res.ok) alert("Infraestructura actualizada correctamente. Los cambios tomarán efecto en el próximo ciclo del Worker.");
-                else alert("Error actualizando infraestructura.");
-            } catch(e) {
-                console.error("Error guardando settings:", e);
-                alert("Ocurrió un error.");
-            }
-        }
-
         async function loadDatabases() {
             const select = document.getElementById('db-select');
             select.innerHTML = '<option value="">Cargando...</option>';

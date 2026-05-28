@@ -55,7 +55,7 @@ def get_next_retry_delay(retry_count: int) -> int:
 async def process_provider_events(provider: str, env: str):
     """Procesa pendientes de un único proveedor y entorno en lotes concurrentes en paralelo y aplica backoff."""
     from app.core.queue_factory import QueueFactory
-    queue = QueueFactory.get_queue_service()
+    queue = QueueFactory.get_queue_service(provider, env)
     try:
         # 1. Obtener pendientes usando el servicio de colas abstraído
         pendings = await queue.get_pending_batch(provider, env, limit=150)

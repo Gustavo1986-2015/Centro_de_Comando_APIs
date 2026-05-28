@@ -20,14 +20,9 @@ async def test_worker_flow():
     import app.services.rc_soap as rc_soap
     rc_soap.RC_USE_MOCK = True
 
-    # Obtener dinámicamente el primer proveedor y entorno activos
-    active = get_active_providers()
-    if not active:
-        provider = "schmitz"
-        env = "test"
-    else:
-        provider = active[0]["name"]
-        env = active[0]["env"]
+    # Forzar uso de entorno seguro para pruebas (para no borrar DB de simulador)
+    provider = "schmitz"
+    env = "test_unit"
         
     print(f"Probando Worker con Proveedor: {provider}, Entorno: {env}")
 
