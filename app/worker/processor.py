@@ -315,11 +315,13 @@ async def process_pending_events():
 
 
 async def purge_provider_events(provider: str, env: str):
-    """Purga una BD individual."""
+    """Purga una BD individual eliminando solo los eventos enviados/fallidos anteriores al día de hoy."""
     db: Session = get_session(provider, env)
     try:
+        today_start = datetime.combine(datetime.now().date(), datetime.min.time())
         deleted_count = db.query(NormalizedRCEvent).filter(
-            NormalizedRCEvent.status.in_(["sent", "failed"])
+            NormalizedRCEvent.status.in_(["sent", "failed"]),
+            NormalizedRCEvent.created_at < today_start
         ).delete(synchronize_session=False)
         
         db.commit()
