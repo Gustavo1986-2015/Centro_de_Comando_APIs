@@ -40,3 +40,5 @@ class NormalizedRCEvent(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
     rc_latency_sec = Column(Float, nullable=True)
+    retry_count = Column(Integer, default=0)
+    next_retry_at = Column(DateTime(timezone=True), nullable=True)

@@ -49,7 +49,7 @@ def check_and_migrate_db():
         pass
 
 def check_and_migrate_provider_db(provider: str, env: str):
-    """Ejecuta una migración automática para agregar rc_latency_sec a normalized_rc_events en sqlite."""
+    """Ejecuta una migración automática para agregar campos faltantes en normalized_rc_events."""
     import sqlite3
     url = get_db_url(provider, env)
     db_path = url.replace("sqlite:///./", "./")
@@ -60,9 +60,16 @@ def check_and_migrate_provider_db(provider: str, env: str):
         cursor = conn.cursor()
         cursor.execute("PRAGMA table_info(normalized_rc_events)")
         columns = [row[1] for row in cursor.fetchall()]
-        if columns and "rc_latency_sec" not in columns:
-            cursor.execute("ALTER TABLE normalized_rc_events ADD COLUMN rc_latency_sec REAL")
-            conn.commit()
+        if columns:
+            if "rc_latency_sec" not in columns:
+                cursor.execute("ALTER TABLE normalized_rc_events ADD COLUMN rc_latency_sec REAL")
+                conn.commit()
+            if "retry_count" not in columns:
+                cursor.execute("ALTER TABLE normalized_rc_events ADD COLUMN retry_count INTEGER DEFAULT 0")
+                conn.commit()
+            if "next_retry_at" not in columns:
+                cursor.execute("ALTER TABLE normalized_rc_events ADD COLUMN next_retry_at DATETIME")
+                conn.commit()
     except Exception:
         pass
 

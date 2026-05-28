@@ -43,6 +43,7 @@ async def get_stats(
     total_pending = 0
     total_sent = 0
     total_failed = 0
+    total_retries = 0
     recent_events_global = []
 
     # Obtener proveedores directamente desde la BD de configuración
@@ -69,6 +70,12 @@ async def get_stats(
         db = get_session(provider_name, provider_env)
         try:
             total_pending += db.query(NormalizedRCEvent).filter(NormalizedRCEvent.status == "pending").count()
+            
+            # Contar reintentos activos directamente en la BD
+            total_retries += db.query(NormalizedRCEvent).filter(
+                NormalizedRCEvent.status == "pending",
+                NormalizedRCEvent.retry_count > 0
+            ).count()
             
             total_sent += db.query(NormalizedRCEvent).filter(
                 NormalizedRCEvent.status == "sent",
@@ -99,9 +106,6 @@ async def get_stats(
             recent_events_global.extend(recent)
         finally:
             db.close()
-
-    # Importación diferida para evitar importaciones circulares
-    from app.worker.processor import RETRIES_CACHE
 
     # Ordenar los recientes de todas las BDs y quedarnos con los 200 últimos absolutos
     recent_events_global.sort(key=lambda x: x.updated_at or x.created_at, reverse=True)
@@ -140,16 +144,14 @@ async def get_stats(
             created_naive = ev.created_at.replace(tzinfo=None)
             transmission_latency_sec = max(0.0, round((created_naive - ev.date).total_seconds(), 2))
             
-        # Determinar reintentos en memoria
-        event_key = f"{getattr(ev, 'provider_name', '').lower()}_{getattr(ev, 'env', '').lower()}_{ev.id}"
-        retry_count = 0
+        # Determinar reintentos directamente desde las columnas de base de datos
+        retry_count = ev.retry_count or 0
         next_retry_in_sec = 0
-        if event_key in RETRIES_CACHE:
-            entry = RETRIES_CACHE[event_key]
-            retry_count = entry.get("count", 0)
-            next_retry_at = entry.get("next_retry_at")
-            if next_retry_at:
-                next_retry_in_sec = max(0, int((next_retry_at - datetime.now()).total_seconds()))
+        if ev.next_retry_at:
+            now_naive = datetime.now()
+            next_retry_naive = ev.next_retry_at.replace(tzinfo=None)
+            if next_retry_naive > now_naive:
+                next_retry_in_sec = max(0, int((next_retry_naive - now_naive).total_seconds()))
             
         recent_list.append({
             "id": ev.id,
@@ -213,7 +215,7 @@ async def get_stats(
         "pending": total_pending,
         "sent": total_sent,
         "failed": total_failed,
-        "retries": len(RETRIES_CACHE),
+        "retries": total_retries,
         "avg_latency_sec": avg_latency,
         "avg_rc_latency_sec": avg_rc_latency,
         "recent": recent_list
