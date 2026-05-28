@@ -25,3 +25,9 @@ class DailyStat(Base):
     avg_transmission_latency_sec = Column(Float, nullable=True)
     avg_hub_latency_sec = Column(Float, nullable=True)
     avg_rc_latency_sec = Column(Float, nullable=True)
+
+class SystemSettings(Base):
+    """Modelo para configuración global e infraestructura del Hub."""
+    __tablename__ = "system_settings"
+    id = Column(Integer, primary_key=True, index=True)
+    active_queue_backend = Column(String, default="sqlite") # 'sqlite' o 'redis'

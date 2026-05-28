@@ -82,7 +82,7 @@ def get_engine(provider: str, env: str = "prod"):
         
         # Asegurar que los modelos estén registrados en Base.metadata
         if provider == "system_config":
-            from app.models.config_models import ProviderConfig, DailyStat
+            from app.models.config_models import ProviderConfig, DailyStat, SystemSettings
         else:
             from app.models.db_models import NormalizedRCEvent
             
