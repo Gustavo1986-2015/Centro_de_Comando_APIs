@@ -24,6 +24,9 @@ class ConfigUpdate(BaseModel):
     purge_interval_min: int
     run_interval_sec: int
 
+class SystemSettingsUpdate(BaseModel):
+    active_queue_backend: str
+
 @router.get("/dashboard", response_class=HTMLResponse)
 async def get_dashboard(request: Request):
     """Renderiza el Centro de Comando en Vivo."""
@@ -264,6 +267,36 @@ async def update_configs(updates: List[ConfigUpdate]):
     finally:
         db.close()
 
+@router.get("/api/system-settings")
+async def get_system_settings():
+    from app.models.config_models import SystemSettings
+    db = get_session("system_config", "global")
+    try:
+        setting = db.query(SystemSettings).first()
+        if not setting:
+            setting = SystemSettings()
+            db.add(setting)
+            db.commit()
+            db.refresh(setting)
+        return {"active_queue_backend": setting.active_queue_backend}
+    finally:
+        db.close()
+
+@router.post("/api/system-settings")
+async def update_system_settings(updates: SystemSettingsUpdate):
+    from app.models.config_models import SystemSettings
+    db = get_session("system_config", "global")
+    try:
+        setting = db.query(SystemSettings).first()
+        if not setting:
+            setting = SystemSettings()
+            db.add(setting)
+        setting.active_queue_backend = updates.active_queue_backend.lower()
+        db.commit()
+        return {"status": "ok"}
+    finally:
+        db.close()
+
 @router.get("/api/logs")
 async def get_audit_logs():
     """Devuelve los últimos 50 registros de auditoría de los archivos .jsonl"""
@@ -331,4 +364,77 @@ async def get_daily_history():
         } for s in stats]
     finally:
         db.close()
+
+@router.get("/api/db-viewer/databases")
+async def get_databases():
+    """Lista todas las bases de datos SQLite en el directorio db."""
+    db_dir = "./db"
+    if not os.path.exists(db_dir):
+        return []
+    files = glob.glob(f"{db_dir}/*.db")
+    return [{"name": os.path.basename(f)} for f in files]
+
+@router.get("/api/db-viewer/tables")
+async def get_tables(db_name: str = Query(...)):
+    """Lista las tablas de una base de datos específica."""
+    import sqlite3
+    # Prevención básica de path traversal
+    safe_db_name = os.path.basename(db_name)
+    db_path = f"./db/{safe_db_name}"
+    if not os.path.exists(db_path):
+        return []
+    
+    try:
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
+        tables = [row[0] for row in cursor.fetchall()]
+        return {"tables": tables}
+    except Exception as e:
+        return {"error": str(e)}
+    finally:
+        if 'conn' in locals():
+            conn.close()
+
+@router.get("/api/db-viewer/query")
+async def execute_query(db_name: str = Query(...), table: str = Query(...), limit: int = 50, offset: int = 0):
+    """Retorna los datos y las columnas de una tabla seleccionada."""
+    import sqlite3
+    safe_db_name = os.path.basename(db_name)
+    db_path = f"./db/{safe_db_name}"
+    if not os.path.exists(db_path):
+        return {"error": "Base de datos no encontrada"}
+    
+    try:
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        
+        # Validar el nombre de la tabla para evitar inyección SQL (solo permitir caracteres alfanuméricos y guiones bajos)
+        import re
+        if not re.match(r'^[a-zA-Z0-9_]+$', table):
+            return {"error": "Nombre de tabla inválido"}
+            
+        cursor.execute(f"SELECT * FROM {table} LIMIT ? OFFSET ?", (limit, offset))
+        rows = cursor.fetchall()
+        
+        # Obtener los nombres de las columnas
+        cursor.execute(f"PRAGMA table_info({table})")
+        columns = [col[1] for col in cursor.fetchall()]
+        
+        # Obtener conteo total
+        cursor.execute(f"SELECT COUNT(*) FROM {table}")
+        total = cursor.fetchone()[0]
+        
+        return {
+            "columns": columns,
+            "rows": rows,
+            "total": total,
+            "limit": limit,
+            "offset": offset
+        }
+    except Exception as e:
+        return {"error": str(e)}
+    finally:
+        if 'conn' in locals():
+            conn.close()
 
