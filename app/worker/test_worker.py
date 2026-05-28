@@ -59,9 +59,13 @@ async def test_worker_flow():
     # 3. Probar el procesamiento (cambia status a sent)
     await process_pending_events()
     
-    # 4. Verificar status final
+    # 4. Verificar status final y simular que el evento fue creado antes de hoy para que la purga lo elimine
     db.refresh(test_event)
     print(f"\nEvento en DB luego de procesar: status='{test_event.status}'")
+    
+    from datetime import timedelta
+    test_event.created_at = datetime.now(timezone.utc) - timedelta(days=1)
+    db.commit()
 
     # 5. Probar la purga
     await purge_processed_events()
