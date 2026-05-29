@@ -39,7 +39,10 @@ async def get_stats(
     Retorna las estadísticas en tiempo real sumando los datos de
     TODAS las bases de datos SQLite de los distintos proveedores.
     """
-    today_start = datetime.combine(date.today(), datetime.min.time())
+    from datetime import datetime, timezone
+    local_now = datetime.now().astimezone()
+    today_start_local = datetime.combine(local_now.date(), datetime.min.time()).replace(tzinfo=local_now.tzinfo)
+    today_start = today_start_local.astimezone(timezone.utc).replace(tzinfo=None)
     
     total_pending = 0
     total_sent = 0

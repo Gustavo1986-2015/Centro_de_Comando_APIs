@@ -35,6 +35,11 @@ class MessageQueueInterface(ABC):
         pass
 
     @abstractmethod
+    async def get_pending_count(self, provider: str, env: str) -> int:
+        """Retorna la cantidad total de eventos encolados listos para procesar."""
+        pass
+
+    @abstractmethod
     async def schedule_retry(
         self, provider: str, env: str, event_id: int, elapsed_sec: float, rc_response: str, job_id: str,
         retry_count: int, next_retry_at: datetime
@@ -43,4 +48,19 @@ class MessageQueueInterface(ABC):
         Programa un reintento para el evento, actualizando el conteo de reintentos
         y la fecha/hora en la que volverá a ser elegible.
         """
+        pass
+
+    @abstractmethod
+    async def mark_batch_as_sent(self, provider: str, env: str, updates: List[dict]) -> None:
+        """Actualiza el estado a 'sent' para múltiples eventos en una sola transacción."""
+        pass
+
+    @abstractmethod
+    async def mark_batch_as_failed(self, provider: str, env: str, updates: List[dict]) -> None:
+        """Actualiza el estado a 'failed' para múltiples eventos en una sola transacción."""
+        pass
+
+    @abstractmethod
+    async def schedule_batch_retry(self, provider: str, env: str, updates: List[dict]) -> None:
+        """Programa el reintento para múltiples eventos en una sola transacción."""
         pass
