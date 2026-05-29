@@ -42,14 +42,15 @@ class SQLiteQueue(MessageQueueInterface):
             
             if events:
                 event_ids = [ev.id for ev in events]
+                
+                for ev in events:
+                    db.expunge(ev)
+                    ev.status = "processing"
+                    
                 db.query(NormalizedRCEvent).filter(NormalizedRCEvent.id.in_(event_ids)).update(
                     {"status": "processing"}, synchronize_session=False
                 )
                 db.commit()
-            
-            for ev in events:
-                ev.status = "processing"
-                db.expunge(ev)
                 
             return events
         finally:
