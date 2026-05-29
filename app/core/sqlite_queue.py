@@ -12,11 +12,24 @@ class SQLiteQueue(MessageQueueInterface):
     Mantiene la compatibilidad con el esquema de almacenamiento relacional del Hub.
     """
 
+    async def get_pending_count(self, provider: str, env: str) -> int:
+        db = get_session(provider, env)
+        try:
+            now_time = datetime.now()
+            return db.query(NormalizedRCEvent).filter(
+                NormalizedRCEvent.status == "pending",
+                or_(
+                    NormalizedRCEvent.next_retry_at == None,
+                    NormalizedRCEvent.next_retry_at <= now_time
+                )
+            ).count()
+        finally:
+            db.close()
+
     async def get_pending_batch(self, provider: str, env: str, limit: int = 150) -> List[Any]:
         db = get_session(provider, env)
         try:
             now_time = datetime.now()
-            # Buscar eventos pendientes que ya cumplieron el tiempo de retroceso/reintento (o que no tienen reintentos programados)
             query = db.query(NormalizedRCEvent).filter(
                 NormalizedRCEvent.status == "pending",
                 or_(
@@ -27,70 +40,81 @@ class SQLiteQueue(MessageQueueInterface):
             
             events = query.all()
             
-            # Desvincular de la sesión para evitar DetachedInstanceError al cerrar la conexión
+            if events:
+                event_ids = [ev.id for ev in events]
+                db.query(NormalizedRCEvent).filter(NormalizedRCEvent.id.in_(event_ids)).update(
+                    {"status": "processing"}, synchronize_session=False
+                )
+                db.commit()
+            
             for ev in events:
+                ev.status = "processing"
                 db.expunge(ev)
                 
             return events
         finally:
             db.close()
 
-    async def mark_as_sent(
-        self, provider: str, env: str, event_id: int, elapsed_sec: float, rc_response: str, job_id: str
-    ) -> None:
+    async def mark_batch_as_sent(self, provider: str, env: str, updates: List[dict]) -> None:
         db = get_session(provider, env)
         try:
-            event = db.query(NormalizedRCEvent).filter(NormalizedRCEvent.id == event_id).first()
-            if event:
-                event.status = "sent"
-                event.rc_response = rc_response
-                event.job_id = job_id
-                event.rc_latency_sec = elapsed_sec
-                # Resetear reintentos al enviar con éxito
-                event.retry_count = 0
-                event.next_retry_at = None
-                db.commit()
+            for u in updates:
+                db.query(NormalizedRCEvent).filter(NormalizedRCEvent.id == u['event_id']).update({
+                    "status": "sent",
+                    "rc_response": u['rc_response'],
+                    "job_id": u['job_id'],
+                    "rc_latency_sec": u['elapsed_sec'],
+                    "retry_count": 0,
+                    "next_retry_at": None
+                }, synchronize_session=False)
+            db.commit()
         except Exception:
             db.rollback()
             raise
         finally:
             db.close()
 
-    async def mark_as_failed(
-        self, provider: str, env: str, event_id: int, elapsed_sec: float, rc_response: str, job_id: str
-    ) -> None:
+    async def mark_batch_as_failed(self, provider: str, env: str, updates: List[dict]) -> None:
         db = get_session(provider, env)
         try:
-            event = db.query(NormalizedRCEvent).filter(NormalizedRCEvent.id == event_id).first()
-            if event:
-                event.status = "failed"
-                event.rc_response = rc_response
-                event.job_id = job_id
-                event.rc_latency_sec = elapsed_sec
-                db.commit()
+            for u in updates:
+                db.query(NormalizedRCEvent).filter(NormalizedRCEvent.id == u['event_id']).update({
+                    "status": "failed",
+                    "rc_response": u['rc_response'],
+                    "job_id": u['job_id'],
+                    "rc_latency_sec": u['elapsed_sec']
+                }, synchronize_session=False)
+            db.commit()
         except Exception:
             db.rollback()
             raise
         finally:
             db.close()
 
-    async def schedule_retry(
-        self, provider: str, env: str, event_id: int, elapsed_sec: float, rc_response: str, job_id: str,
-        retry_count: int, next_retry_at: datetime
-    ) -> None:
+    async def schedule_batch_retry(self, provider: str, env: str, updates: List[dict]) -> None:
         db = get_session(provider, env)
         try:
-            event = db.query(NormalizedRCEvent).filter(NormalizedRCEvent.id == event_id).first()
-            if event:
-                event.status = "pending"
-                event.rc_response = rc_response
-                event.job_id = job_id
-                event.rc_latency_sec = elapsed_sec
-                event.retry_count = retry_count
-                event.next_retry_at = next_retry_at
-                db.commit()
+            for u in updates:
+                db.query(NormalizedRCEvent).filter(NormalizedRCEvent.id == u['event_id']).update({
+                    "status": "pending",
+                    "rc_response": u['rc_response'],
+                    "job_id": u['job_id'],
+                    "rc_latency_sec": u['elapsed_sec'],
+                    "retry_count": u['retry_count'],
+                    "next_retry_at": u['next_retry_at']
+                }, synchronize_session=False)
+            db.commit()
         except Exception:
             db.rollback()
             raise
         finally:
             db.close()
+
+    async def mark_as_sent(self, provider: str, env: str, event_id: int, elapsed_sec: float, rc_response: str, job_id: str) -> None:
+        await self.mark_batch_as_sent(provider, env, [{"event_id": event_id, "elapsed_sec": elapsed_sec, "rc_response": rc_response, "job_id": job_id}])
+
+    async def mark_as_failed(self, provider: str, env: str, event_id: int, elapsed_sec: float, rc_response: str, job_id: str) -> None:
+        await self.mark_batch_as_failed(provider, env, [{"event_id": event_id, "elapsed_sec": elapsed_sec, "rc_response": rc_response, "job_id": job_id}])
+
+    async def schedule_retry(self, provider: str, env: str, event_id: int, elapsed_sec: float, rc_response: str, job_id: str, retry_count: int, next_retry_at: datetime) -> None:
+        await self.schedule_batch_retry(provider, env, [{"event_id": event_id, "elapsed_sec": elapsed_sec, "rc_response": rc_response, "job_id": job_id, "retry_count": retry_count, "next_retry_at": next_retry_at}])
