@@ -28,7 +28,7 @@ class ConfigUpdate(BaseModel):
 @router.get("/dashboard", response_class=HTMLResponse)
 async def get_dashboard(request: Request):
     """Renderiza el Centro de Comando en Vivo."""
-    return templates.TemplateResponse("index.html", {"request": request})
+    return templates.TemplateResponse(request=request, name="index.html")
 
 @router.get("/api/stats")
 async def get_stats(

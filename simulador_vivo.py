@@ -19,8 +19,8 @@ else:
     PLACAS = ["RHR5776", "GDG8486", "JMC1236"]
     SEGUNDOS_ESPERA = 2
 
-WEBHOOK_URL = "http://localhost:8000/schmitz/webhook?env=test"
-
+# WEBHOOK_URL = "http://localhost:8000/schmitz/webhook?env=test"
+WEBHOOK_URL = "https://schmit-test.onrender.com/schmitz/webhook?env=test"
 # Ruta a los payloads reales de prueba de Schmitz
 DEMO_PAYLOADS_DIR = r"C:\Users\gustavogomez\Downloads\Quickstart_RESTPushAPI_v_1_35_v01_eng\Demo_Payloads"
 
@@ -132,7 +132,7 @@ while True:
         evento, tipo_evento, archivo = generar_evento(placa)
         print(f"\n[{datetime.datetime.now().strftime('%H:%M:%S')}] Enviando {placa} | Archivo base: {archivo} | Tipo Alarma: {tipo_evento}")
         try:
-            response = requests.post(WEBHOOK_URL, json=evento, timeout=5)
+            response = requests.post(WEBHOOK_URL, json=evento, timeout=30)
             if response.status_code in [200, 202]:
                 print(f" -> ÉXITO. Respuesta: {response.text}")
             else:
