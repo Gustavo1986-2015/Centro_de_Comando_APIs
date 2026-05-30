@@ -12,6 +12,7 @@ class ProviderConfig(Base):
     rc_password = Column(String, default="")
     purge_interval_min = Column(Integer, default=15)
     run_interval_sec = Column(Integer, default=5)
+    queue_backend = Column(String, default="sqlite")
 
 class DailyStat(Base):
     """Modelo de base de datos para almacenar el histórico de eventos procesados por día calendario."""
@@ -25,3 +26,9 @@ class DailyStat(Base):
     avg_transmission_latency_sec = Column(Float, nullable=True)
     avg_hub_latency_sec = Column(Float, nullable=True)
     avg_rc_latency_sec = Column(Float, nullable=True)
+
+class SystemSettings(Base):
+    """Modelo para configuración global e infraestructura del Hub."""
+    __tablename__ = "system_settings"
+    id = Column(Integer, primary_key=True, index=True)
+    active_queue_backend = Column(String, default="sqlite") # 'sqlite' o 'redis'

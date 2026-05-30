@@ -384,6 +384,7 @@
             <li id="tab-simulator" onclick="switchView('simulator')">Simulador de Webhooks</li>
             <li id="tab-logs" onclick="switchView('logs')">Logs de Auditoría Dinámica</li>
             <li id="tab-history" onclick="switchView('history')">Historial Diario</li>
+            <li id="tab-db-viewer" onclick="switchView('db-viewer')">Visor de Base de Datos</li>
         </ul>
     </nav>
 
@@ -465,6 +466,7 @@
 
     <!-- VISTA CONFIGURACIÓN -->
     <main id="view-config" style="display: none;">
+
         <div class="recent-section">
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
                 <h2>Configuración de Proveedores (APIs)</h2>
@@ -482,6 +484,7 @@
                             <th>RC Password</th>
                             <th>Purga (min)</th>
                             <th>Ejecución (seg)</th>
+                            <th>Motor Cola</th>
                         </tr>
                     </thead>
                     <tbody id="config-table-body">
@@ -587,6 +590,46 @@
                 <button class="btn-save" style="background: rgba(255,255,255,0.1); color: var(--color-white);" onclick="document.getElementById('sim-payload').value=''" title="Limpiar la caja de texto">🧹 Limpiar JSON</button>
             </div>
             <div id="sim-result" style="margin-top: 1rem; font-weight: 600;"></div>
+        </div>
+    </main>
+
+    <!-- VISTA VISOR DE BASE DE DATOS -->
+    <main id="view-db-viewer" style="display: none;">
+        <div class="recent-section">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
+                <h2>Visor de Base de Datos (SQLite Local)</h2>
+            </div>
+            
+            <div style="display: flex; gap: 1rem; margin-bottom: 1rem; flex-wrap: wrap;">
+                <div class="form-group" style="flex: 1; min-width: 200px;">
+                    <label>1. Seleccionar Base de Datos</label>
+                    <select id="db-select" class="form-control" style="background-color: var(--color-black); cursor: pointer;" onchange="loadTables()">
+                        <option value="">Cargando...</option>
+                    </select>
+                </div>
+                <div class="form-group" style="flex: 1; min-width: 200px;">
+                    <label>2. Seleccionar Tabla</label>
+                    <select id="table-select" class="form-control" style="background-color: var(--color-black); cursor: pointer;">
+                        <option value="">Seleccione una base de datos primero...</option>
+                    </select>
+                </div>
+                <div style="display: flex; align-items: flex-end; margin-bottom: 1rem;">
+                    <button class="btn-save" onclick="loadQueryData()" style="height: 42px;">Consultar Datos</button>
+                </div>
+            </div>
+
+            <div class="table-container" style="max-height: 500px; overflow-y: auto;">
+                <table id="db-viewer-table">
+                    <thead id="db-viewer-thead">
+                        <tr><th>Esperando consulta...</th></tr>
+                    </thead>
+                    <tbody id="db-viewer-tbody">
+                    </tbody>
+                </table>
+            </div>
+            <div style="display: flex; justify-content: space-between; margin-top: 1rem; color: var(--color-gray);">
+                <span id="db-viewer-info">Mostrando 0 registros.</span>
+            </div>
         </div>
     </main>
 
@@ -751,12 +794,14 @@
             document.getElementById('view-simulator').style.display = view === 'simulator' ? 'flex' : 'none';
             document.getElementById('view-logs').style.display = view === 'logs' ? 'flex' : 'none';
             document.getElementById('view-history').style.display = view === 'history' ? 'flex' : 'none';
+            document.getElementById('view-db-viewer').style.display = view === 'db-viewer' ? 'flex' : 'none';
             
             document.getElementById('tab-dashboard').classList.toggle('active-tab', view === 'dashboard');
             document.getElementById('tab-config').classList.toggle('active-tab', view === 'config');
             document.getElementById('tab-simulator').classList.toggle('active-tab', view === 'simulator');
             document.getElementById('tab-logs').classList.toggle('active-tab', view === 'logs');
             document.getElementById('tab-history').classList.toggle('active-tab', view === 'history');
+            document.getElementById('tab-db-viewer').classList.toggle('active-tab', view === 'db-viewer');
             
             toggleMenu(); // Cierra el menú al elegir
  
@@ -770,6 +815,8 @@
                 loadLogs();
             } else if (view === 'history') {
                 loadHistory();
+            } else if (view === 'db-viewer') {
+                loadDatabases();
             } else {
                 fetchStats();
                 statsInterval = setInterval(fetchStats, 2000);
@@ -1096,6 +1143,12 @@
                             <td><input class="form-control" type="password" id="pass_${c._originalIdx}" value="${c.rc_password}"></td>
                             <td><input class="form-control" type="number" id="purge_${c._originalIdx}" value="${c.purge_interval_min}" style="width: 80px;"></td>
                             <td><input class="form-control" type="number" id="run_int_${c._originalIdx}" value="${c.run_interval_sec}" style="width: 80px;"></td>
+                            <td>
+                                <select id="queue_${c._originalIdx}" class="form-control" style="width: 100px; background-color: var(--color-black); cursor: pointer;">
+                                    <option value="sqlite" ${c.queue_backend === 'sqlite' ? 'selected' : ''}>SQLite</option>
+                                    <option value="redis" ${c.queue_backend === 'redis' ? 'selected' : ''}>Redis</option>
+                                </select>
+                            </td>
                         `;
                         tbody.appendChild(tr);
                     });
@@ -1112,7 +1165,8 @@
                 rc_user: document.getElementById(`user_${idx}`).value,
                 rc_password: document.getElementById(`pass_${idx}`).value,
                 purge_interval_min: parseInt(document.getElementById(`purge_${idx}`).value) || 15,
-                run_interval_sec: parseInt(document.getElementById(`run_int_${idx}`).value) || 5
+                run_interval_sec: parseInt(document.getElementById(`run_int_${idx}`).value) || 5,
+                queue_backend: document.getElementById(`queue_${idx}`).value
             }));
 
             try {
@@ -1267,6 +1321,82 @@
             } else {
                 overlay.classList.remove('active');
                 setTimeout(() => overlay.style.display = 'none', 300);
+            }
+        }
+
+        // Lógica de Visor de BD y Settings
+        async function loadDatabases() {
+            const select = document.getElementById('db-select');
+            select.innerHTML = '<option value="">Cargando...</option>';
+            try {
+                const res = await fetch('/api/db-viewer/databases');
+                const dbs = await res.json();
+                select.innerHTML = '<option value="">-- Seleccione BD --</option>';
+                dbs.forEach(db => {
+                    select.innerHTML += `<option value="${db.name}">${db.name}</option>`;
+                });
+            } catch(e) {
+                select.innerHTML = '<option value="">Error cargando BDs</option>';
+            }
+        }
+
+        async function loadTables() {
+            const dbName = document.getElementById('db-select').value;
+            const tableSelect = document.getElementById('table-select');
+            if(!dbName) {
+                tableSelect.innerHTML = '<option value="">Seleccione una base de datos primero...</option>';
+                return;
+            }
+            tableSelect.innerHTML = '<option value="">Cargando tablas...</option>';
+            try {
+                const res = await fetch(`/api/db-viewer/tables?db_name=${encodeURIComponent(dbName)}`);
+                const data = await res.json();
+                if(data.error) throw new Error(data.error);
+                tableSelect.innerHTML = '<option value="">-- Seleccione Tabla --</option>';
+                data.tables.forEach(t => {
+                    tableSelect.innerHTML += `<option value="${t}">${t}</option>`;
+                });
+            } catch(e) {
+                tableSelect.innerHTML = '<option value="">Error cargando tablas</option>';
+            }
+        }
+
+        async function loadQueryData() {
+            const dbName = document.getElementById('db-select').value;
+            const tableName = document.getElementById('table-select').value;
+            if(!dbName || !tableName) {
+                alert("Debe seleccionar una base de datos y una tabla.");
+                return;
+            }
+            
+            const thead = document.getElementById('db-viewer-thead');
+            const tbody = document.getElementById('db-viewer-tbody');
+            const info = document.getElementById('db-viewer-info');
+            
+            thead.innerHTML = '<tr><th>Cargando datos...</th></tr>';
+            tbody.innerHTML = '';
+            info.textContent = 'Mostrando 0 registros.';
+            
+            try {
+                const res = await fetch(`/api/db-viewer/query?db_name=${encodeURIComponent(dbName)}&table=${encodeURIComponent(tableName)}&limit=50&offset=0`);
+                const data = await res.json();
+                if(data.error) throw new Error(data.error);
+                
+                // Generar Columnas
+                thead.innerHTML = '<tr>' + data.columns.map(c => `<th>${c}</th>`).join('') + '</tr>';
+                
+                // Generar Filas
+                if(data.rows.length === 0) {
+                    tbody.innerHTML = `<tr><td colspan="${data.columns.length}" style="text-align:center;">No hay datos en esta tabla.</td></tr>`;
+                } else {
+                    tbody.innerHTML = data.rows.map(row => {
+                        return '<tr>' + row.map(val => `<td style="white-space: nowrap; max-width: 200px; overflow: hidden; text-overflow: ellipsis;" title="${String(val).replace(/"/g, '&quot;')}">${val !== null ? val : '<em>NULL</em>'}</td>`).join('') + '</tr>';
+                    }).join('');
+                }
+                info.textContent = `Mostrando ${data.rows.length} registros de un total de ${data.total} en la tabla ${tableName}. (Límite visual 50)`;
+            } catch(e) {
+                thead.innerHTML = '<tr><th>Error</th></tr>';
+                tbody.innerHTML = `<tr><td style="color:var(--color-red)">${e.message}</td></tr>`;
             }
         }
 

@@ -55,14 +55,16 @@ def get_next_retry_delay(retry_count: int) -> int:
 async def process_provider_events(provider: str, env: str):
     """Procesa pendientes de un único proveedor y entorno en lotes concurrentes en paralelo y aplica backoff."""
     from app.core.queue_factory import QueueFactory
-    queue = QueueFactory.get_queue_service()
+    queue = QueueFactory.get_queue_service(provider, env)
     try:
         # 1. Obtener pendientes usando el servicio de colas abstraído
-        pendings = await queue.get_pending_batch(provider, env, limit=150)
+        limit = 150
+        pendings = await queue.get_pending_batch(provider, env, limit=limit)
                 
         if not pendings:
-            return
+            return False
             
+        has_more = len(pendings) >= limit
         # 2. Particionar en sub-lotes de hasta 50 eventos
         batch_size = 50
         batches = [pendings[i:i + batch_size] for i in range(0, len(pendings), batch_size)]
@@ -100,9 +102,13 @@ async def process_provider_events(provider: str, env: str):
         logger.info(f"Enviando {len(pendings)} eventos en {len(batches)} sub-lote(s) en paralelo para {provider}_{env}")
         batches_results = await asyncio.gather(*soap_tasks, return_exceptions=True)
         
-        # 4. Procesar y guardar resultados de forma secuencial
+        # 4. Procesar y guardar resultados en bloque (Batch Save)
         for batch_idx, batch in enumerate(batches):
             batch_outcome = batches_results[batch_idx]
+            
+            updates_to_retry = []
+            updates_to_fail = []
+            updates_to_sent = []
             
             # Manejar excepciones completas de red/transporte para todo el sub-lote
             if isinstance(batch_outcome, Exception):
@@ -110,116 +116,102 @@ async def process_provider_events(provider: str, env: str):
                 for db_event in batch:
                     current_retries = db_event.retry_count or 0
                     
-                    # Backoff exponencial con Jitter: 4 intentos máx.
                     if current_retries < 4:
                         backoff_sec = get_next_retry_delay(current_retries)
                         next_retry = datetime.now() + timedelta(seconds=backoff_sec)
-                        await queue.schedule_retry(
-                            provider=provider,
-                            env=env,
-                            event_id=db_event.id,
-                            elapsed_sec=None,
-                            rc_response=f"Excepción de transporte: {str(batch_outcome)}",
-                            job_id=f"rc_conn_err_{int(datetime.now().timestamp())}",
-                            retry_count=current_retries + 1,
-                            next_retry_at=next_retry
-                        )
-                        logger.warning(f"Fallo de red en RC para evento {db_event.id}. Reintento {current_retries + 1}/4 programado en {backoff_sec}s. Queda PENDING.")
+                        updates_to_retry.append({
+                            "event_id": db_event.id,
+                            "elapsed_sec": None,
+                            "rc_response": f"Excepción de transporte: {str(batch_outcome)}",
+                            "job_id": f"rc_conn_err_{int(datetime.now().timestamp())}",
+                            "retry_count": current_retries + 1,
+                            "next_retry_at": next_retry
+                        })
                     else:
-                        await queue.mark_as_failed(
-                            provider=provider,
-                            env=env,
-                            event_id=db_event.id,
-                            elapsed_sec=None,
-                            rc_response=f"Excepción de transporte: {str(batch_outcome)}",
-                            job_id=f"rc_conn_err_{int(datetime.now().timestamp())}"
-                        )
-                        logger.error(f"Excedidos los 4 reintentos de red para evento {db_event.id}. Marcado FAILED definitivo.")
-                continue
+                        updates_to_fail.append({
+                            "event_id": db_event.id,
+                            "elapsed_sec": None,
+                            "rc_response": f"Excepción de transporte: {str(batch_outcome)}",
+                            "job_id": f"rc_conn_err_{int(datetime.now().timestamp())}"
+                        })
+            else:
+                results, elapsed_sec = batch_outcome
                 
-            results, elapsed_sec = batch_outcome
-            
-            # Procesar acuse de recibo de eventos individuales dentro del sub-lote
-            for idx, db_event in enumerate(batch):
-                try:
-                    success, job_id, rc_response = results[idx] if results and idx < len(results) else (False, f"rc_err_missing_{int(datetime.now().timestamp())}", "No response mapping for event")
-                    
-                    if success:
-                        await queue.mark_as_sent(
-                            provider=provider,
-                            env=env,
-                            event_id=db_event.id,
-                            elapsed_sec=elapsed_sec,
-                            rc_response=rc_response,
-                            job_id=job_id
-                        )
-                    else:
-                        err_lower = str(rc_response).lower()
-                        is_auth_error = any(w in err_lower for w in ["unknown_token", "userunk", "autentica", "token", "incorrecta", "contrase", "conn_err", "connection"])
-                        
-                        if is_auth_error:
-                            current_retries = db_event.retry_count or 0
-                            
-                            if current_retries < 4:
-                                backoff_sec = get_next_retry_delay(current_retries)
-                                next_retry = datetime.now() + timedelta(seconds=backoff_sec)
-                                await queue.schedule_retry(
-                                    provider=provider,
-                                    env=env,
-                                    event_id=db_event.id,
-                                    elapsed_sec=elapsed_sec,
-                                    rc_response=rc_response,
-                                    job_id=job_id,
-                                    retry_count=current_retries + 1,
-                                    next_retry_at=next_retry
-                                )
-                                logger.warning(f"Fallo de autenticación/token en RC para evento {db_event.id}. Reintento {current_retries + 1}/4 programado en {backoff_sec}s. Queda PENDING.")
-                            else:
-                                await queue.mark_as_failed(
-                                    provider=provider,
-                                    env=env,
-                                    event_id=db_event.id,
-                                    elapsed_sec=elapsed_sec,
-                                    rc_response=rc_response,
-                                    job_id=job_id
-                                )
-                                logger.error(f"Excedidos los 4 reintentos de autenticación para evento {db_event.id}. Marcado FAILED definitivo.")
-                        else:
-                            await queue.mark_as_failed(
-                                provider=provider,
-                                env=env,
-                                event_id=db_event.id,
-                                elapsed_sec=elapsed_sec,
-                                rc_response=rc_response,
-                                job_id=job_id
-                            )
-                except Exception as inner_e:
-                    logger.error(f"Error al guardar resultado de evento individual {db_event.id}: {str(inner_e)}")
+                for idx, db_event in enumerate(batch):
                     try:
-                        await queue.mark_as_failed(
-                            provider=provider,
-                            env=env,
-                            event_id=db_event.id,
-                            elapsed_sec=None,
-                            rc_response=f"Excepción interna del worker: {str(inner_e)}",
-                            job_id=f"worker_err_{int(datetime.now().timestamp())}"
-                        )
-                    except Exception:
-                        pass
+                        success, job_id, rc_response = results[idx] if results and idx < len(results) else (False, f"rc_err_missing_{int(datetime.now().timestamp())}", "No response mapping for event")
+                        
+                        if success:
+                            updates_to_sent.append({
+                                "event_id": db_event.id,
+                                "elapsed_sec": elapsed_sec,
+                                "rc_response": rc_response,
+                                "job_id": job_id
+                            })
+                        else:
+                            err_lower = str(rc_response).lower()
+                            is_auth_error = any(w in err_lower for w in ["unknown_token", "userunk", "autentica", "token", "incorrecta", "contrase", "conn_err", "connection"])
+                            
+                            if is_auth_error:
+                                current_retries = db_event.retry_count or 0
+                                if current_retries < 4:
+                                    backoff_sec = get_next_retry_delay(current_retries)
+                                    next_retry = datetime.now() + timedelta(seconds=backoff_sec)
+                                    updates_to_retry.append({
+                                        "event_id": db_event.id,
+                                        "elapsed_sec": elapsed_sec,
+                                        "rc_response": rc_response,
+                                        "job_id": job_id,
+                                        "retry_count": current_retries + 1,
+                                        "next_retry_at": next_retry
+                                    })
+                                else:
+                                    updates_to_fail.append({
+                                        "event_id": db_event.id,
+                                        "elapsed_sec": elapsed_sec,
+                                        "rc_response": rc_response,
+                                        "job_id": job_id
+                                    })
+                            else:
+                                updates_to_fail.append({
+                                    "event_id": db_event.id,
+                                    "elapsed_sec": elapsed_sec,
+                                    "rc_response": rc_response,
+                                    "job_id": job_id
+                                })
+                    except Exception as inner_e:
+                        updates_to_fail.append({
+                            "event_id": db_event.id,
+                            "elapsed_sec": None,
+                            "rc_response": f"Excepción interna: {str(inner_e)}",
+                            "job_id": f"worker_err_{int(datetime.now().timestamp())}"
+                        })
+                        
+            # Ejecutar guardado en bloque para este sub-lote
+            if updates_to_retry:
+                await queue.schedule_batch_retry(provider, env, updates_to_retry)
+            if updates_to_fail:
+                await queue.mark_batch_as_failed(provider, env, updates_to_fail)
+            if updates_to_sent:
+                await queue.mark_batch_as_sent(provider, env, updates_to_sent)
         
         # 5. Consolidar estadísticas del día de hoy en la base de datos global de forma asincrónica e independiente
         try:
             update_daily_stats(provider, env)
         except Exception as stats_e:
             logger.error(f"Error al actualizar estadísticas diarias para {provider}_{env}: {stats_e}")
+            
+        return has_more
         
     except Exception as e:
         logger.error(f"Error general en process_provider_events para {provider}_{env}: {str(e)}")
 
 def update_daily_stats(provider: str, env: str):
     """Calcula y actualiza las estadísticas de procesamiento del día de hoy en la BD global."""
-    from datetime import datetime
-    today_start = datetime.combine(datetime.now().date(), datetime.min.time())
+    from datetime import datetime, timezone
+    local_now = datetime.now().astimezone()
+    today_start_local = datetime.combine(local_now.date(), datetime.min.time()).replace(tzinfo=local_now.tzinfo)
+    today_start = today_start_local.astimezone(timezone.utc).replace(tzinfo=None)
     
     db_prov = get_session(provider, env)
     try:
@@ -315,10 +307,14 @@ async def process_pending_events():
 
 
 async def purge_provider_events(provider: str, env: str):
-    """Purga una BD individual eliminando solo los eventos enviados/fallidos anteriores al día de hoy."""
+    """Purga una BD individual eliminando solo los eventos enviados/fallidos anteriores al día de hoy local."""
     db: Session = get_session(provider, env)
     try:
-        today_start = datetime.combine(datetime.now().date(), datetime.min.time())
+        from datetime import datetime, timezone
+        local_now = datetime.now().astimezone()
+        today_start_local = datetime.combine(local_now.date(), datetime.min.time()).replace(tzinfo=local_now.tzinfo)
+        today_start = today_start_local.astimezone(timezone.utc).replace(tzinfo=None)
+        
         deleted_count = db.query(NormalizedRCEvent).filter(
             NormalizedRCEvent.status.in_(["sent", "failed"]),
             NormalizedRCEvent.created_at < today_start
@@ -384,8 +380,24 @@ async def api_worker_loop(provider: str, env: str):
                 purge_min = config["purge_interval_min"]
                 
                 if is_active:
-                    # 1. Procesar eventos pendientes
-                    await process_provider_events(provider, env)
+                    # 1. El Director revisa el volumen de la cola
+                    from app.core.queue_factory import QueueFactory
+                    queue = QueueFactory.get_queue_service(provider, env)
+                    pending_count = await queue.get_pending_count(provider, env)
+                    
+                    if pending_count > 0:
+                        import math
+                        # Auto-escalado dinámico: 1 worker por cada 150 eventos, máximo 5 simultáneos (750 eventos a la vez)
+                        num_workers = min(5, math.ceil(pending_count / 150))
+                        logger.info(f"Director: {pending_count} pendientes para {provider}_{env}. Auto-escalando a {num_workers} mano(s).")
+                        
+                        # Instanciar y ejecutar las múltiples "manos" en paralelo real
+                        worker_tasks = [process_provider_events(provider, env) for _ in range(num_workers)]
+                        results = await asyncio.gather(*worker_tasks)
+                        
+                        has_more = any(results)
+                    else:
+                        has_more = False
                     
                     # 2. Verificar si es tiempo de purga
                     now = datetime.now()
@@ -393,6 +405,10 @@ async def api_worker_loop(provider: str, env: str):
                     if minutes_since_purge >= purge_min:
                         await purge_provider_events(provider, env)
                         last_purge = now
+                        
+                    if has_more:
+                        # Modo ráfaga: omitimos el descanso porque sabemos que aún quedan eventos pendientes
+                        run_interval = 0
                 else:
                     # Si no está activo, dormimos un intervalo corto por defecto para reevaluar
                     run_interval = 5
@@ -426,6 +442,22 @@ async def worker_loop():
             configs = db.query(ProviderConfig).all()
         
         providers = [(c.provider_name, c.env) for c in configs]
+        
+        # Recuperación de Desastres: Revertir 'processing' a 'pending' tras reinicio brusco
+        for provider, env in providers:
+            try:
+                db_prov = get_session(provider, env)
+                from app.models.db_models import NormalizedRCEvent
+                recovered = db_prov.query(NormalizedRCEvent).filter(NormalizedRCEvent.status == "processing").update(
+                    {"status": "pending"}, synchronize_session=False
+                )
+                if recovered > 0:
+                    logger.warning(f"Recuperación: {recovered} eventos atascados revertidos a 'pending' en {provider}_{env}")
+                db_prov.commit()
+                db_prov.close()
+            except Exception as rec_err:
+                logger.error(f"Error recuperando eventos atascados para {provider}_{env}: {rec_err}")
+                
     except Exception as e:
         logger.error(f"Error inicializando proveedores en worker_loop: {e}")
         providers = [("schmitz", "prod"), ("schmitz", "test")]

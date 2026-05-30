@@ -28,9 +28,13 @@ def check_and_migrate_db():
         # 1. Migración para provider_config
         cursor.execute("PRAGMA table_info(provider_config)")
         columns = [row[1] for row in cursor.fetchall()]
-        if columns and "run_interval_sec" not in columns:
-            cursor.execute("ALTER TABLE provider_config ADD COLUMN run_interval_sec INTEGER DEFAULT 5")
-            conn.commit()
+        if columns:
+            if "run_interval_sec" not in columns:
+                cursor.execute("ALTER TABLE provider_config ADD COLUMN run_interval_sec INTEGER DEFAULT 5")
+                conn.commit()
+            if "queue_backend" not in columns:
+                cursor.execute("ALTER TABLE provider_config ADD COLUMN queue_backend TEXT DEFAULT 'sqlite'")
+                conn.commit()
             
         # 2. Migración para daily_stats
         cursor.execute("PRAGMA table_info(daily_stats)")
@@ -82,7 +86,7 @@ def get_engine(provider: str, env: str = "prod"):
         
         # Asegurar que los modelos estén registrados en Base.metadata
         if provider == "system_config":
-            from app.models.config_models import ProviderConfig, DailyStat
+            from app.models.config_models import ProviderConfig, DailyStat, SystemSettings
         else:
             from app.models.db_models import NormalizedRCEvent
             

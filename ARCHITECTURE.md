@@ -23,9 +23,10 @@ graph TD
 
     %% Bloque Worker de Despacho (Asíncrono)
     subgraph 2. Procesamiento y Despacho Asíncrono (Worker)
-        H[Worker Core: app/worker/processor.py] -->|1. Consulta APIs Activas| I[(db/system_config_global.db)]
-        H -->|2. Lee eventos 'pending'| G
-        H -->|3. Filtra con Backoff in-memory| J[RETRIES_CACHE]
+        H[Worker Core: app/worker/processor.py] -->|1. Consulta APIs Activas y Motor Colas| I[(db/system_config_global.db)]
+        H -->|2. El Director define Auto-Escalado (Max 5x)| D1[asyncio.gather(Múltiples Workers)]
+        D1 -->|3. Lock Atómico y Batch Read| G
+        D1 -->|4. Filtra Backoff Nativos| G
         H -->|4. Agrupa en sub-lotes de 50| K{soap_tasks}
         K -->|5. Gather paralelo| L[Client SOAP: app/services/rc_soap.py]
         L -->|Caché Token| M[(db/rc_token_cache.json)]
@@ -42,7 +43,7 @@ graph TD
         P[API Dashboard: app/api/routers/dashboard.py] -->|Lee Config y DailyStats| I
         P -->|Lee últimos 200 eventos globales| G
         P -->|Calcula latencias de red y transmisión| P
-        P -->|Inyecta RETRIES_CACHE| P
+        P -->|Resuelve Medianoche Local| P
         P -->|Retorna JSON de estadísticas| Q[Frontend UI: app/templates/index.html]
     end
 ```
@@ -59,7 +60,8 @@ A continuación se detalla la matriz de impacto y el rol de cada script en el si
 | **`app/api/routers/schmitz.py`** | Evento PUSH del proveedor | Payload JSON de Schmitz | Escribe en Logs de Auditoría y guarda el evento normalizado en `schmitz_{env}.db` | Webhook receptor de Schmitz. Realiza la autenticación, auditoría y encolamiento inicial. |
 | **`app/providers/schmitz/mapper.py`** | Llamado por `schmitz.py` | JSON crudo de Schmitz | Modelo de datos `RCCanonicalModel` (Pydantic) | Adapta, parsea a UTC 0 y normaliza la telemetría (ej. limpia coordenadas y fuerza velocidad nula a `0.0`). |
 | **`app/core/auditor.py`** | Llamado por routers de webhooks | Payload JSON original | Archivos diarios `.jsonl` bajo `audit/{provider}_{env}/` | Caja negra. Asegura el resguardo permanente de la información cruda antes de cualquier transformación. |
-| **`app/worker/processor.py`** | En ejecución 24/7 (Loop asíncrono) | Parámetros de `system_config_global.db` | Consume eventos de las DBs de proveedores, los envía a RC y escribe estadísticas de éxito/falla | Core del despacho. Orquesta sub-workers independientes, concurrencia por sub-lotes, reintentos con backoff y purga. |
+| **`app/worker/processor.py`** | En ejecución 24/7 (Loop asíncrono) | Parámetros de `system_config_global.db` | Consume eventos de las DBs de proveedores, los envía a RC y escribe estadísticas de éxito/falla | Core del despacho. Actúa como **Director** orquestando sub-workers dinámicos auto-escalables en paralelo, procesamiento Batch y purga. |
+| **`app/core/queue_factory.py`** | Al invocar un worker | String provider_name, env | Instancia el motor abstracto (`SQLiteQueue` o `RedisQueue`) | Factoría que resuelve en tiempo de ejecución qué motor usar según la configuración del proveedor (Modelo Híbrido). |
 | **`app/services/rc_soap.py`** | Llamado por el Worker | Objetos de datos `RCCanonicalModel` | Construye el XML SOAP, interactúa con el WSDL de RC y gestiona la caché de tokens | Integrador SOAP. Controla la autenticación persistente y re-autenticación automática si expira el token. |
 | **`app/api/routers/dashboard.py`** | Consulta del Frontend (cada 2 seg) | Datos de bases de datos globales e individuales | Payload JSON formateado con métricas y lista de eventos | API de control. consolida estadísticas, calcula desfase satelital y tiempo de cola en el Hub. |
 | **`app/templates/index.html`** | Cargado en navegador por operador | Respuestas JSON de `/api/stats` e `/api/config` | Renderiza grillas en caliente, temporizadores de backoff e histórico consolidado | Consola de visualización. Provee filtros interactivos y el simulador de webhooks. |
@@ -116,9 +118,10 @@ Contienen una única tabla central optimizada para indexación y consumo rápido
 Dado que SQLite no soporta múltiples transacciones de escritura simultáneas (bloqueo por `database is locked`), la arquitectura separa de forma limpia la **ejecución de red** de la **ejecución de base de datos**:
 
 1. **Lectura e Ignorado:** El worker obtiene los eventos `pending` y descarta los que están esperando backoff en memoria (`RETRIES_CACHE`).
-2. **Particionado Asíncrono:** Agrupa los pendientes en bloques de máximo 50 eventos.
-3. **Paralelización de Red SOAP:** Invoca `asyncio.gather(*tasks)` disparando las peticiones SOAP en paralelo contra RC. Esto reduce la latencia de red al máximo, permitiendo procesar cientos de transmisiones simultáneas.
-4. **Escritura Atómica:** Una vez que todas las respuestas de red regresan al script, se actualizan los estados y se ejecuta una **única transacción estructurada** (`db.commit()`) por base de datos, garantizando consistencia, eliminando bloqueos de base de datos y completando la operación en milisegundos.
+2. **Particionado y Auto-Escalado:** El "Director" orquesta dinámicamente cuántas manos (`asyncio.gather`) leerán de SQLite y aplicará sub-lotes.
+3. **Bloqueo Atómico (Locking):** Inmediatamente al leer, los eventos se etiquetan como `processing`, permitiendo multi-threading sin colisiones sobre el mismo archivo `.db`.
+4. **Paralelización de Red SOAP:** Múltiples tareas disparan las peticiones SOAP en paralelo contra RC, reduciendo la latencia de red.
+5. **Escritura Masiva (Batch Save):** Una vez resueltos, se ejecuta una **única transacción estructurada** (`db.commit()`) por lote con `mark_batch_as_sent`, garantizando consistencia, eliminando la sobrecarga de IO de disco y bajando la latencia a milisegundos.
 
 ---
 
@@ -130,7 +133,7 @@ Para evitar la saturación de los servidores de RC y evitar bucles infinitos por
                [ Evento falla en despacho SOAP ]
                                │
                Verifica contador de reintentos
-              (almacenado en RETRIES_CACHE)
+              (almacenado nativamente en base de datos)
                                │
                      ┌─────────┴─────────┐
                      ▼                   ▼
@@ -140,8 +143,8 @@ Para evitar la saturación de los servidores de RC y evitar bucles infinitos por
       1°: +10s | 2°: +45s                │
       3°: +120s | 4°: +300s              ▼
                      │            Marca status = 'failed'
-                     ▼            Elimina de RETRIES_CACHE
-       Actualiza 'next_retry_at'  (Fallo Definitivo en UI)
+                     ▼            (Fallo Definitivo en UI)
+       Actualiza 'next_retry_at' en DB
        Estado queda 'pending'
        (Badge Amarillo en UI)
 ```
