@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 import asyncio
 
-from app.api.routers import schmitz, dashboard
+from app.api.routers import schmitz, dashboard, health
 from app.worker.processor import worker_loop
 
 app = FastAPI(title="Centro de Comando en Vivo - Telemática")
@@ -9,6 +9,7 @@ app = FastAPI(title="Centro de Comando en Vivo - Telemática")
 # Incluir routers
 app.include_router(schmitz.router)
 app.include_router(dashboard.router)
+app.include_router(health.router)
 
 @app.on_event("startup")
 async def startup_event():

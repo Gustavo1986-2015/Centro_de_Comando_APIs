@@ -103,12 +103,21 @@ async def process_provider_events(provider: str, env: str):
         batches_results = await asyncio.gather(*soap_tasks, return_exceptions=True)
         
         # 4. Procesar y guardar resultados en bloque (Batch Save)
+        db_start = time.perf_counter()
+        total_sent = 0
+        total_failed = 0
+        total_retry = 0
+        soap_ms_total = 0
+        
         for batch_idx, batch in enumerate(batches):
             batch_outcome = batches_results[batch_idx]
             
             updates_to_retry = []
             updates_to_fail = []
             updates_to_sent = []
+            
+            if not isinstance(batch_outcome, Exception):
+                soap_ms_total += batch_outcome[1] * 1000
             
             # Manejar excepciones completas de red/transporte para todo el sub-lote
             if isinstance(batch_outcome, Exception):
@@ -194,6 +203,21 @@ async def process_provider_events(provider: str, env: str):
                 await queue.mark_batch_as_failed(provider, env, updates_to_fail)
             if updates_to_sent:
                 await queue.mark_batch_as_sent(provider, env, updates_to_sent)
+                
+            total_retry += len(updates_to_retry)
+            total_failed += len(updates_to_fail)
+            total_sent += len(updates_to_sent)
+            
+        db_ms = (time.perf_counter() - db_start) * 1000
+        soap_avg_ms = (soap_ms_total / len(batches)) if len(batches) > 0 else 0
+        
+        # Log de rendimiento estructurado (Punto 4)
+        logger.info(
+            f"batch_processed provider={provider} env={env} "
+            f"batch_size={len(pendings)} soap_avg_ms={soap_avg_ms:.0f} "
+            f"db_write_ms={db_ms:.0f} sent={total_sent} failed={total_failed} retry={total_retry}"
+        )
+        
         
         # 5. Consolidar estadísticas del día de hoy en la base de datos global de forma asincrónica e independiente
         try:
