@@ -14,13 +14,13 @@ MODO_ESTRES = True
 
 if MODO_ESTRES:
     PLACAS = [f"TEST-{str(i).zfill(3)}" for i in range(1, 46)]
-    SEGUNDOS_ESPERA = 5
+    SEGUNDOS_ESPERA = 10
 else:
     PLACAS = ["RHR5776", "GDG8486", "JMC1236"]
     SEGUNDOS_ESPERA = 2
 
-# WEBHOOK_URL = "http://localhost:8000/schmitz/webhook?env=test"
-WEBHOOK_URL = "https://schmit-test.onrender.com/schmitz/webhook?env=test"
+WEBHOOK_URL = "http://localhost:8000/schmitz/webhook?env=test"
+# WEBHOOK_URL = "https://schmit-test.onrender.com/schmitz/webhook?env=test"
 # Ruta a los payloads reales de prueba de Schmitz
 DEMO_PAYLOADS_DIR = r"C:\Users\gustavogomez\Downloads\Quickstart_RESTPushAPI_v_1_35_v01_eng\Demo_Payloads"
 
@@ -123,6 +123,8 @@ while True:
             if success:
                 exitos += 1
             else:
+                if errores < 3:
+                    print(f" -> Detalle de Error: {err}")
                 errores += 1
                 
         elapsed = time.time() - start_time
