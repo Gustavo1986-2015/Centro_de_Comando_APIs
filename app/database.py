@@ -1,6 +1,7 @@
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker, declarative_base
 from fastapi import Query
+from contextlib import contextmanager
 import os
 
 Base = declarative_base()
@@ -74,6 +75,12 @@ def check_and_migrate_provider_db(provider: str, env: str):
             if "next_retry_at" not in columns:
                 cursor.execute("ALTER TABLE normalized_rc_events ADD COLUMN next_retry_at DATETIME")
                 conn.commit()
+            
+            # Crear índices optimizados para selección rápida de lotes y búsquedas
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_pending_retry ON normalized_rc_events(status, next_retry_at, id)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_chassis_status ON normalized_rc_events(chassis_number, status)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_updated_processing ON normalized_rc_events(status, updated_at)")
+            conn.commit()
     except Exception:
         pass
 
@@ -83,6 +90,14 @@ def get_engine(provider: str, env: str = "prod"):
     if key not in _engines:
         url = get_db_url(provider, env)
         engine = create_engine(url, connect_args={"check_same_thread": False})
+        
+        # Habilitar SQLite WAL Mode (Write-Ahead Logging) nativo por conexión
+        @event.listens_for(engine, "connect")
+        def set_sqlite_pragma(dbapi_connection, connection_record):
+            cursor = dbapi_connection.cursor()
+            cursor.execute("PRAGMA journal_mode=WAL")
+            cursor.execute("PRAGMA synchronous=NORMAL")
+            cursor.close()
         
         # Asegurar que los modelos estén registrados en Base.metadata
         if provider == "system_config":
@@ -109,6 +124,24 @@ def get_session(provider: str, env: str = "prod"):
     key = f"{provider}_{env}"
     get_engine(provider, env)
     return _sessions[key]()
+
+@contextmanager
+def session_context(provider: str, env: str = "prod"):
+    """
+    Gestiona el ciclo de vida de una sesión de base de datos de forma atómica.
+    Efectúa commit() automáticamente si no hay excepciones.
+    Efectúa rollback() ante cualquier excepción.
+    Siempre ejecuta close() liberando la conexión.
+    """
+    db = get_session(provider, env)
+    try:
+        yield db
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
 
 def get_db_provider(provider: str):
     """

@@ -2,7 +2,7 @@ from typing import List, Any
 from datetime import datetime
 from sqlalchemy import or_
 
-from app.database import get_session
+from app.database import session_context
 from app.models.db_models import NormalizedRCEvent
 from app.core.queue_interface import MessageQueueInterface
 
@@ -13,8 +13,7 @@ class SQLiteQueue(MessageQueueInterface):
     """
 
     async def get_pending_count(self, provider: str, env: str) -> int:
-        db = get_session(provider, env)
-        try:
+        with session_context(provider, env) as db:
             now_time = datetime.now()
             return db.query(NormalizedRCEvent).filter(
                 NormalizedRCEvent.status == "pending",
@@ -23,12 +22,9 @@ class SQLiteQueue(MessageQueueInterface):
                     NormalizedRCEvent.next_retry_at <= now_time
                 )
             ).count()
-        finally:
-            db.close()
 
     async def get_pending_batch(self, provider: str, env: str, limit: int = 150) -> List[Any]:
-        db = get_session(provider, env)
-        try:
+        with session_context(provider, env) as db:
             now_time = datetime.now()
             query = db.query(NormalizedRCEvent).filter(
                 NormalizedRCEvent.status == "pending",
@@ -50,15 +46,12 @@ class SQLiteQueue(MessageQueueInterface):
                 db.query(NormalizedRCEvent).filter(NormalizedRCEvent.id.in_(event_ids)).update(
                     {"status": "processing"}, synchronize_session=False
                 )
-                db.commit()
+                # El commit se realizará automáticamente al salir del contexto
                 
             return events
-        finally:
-            db.close()
 
     async def mark_batch_as_sent(self, provider: str, env: str, updates: List[dict]) -> None:
-        db = get_session(provider, env)
-        try:
+        with session_context(provider, env) as db:
             for u in updates:
                 db.query(NormalizedRCEvent).filter(NormalizedRCEvent.id == u['event_id']).update({
                     "status": "sent",
@@ -68,16 +61,9 @@ class SQLiteQueue(MessageQueueInterface):
                     "retry_count": 0,
                     "next_retry_at": None
                 }, synchronize_session=False)
-            db.commit()
-        except Exception:
-            db.rollback()
-            raise
-        finally:
-            db.close()
 
     async def mark_batch_as_failed(self, provider: str, env: str, updates: List[dict]) -> None:
-        db = get_session(provider, env)
-        try:
+        with session_context(provider, env) as db:
             for u in updates:
                 db.query(NormalizedRCEvent).filter(NormalizedRCEvent.id == u['event_id']).update({
                     "status": "failed",
@@ -85,16 +71,9 @@ class SQLiteQueue(MessageQueueInterface):
                     "job_id": u['job_id'],
                     "rc_latency_sec": u['elapsed_sec']
                 }, synchronize_session=False)
-            db.commit()
-        except Exception:
-            db.rollback()
-            raise
-        finally:
-            db.close()
 
     async def schedule_batch_retry(self, provider: str, env: str, updates: List[dict]) -> None:
-        db = get_session(provider, env)
-        try:
+        with session_context(provider, env) as db:
             for u in updates:
                 db.query(NormalizedRCEvent).filter(NormalizedRCEvent.id == u['event_id']).update({
                     "status": "pending",
@@ -104,12 +83,6 @@ class SQLiteQueue(MessageQueueInterface):
                     "retry_count": u['retry_count'],
                     "next_retry_at": u['next_retry_at']
                 }, synchronize_session=False)
-            db.commit()
-        except Exception:
-            db.rollback()
-            raise
-        finally:
-            db.close()
 
     async def mark_as_sent(self, provider: str, env: str, event_id: int, elapsed_sec: float, rc_response: str, job_id: str) -> None:
         await self.mark_batch_as_sent(provider, env, [{"event_id": event_id, "elapsed_sec": elapsed_sec, "rc_response": rc_response, "job_id": job_id}])
