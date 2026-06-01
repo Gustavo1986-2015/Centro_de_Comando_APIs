@@ -52,37 +52,43 @@ class SQLiteQueue(MessageQueueInterface):
 
     async def mark_batch_as_sent(self, provider: str, env: str, updates: List[dict]) -> None:
         with session_context(provider, env) as db:
-            for u in updates:
-                db.query(NormalizedRCEvent).filter(NormalizedRCEvent.id == u['event_id']).update({
+            if updates:
+                mappings = [{
+                    "id": u['event_id'],
                     "status": "sent",
                     "rc_response": u['rc_response'],
                     "job_id": u['job_id'],
                     "rc_latency_sec": u['elapsed_sec'],
                     "retry_count": 0,
                     "next_retry_at": None
-                }, synchronize_session=False)
+                } for u in updates]
+                db.bulk_update_mappings(NormalizedRCEvent, mappings)
 
     async def mark_batch_as_failed(self, provider: str, env: str, updates: List[dict]) -> None:
         with session_context(provider, env) as db:
-            for u in updates:
-                db.query(NormalizedRCEvent).filter(NormalizedRCEvent.id == u['event_id']).update({
+            if updates:
+                mappings = [{
+                    "id": u['event_id'],
                     "status": "failed",
                     "rc_response": u['rc_response'],
                     "job_id": u['job_id'],
                     "rc_latency_sec": u['elapsed_sec']
-                }, synchronize_session=False)
+                } for u in updates]
+                db.bulk_update_mappings(NormalizedRCEvent, mappings)
 
     async def schedule_batch_retry(self, provider: str, env: str, updates: List[dict]) -> None:
         with session_context(provider, env) as db:
-            for u in updates:
-                db.query(NormalizedRCEvent).filter(NormalizedRCEvent.id == u['event_id']).update({
+            if updates:
+                mappings = [{
+                    "id": u['event_id'],
                     "status": "pending",
                     "rc_response": u['rc_response'],
                     "job_id": u['job_id'],
                     "rc_latency_sec": u['elapsed_sec'],
                     "retry_count": u['retry_count'],
                     "next_retry_at": u['next_retry_at']
-                }, synchronize_session=False)
+                } for u in updates]
+                db.bulk_update_mappings(NormalizedRCEvent, mappings)
 
     async def mark_as_sent(self, provider: str, env: str, event_id: int, elapsed_sec: float, rc_response: str, job_id: str) -> None:
         await self.mark_batch_as_sent(provider, env, [{"event_id": event_id, "elapsed_sec": elapsed_sec, "rc_response": rc_response, "job_id": job_id}])

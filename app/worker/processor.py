@@ -221,7 +221,7 @@ async def process_provider_events(provider: str, env: str):
         
         # 5. Consolidar estadísticas del día de hoy en la base de datos global de forma asincrónica e independiente
         try:
-            update_daily_stats(provider, env)
+            await asyncio.to_thread(update_daily_stats, provider, env)
         except Exception as stats_e:
             logger.error(f"Error al actualizar estadísticas diarias para {provider}_{env}: {stats_e}")
             
@@ -231,52 +231,44 @@ async def process_provider_events(provider: str, env: str):
         logger.error(f"Error general en process_provider_events para {provider}_{env}: {str(e)}")
 
 def update_daily_stats(provider: str, env: str):
-    """Calcula y actualiza las estadísticas de procesamiento del día de hoy en la BD global."""
+    """Calcula y actualiza las estadísticas de procesamiento del día de hoy en la BD global mediante agregación SQL."""
     from datetime import datetime, timezone
+    from sqlalchemy import func
     local_now = datetime.now().astimezone()
     today_start_local = datetime.combine(local_now.date(), datetime.min.time()).replace(tzinfo=local_now.tzinfo)
     today_start = today_start_local.astimezone(timezone.utc).replace(tzinfo=None)
     
     db_prov = get_session(provider, env)
     try:
-        sent_events = db_prov.query(NormalizedRCEvent).filter(
+        # Calcular promedios excluyendo eventos con reintentos para tener la latencia real (happy path)
+        success_stats = db_prov.query(
+            func.avg(NormalizedRCEvent.rc_latency_sec).label('avg_rc'),
+            func.avg(
+                (func.julianday(NormalizedRCEvent.updated_at) - func.julianday(NormalizedRCEvent.created_at)) * 86400.0 - func.coalesce(NormalizedRCEvent.rc_latency_sec, 0)
+            ).label('avg_hub'),
+            func.avg(
+                (func.julianday(NormalizedRCEvent.created_at) - func.julianday(NormalizedRCEvent.date)) * 86400.0
+            ).label('avg_transmission')
+        ).filter(
+            NormalizedRCEvent.status == "sent",
+            NormalizedRCEvent.created_at >= today_start,
+            func.coalesce(NormalizedRCEvent.retry_count, 0) == 0
+        ).first()
+
+        # Conteos totales (SÍ incluyen los reintentados y fallidos)
+        sent_count = db_prov.query(func.count(NormalizedRCEvent.id)).filter(
             NormalizedRCEvent.status == "sent",
             NormalizedRCEvent.created_at >= today_start
-        ).all()
+        ).scalar() or 0
         
-        failed_events = db_prov.query(NormalizedRCEvent).filter(
+        failed_count = db_prov.query(func.count(NormalizedRCEvent.id)).filter(
             NormalizedRCEvent.status == "failed",
             NormalizedRCEvent.created_at >= today_start
-        ).all()
+        ).scalar() or 0
         
-        sent_count = len(sent_events)
-        failed_count = len(failed_events)
-        
-        hub_latencies = []
-        transmission_latencies = []
-        rc_latencies = []
-        
-        for ev in sent_events:
-            if ev.updated_at and ev.created_at:
-                rc_lat = getattr(ev, 'rc_latency_sec', None) or 0.0
-                hub_lat = max(0.0, (ev.updated_at - ev.created_at).total_seconds() - rc_lat)
-                hub_latencies.append(hub_lat)
-            if ev.date and ev.created_at:
-                created_naive = ev.created_at.replace(tzinfo=None)
-                transmission_latencies.append(max(0.0, (created_naive - ev.date).total_seconds()))
-            if getattr(ev, 'rc_latency_sec', None) is not None:
-                rc_latencies.append(ev.rc_latency_sec)
-                
-        for ev in failed_events:
-            if ev.date and ev.created_at:
-                created_naive = ev.created_at.replace(tzinfo=None)
-                transmission_latencies.append(max(0.0, (created_naive - ev.date).total_seconds()))
-            if getattr(ev, 'rc_latency_sec', None) is not None:
-                rc_latencies.append(ev.rc_latency_sec)
-                
-        avg_hub = sum(hub_latencies) / len(hub_latencies) if hub_latencies else None
-        avg_transmission = sum(transmission_latencies) / len(transmission_latencies) if transmission_latencies else None
-        avg_rc = sum(rc_latencies) / len(rc_latencies) if rc_latencies else None
+        avg_hub = success_stats.avg_hub if success_stats else None
+        avg_transmission = success_stats.avg_transmission if success_stats else None
+        avg_rc = success_stats.avg_rc if success_stats else None
         
     except Exception as e:
         logger.error(f"Error al contar estadísticas de hoy para {provider}_{env}: {e}")
@@ -394,6 +386,16 @@ async def api_worker_loop(provider: str, env: str):
     trigger = asyncio.Event()
     WORKER_TRIGGERS[key] = trigger
     
+    # Semáforo para limitar a un máximo de 10 peticiones SOAP concurrentes por cola
+    semaphore = asyncio.Semaphore(10)
+    
+    async def process_with_semaphore():
+        async with semaphore:
+            return await process_provider_events(provider, env)
+    
+    # Conjunto para mantener referencias a las tareas en background y evitar que el garbage collector las elimine
+    background_tasks = set()
+    
     while True:
         run_interval = 5
         try:
@@ -404,26 +406,33 @@ async def api_worker_loop(provider: str, env: str):
                 purge_min = config["purge_interval_min"]
                 
                 if is_active:
-                    # 1. El Director revisa el volumen de la cola
+                    # 1. Limpiar tareas terminadas del conjunto
+                    background_tasks.difference_update([t for t in background_tasks if t.done()])
+                    
+                    # 2. El Director revisa el volumen de la cola
                     from app.core.queue_factory import QueueFactory
                     queue = QueueFactory.get_queue_service(provider, env)
                     pending_count = await queue.get_pending_count(provider, env)
                     
                     if pending_count > 0:
                         import math
-                        # Auto-escalado dinámico: 1 worker por cada 150 eventos, máximo 5 simultáneos (750 eventos a la vez)
-                        num_workers = min(5, math.ceil(pending_count / 150))
-                        logger.info(f"Director: {pending_count} pendientes para {provider}_{env}. Auto-escalando a {num_workers} mano(s).")
+                        # Auto-escalado dinámico: 1 worker por cada 50 eventos, sujeto a disponibilidad del semáforo
+                        available_slots = semaphore._value
+                        num_workers_needed = math.ceil(pending_count / 50)
+                        num_workers = min(available_slots, num_workers_needed)
                         
-                        # Instanciar y ejecutar las múltiples "manos" en paralelo real
-                        worker_tasks = [process_provider_events(provider, env) for _ in range(num_workers)]
-                        results = await asyncio.gather(*worker_tasks)
+                        if num_workers > 0:
+                            logger.info(f"Director: {pending_count} pendientes para {provider}_{env}. Lanzando {num_workers} worker(s) en background.")
+                            for _ in range(num_workers):
+                                task = asyncio.create_task(process_with_semaphore())
+                                background_tasks.add(task)
                         
-                        has_more = any(results)
+                        # Si quedan eventos y no hay slots, forzamos un chequeo rápido
+                        has_more = pending_count > (num_workers * 50)
                     else:
                         has_more = False
                     
-                    # 2. Verificar si es tiempo de purga
+                    # 3. Verificar si es tiempo de purga
                     now = datetime.now()
                     minutes_since_purge = (now - last_purge).total_seconds() / 60.0
                     if minutes_since_purge >= purge_min:
@@ -434,19 +443,21 @@ async def api_worker_loop(provider: str, env: str):
                         # Modo ráfaga: omitimos el descanso porque sabemos que aún quedan eventos pendientes
                         run_interval = 0
                 else:
-                    # Si no está activo, dormimos un intervalo corto por defecto para reevaluar
                     run_interval = 5
             else:
-                # Si no encontramos configuración en la BD, dormimos por defecto
                 run_interval = 5
         except Exception as e:
             logger.error(f"Error en api_worker_loop para {provider}_{env}: {str(e)}")
             run_interval = 5
             
         try:
-            # Esperar run_interval segundos O despertar instantáneamente si se recibe una notificación
-            await asyncio.wait_for(trigger.wait(), timeout=run_interval)
-            trigger.clear()
+            if run_interval > 0:
+                await asyncio.wait_for(trigger.wait(), timeout=run_interval)
+                trigger.clear()
+                # Micro-batching: Si un evento nos despertó, esperamos 1 segundo para recolectar el resto de la ráfaga
+                await asyncio.sleep(1.0)
+            else:
+                await asyncio.sleep(0.5) # Pausa breve en modo ráfaga para no fundir la CPU
         except asyncio.TimeoutError:
             pass
 
