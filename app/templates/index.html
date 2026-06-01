@@ -417,16 +417,18 @@
                 <div class="card-value" id="val-retries" style="color: var(--color-yellow);">0</div>
             </div>
             <div class="card" style="border-top: 4px solid #8b5cf6;" title="Tiempo promedio de espera en el Hub. Por estándar empresarial y seguridad, el código implementa 1.0s de ventana fija (Micro-Batching) para agrupar ráfagas y proteger el endpoint de Recurso Confiable.">
-                <div class="card-title">Latencia Hub AC Promedio <span style="cursor:help" title="Fijo en 1.0s por Micro-Batching (Seguridad)">ⓘ</span></div>
+                <div class="card-title">Latencia Hub AC</div>
                 <div class="card-value" id="val-latency" style="color: #8b5cf6;">0.00s</div>
             </div>
             <div class="card" style="border-top: 4px solid #3b82f6;" title="Tiempo de respuesta SOAP promedio de Recurso Confiable desde que hacemos el envío hasta obtener el ID de Job (segundos)">
-                <div class="card-title">Latencia RC Promedio</div>
+                <div class="card-title">Latencia RC</div>
                 <div class="card-value" id="val-rc-latency" style="color: #3b82f6;">0.00s</div>
             </div>
         </div>
-        <div style="font-size: 0.8rem; color: var(--color-gray); text-align: right; padding-right: 0.5rem; margin-top: -1rem; margin-bottom: 0.5rem;">
-            * Nota: La Latencia del Hub posee un <strong>estándar seguro fijo de 1.0s</strong> (Micro-Batching) para evitar saturación de red hacia el destino.
+        
+        <div style="font-size: 0.85rem; color: var(--color-gray); padding: 1rem 1.5rem; margin-top: -1rem; background: rgba(255, 255, 255, 0.02); border-radius: 8px; border: 1px solid var(--card-border); display: flex; align-items: center; gap: 0.5rem;">
+            <span style="color: #8b5cf6; font-size: 1.2rem;">ⓘ</span>
+            <span><strong>Nota de Arquitectura:</strong> La Latencia del Hub posee un estándar seguro y mínimo de <strong>1.0s</strong> (Micro-Batching) diseñado para agrupar ráfagas y evitar saturación de red hacia el destino.</span>
         </div>
 
         <div class="recent-section">
