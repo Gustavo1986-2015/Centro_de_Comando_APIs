@@ -385,6 +385,7 @@
             <li id="tab-logs" onclick="switchView('logs')">Logs de Auditoría Dinámica</li>
             <li id="tab-history" onclick="switchView('history')">Historial Diario</li>
             <li id="tab-db-viewer" onclick="switchView('db-viewer')">Visor de Base de Datos</li>
+            <li id="tab-monitor" onclick="switchView('monitor')">Monitor Interno (APIs)</li>
         </ul>
     </nav>
 
@@ -638,6 +639,29 @@
         </div>
     </main>
 
+    <!-- VISTA MONITOR INTERNO -->
+    <main id="view-monitor" style="display: none;">
+        <div class="recent-section">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
+                <h2>Monitor Interno (Respuesta RAW APIs)</h2>
+                <div style="display: flex; gap: 1rem;">
+                    <button class="btn-save" onclick="loadMonitor()" style="background: var(--color-gray); color: var(--color-white)">Refrescar Datos</button>
+                </div>
+            </div>
+            
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1.5rem;">
+                <div>
+                    <h3 style="color: var(--color-green-bright); margin-bottom: 0.5rem; font-size: 1rem;">GET /api/stats</h3>
+                    <textarea id="monitor-stats" class="form-control" rows="22" readonly style="font-family: monospace; font-size: 0.85rem; width: 100%; resize: vertical; background: #0F1115; color: #E5E7EB;"></textarea>
+                </div>
+                <div>
+                    <h3 style="color: #3b82f6; margin-bottom: 0.5rem; font-size: 1rem;">GET /health</h3>
+                    <textarea id="monitor-health" class="form-control" rows="22" readonly style="font-family: monospace; font-size: 0.85rem; width: 100%; resize: vertical; background: #0F1115; color: #E5E7EB;"></textarea>
+                </div>
+            </div>
+        </div>
+    </main>
+
     <footer style="text-align: center; padding: 1.5rem; border-top: 1px solid var(--card-border); color: var(--color-gray); font-size: 0.85rem; font-weight: 300;">
         Desarrollado por Area de Integraciones GPS Assistcargo | Gustavo Gómez & Roberto Herrera &reg;
     </footer>
@@ -800,6 +824,7 @@
             document.getElementById('view-logs').style.display = view === 'logs' ? 'flex' : 'none';
             document.getElementById('view-history').style.display = view === 'history' ? 'flex' : 'none';
             document.getElementById('view-db-viewer').style.display = view === 'db-viewer' ? 'flex' : 'none';
+            document.getElementById('view-monitor').style.display = view === 'monitor' ? 'flex' : 'none';
             
             document.getElementById('tab-dashboard').classList.toggle('active-tab', view === 'dashboard');
             document.getElementById('tab-config').classList.toggle('active-tab', view === 'config');
@@ -807,6 +832,7 @@
             document.getElementById('tab-logs').classList.toggle('active-tab', view === 'logs');
             document.getElementById('tab-history').classList.toggle('active-tab', view === 'history');
             document.getElementById('tab-db-viewer').classList.toggle('active-tab', view === 'db-viewer');
+            document.getElementById('tab-monitor').classList.toggle('active-tab', view === 'monitor');
             
             toggleMenu(); // Cierra el menú al elegir
  
@@ -822,9 +848,37 @@
                 loadHistory();
             } else if (view === 'db-viewer') {
                 loadDatabases();
+            } else if (view === 'monitor') {
+                loadMonitor();
             } else {
                 fetchStats();
                 statsInterval = setInterval(fetchStats, 2000);
+            }
+        }
+
+        async function loadMonitor() {
+            try {
+                // Fetch stats
+                const statsRes = await fetch('/api/stats');
+                if (statsRes.ok) {
+                    const statsData = await statsRes.json();
+                    document.getElementById('monitor-stats').value = JSON.stringify(statsData, null, 2);
+                } else {
+                    document.getElementById('monitor-stats').value = "Error fetching /api/stats: " + statsRes.status;
+                }
+                
+                // Fetch health
+                const healthRes = await fetch('/health');
+                if (healthRes.ok) {
+                    const healthData = await healthRes.json();
+                    document.getElementById('monitor-health').value = JSON.stringify(healthData, null, 2);
+                } else {
+                    document.getElementById('monitor-health').value = "Error fetching /health: " + healthRes.status;
+                }
+            } catch (err) {
+                console.error("Error cargando monitor interno:", err);
+                document.getElementById('monitor-stats').value = "Network Error";
+                document.getElementById('monitor-health').value = "Network Error";
             }
         }
 
