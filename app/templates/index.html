@@ -416,9 +416,12 @@
                 <div class="card-title">En Reintento</div>
                 <div class="card-value" id="val-retries" style="color: var(--color-yellow);">0</div>
             </div>
-            <div class="card" style="border-top: 4px solid #8b5cf6;" title="Tiempo promedio de espera y procesamiento interno en el Hub de Assistcargo antes del envío a Recurso Confiable (segundos)">
+            <div class="card" style="border-top: 4px solid #8b5cf6;" title="Tiempo promedio de espera en el Hub. Por estándar empresarial y seguridad, el código implementa 1.0s de ventana fija (Micro-Batching) para agrupar ráfagas y proteger el endpoint de Recurso Confiable.">
                 <div class="card-title">Latencia Hub AC Promedio</div>
                 <div class="card-value" id="val-latency" style="color: #8b5cf6;">0.00s</div>
+                <div style="font-size: 0.75rem; color: var(--color-gray); margin-top: 0.5rem; line-height: 1.2;">
+                    * Diseño seguro: retención fija de 1.0s (Micro-Batching) para optimizar envío a RC.
+                </div>
             </div>
             <div class="card" style="border-top: 4px solid #3b82f6;" title="Tiempo de respuesta SOAP promedio de Recurso Confiable desde que hacemos el envío hasta obtener el ID de Job (segundos)">
                 <div class="card-title">Latencia RC Promedio</div>
