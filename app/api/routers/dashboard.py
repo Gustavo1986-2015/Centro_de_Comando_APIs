@@ -136,8 +136,10 @@ async def get_stats(
         latency_sec = None
         if ev.status in ('sent', 'failed') and time_sent_dt and ev.created_at:
             latency_sec = max(0.0, (time_sent_dt - ev.created_at).total_seconds())
-            total_latency_seconds += latency_sec
-            latency_samples += 1
+            # Promediar solo si no hubo reintentos (happy path real)
+            if getattr(ev, 'retry_count', 0) == 0:
+                total_latency_seconds += latency_sec
+                latency_samples += 1
             
         if ev.status in ('sent', 'failed') and rc_latency_val is not None:
             total_rc_latency_seconds += rc_latency_val

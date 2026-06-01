@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Float, Boolean, DateTime, Text
+from sqlalchemy import Column, Integer, String, Float, Boolean, DateTime, Text, Index
 from sqlalchemy.sql import func
 from app.database import Base
 
@@ -8,6 +8,9 @@ class NormalizedRCEvent(Base):
     Almacena el evento normalizado junto con el JSON crudo del proveedor original.
     """
     __tablename__ = "normalized_rc_events"
+    __table_args__ = (
+        Index('idx_retry_status', 'retry_count', 'status'),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
     provider = Column(String, index=True)  # Ej. 'schmitz'
