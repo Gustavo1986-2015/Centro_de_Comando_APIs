@@ -53,7 +53,8 @@ def get_next_retry_delay(retry_count: int) -> int:
     return random.randint(min_delay, max_delay)
 
 async def process_provider_events(provider: str, env: str):
-    """Procesa pendientes de un único proveedor y entorno en lotes concurrentes en paralelo y aplica backoff."""
+    """Procesa pendientes de un único proveedor y entorno. Cada sub-lote es auto-contenido:
+    dispara su SOAP y escribe resultados en BD inmediatamente, sin esperar a los demás."""
     from app.core.queue_factory import QueueFactory
     queue = QueueFactory.get_queue_service(provider, env)
     try:
@@ -69,8 +70,13 @@ async def process_provider_events(provider: str, env: str):
         batch_size = 50
         batches = [pendings[i:i + batch_size] for i in range(0, len(pendings), batch_size)]
         
-        soap_tasks = []
-        for batch in batches:
+        # Contadores compartidos (se acumulan al final)
+        batch_metrics = []
+        
+        async def process_single_batch(batch, batch_idx):
+            """Tarea auto-contenida: SOAP + escritura en BD inmediata para un solo sub-lote."""
+            metrics = {"sent": 0, "failed": 0, "retry": 0, "soap_ms": 0}
+            
             canonical_events = []
             for db_event in batch:
                 canonical_event = RCCanonicalModel(
@@ -95,31 +101,19 @@ async def process_provider_events(provider: str, env: str):
                 )
                 canonical_events.append(canonical_event)
             
-            # Agregar tarea de despacho SOAP asíncrona midiendo su tiempo
-            soap_tasks.append(send_batch_and_measure(canonical_events))
+            # Disparar SOAP y medir
+            try:
+                results, elapsed_sec = await send_batch_and_measure(canonical_events)
+                metrics["soap_ms"] = elapsed_sec * 1000
+                batch_outcome = (results, elapsed_sec)
+            except Exception as e:
+                batch_outcome = e
             
-        # 3. Disparar todos los sub-lotes en paralelo (concurrencia de red)
-        logger.info(f"Enviando {len(pendings)} eventos en {len(batches)} sub-lote(s) en paralelo para {provider}_{env}")
-        batches_results = await asyncio.gather(*soap_tasks, return_exceptions=True)
-        
-        # 4. Procesar y guardar resultados en bloque (Batch Save)
-        db_start = time.perf_counter()
-        total_sent = 0
-        total_failed = 0
-        total_retry = 0
-        soap_ms_total = 0
-        
-        for batch_idx, batch in enumerate(batches):
-            batch_outcome = batches_results[batch_idx]
-            
+            # Clasificar resultados
             updates_to_retry = []
             updates_to_fail = []
             updates_to_sent = []
             
-            if not isinstance(batch_outcome, Exception):
-                soap_ms_total += batch_outcome[1] * 1000
-            
-            # Manejar excepciones completas de red/transporte para todo el sub-lote
             if isinstance(batch_outcome, Exception):
                 logger.error(f"Excepción general en sub-lote {batch_idx + 1} para {provider}_{env}: {batch_outcome}")
                 for db_event in batch:
@@ -196,7 +190,7 @@ async def process_provider_events(provider: str, env: str):
                             "job_id": f"worker_err_{int(datetime.now().timestamp())}"
                         })
                         
-            # Ejecutar guardado en bloque para este sub-lote
+            # Escritura INMEDIATA en BD para este sub-lote (no espera a los demás)
             if updates_to_retry:
                 await queue.schedule_batch_retry(provider, env, updates_to_retry)
             if updates_to_fail:
@@ -204,18 +198,40 @@ async def process_provider_events(provider: str, env: str):
             if updates_to_sent:
                 await queue.mark_batch_as_sent(provider, env, updates_to_sent)
                 
-            total_retry += len(updates_to_retry)
-            total_failed += len(updates_to_fail)
-            total_sent += len(updates_to_sent)
-            
-        db_ms = (time.perf_counter() - db_start) * 1000
+            metrics["retry"] = len(updates_to_retry)
+            metrics["failed"] = len(updates_to_fail)
+            metrics["sent"] = len(updates_to_sent)
+            return metrics
+
+        # 3. Disparar todos los sub-lotes en paralelo (cada uno auto-contenido con su propio SOAP + DB write)
+        logger.info(f"Enviando {len(pendings)} eventos en {len(batches)} sub-lote(s) auto-contenido(s) para {provider}_{env}")
+        all_metrics = await asyncio.gather(
+            *[process_single_batch(batch, idx) for idx, batch in enumerate(batches)],
+            return_exceptions=True
+        )
+        
+        # 4. Consolidar métricas
+        total_sent = 0
+        total_failed = 0
+        total_retry = 0
+        soap_ms_total = 0
+        
+        for m in all_metrics:
+            if isinstance(m, Exception):
+                logger.error(f"Excepción en sub-lote auto-contenido para {provider}_{env}: {m}")
+                continue
+            total_sent += m["sent"]
+            total_failed += m["failed"]
+            total_retry += m["retry"]
+            soap_ms_total += m["soap_ms"]
+        
         soap_avg_ms = (soap_ms_total / len(batches)) if len(batches) > 0 else 0
         
-        # Log de rendimiento estructurado (Punto 4)
+        # Log de rendimiento estructurado
         logger.info(
             f"batch_processed provider={provider} env={env} "
             f"batch_size={len(pendings)} soap_avg_ms={soap_avg_ms:.0f} "
-            f"db_write_ms={db_ms:.0f} sent={total_sent} failed={total_failed} retry={total_retry}"
+            f"sent={total_sent} failed={total_failed} retry={total_retry}"
         )
         
         
