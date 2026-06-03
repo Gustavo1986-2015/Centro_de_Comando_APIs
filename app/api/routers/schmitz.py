@@ -81,12 +81,7 @@ def _persist_batch(batch: list):
         finally:
             db.close()
             
-        # Despertar worker
-        try:
-            from app.worker.processor import trigger_worker
-            trigger_worker("schmitz", current_env)
-        except Exception:
-            pass
+        # El worker lo levantará en su próximo ciclo natural
 
 async def _batch_processor_loop():
     """Consume de la cola y guarda en BD cada segundo o cuando hay 100 items."""
