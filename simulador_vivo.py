@@ -13,8 +13,8 @@ from concurrent.futures import ThreadPoolExecutor
 MODO_ESTRES = True
 
 if MODO_ESTRES:
-    PLACAS = [f"TEST-{str(i).zfill(3)}" for i in range(1, 101)]
-    SEGUNDOS_ESPERA = 30
+    PLACAS = [f"TEST-{str(i).zfill(3)}" for i in range(1, 40)]
+    SEGUNDOS_ESPERA = 5
 else:
     PLACAS = ["RHR5776", "GDG8486", "JMC1236"]
     SEGUNDOS_ESPERA = 2
