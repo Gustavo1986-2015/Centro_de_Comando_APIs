@@ -487,7 +487,8 @@ async def worker_loop():
             existing_names = {(c.provider_name, c.env) for c in configs}
             to_add = []
             if ("protrack", "prod") not in existing_names:
-                to_add.append(ProviderConfig(provider_name="protrack", env="prod"))
+                # prod inactivo por defecto hasta tener credenciales reales
+                to_add.append(ProviderConfig(provider_name="protrack", env="prod", is_active=False))
             if ("protrack", "test") not in existing_names:
                 to_add.append(ProviderConfig(provider_name="protrack", env="test"))
             if to_add:
@@ -553,8 +554,10 @@ async def poll_protrack(provider: str, env: str):
     try:
         client = get_protrack_client(env)
     except RuntimeError as e:
-        logger.error(f"[Protrack] No se pudo crear cliente para env='{env}': {e}")
-        return
+        # Credenciales no configuradas: no es un error crítico, simplemente no hay nada que hacer.
+        # El loop esperará 5 minutos antes de reintentar (evita spam en logs).
+        logger.warning(f"[Protrack] env='{env}' sin credenciales configuradas. Polling omitido: {e}")
+        raise  # Re-lanzar para que protrack_poll_loop gestione el backoff
 
     try:
         # 1. Obtener lista de dispositivos (IMEI + metadata)
@@ -640,12 +643,14 @@ async def poll_protrack(provider: str, env: str):
 async def protrack_poll_loop(provider: str, env: str):
     """
     Loop de polling PULL para Protrack.
-    Lee el intervalo desde la configuración activa del proveedor;
-    si no hay config, usa el valor de la variable de entorno PROTRACK_POLL_INTERVAL_SEC (default 30s).
-    Se detiene (durmiendo) si el proveedor está desactivado en la BD.
+    Comportamiento ante errores:
+      - Credenciales no configuradas → warning + espera 5 min (no spam)
+      - Error de permisos API (10007) → warning + espera 5 min (requiere acción externa)
+      - Errores transitorios (red, timeout) → espera el intervalo normal
     """
     import os
     default_interval = int(os.getenv("PROTRACK_POLL_INTERVAL_SEC", "30"))
+    LONG_BACKOFF_SEC = 300  # 5 minutos para errores que requieren acción externa
     logger.info(f"[Protrack] Iniciando poll_loop para env='{env}' (intervalo default: {default_interval}s).")
 
     while True:
@@ -654,15 +659,42 @@ async def protrack_poll_loop(provider: str, env: str):
             config = await asyncio.to_thread(get_provider_config, provider, env)
             if config:
                 if not config["is_active"]:
-                    # Proveedor desactivado: dormir y volver a verificar
-                    await asyncio.sleep(10)
+                    # Proveedor desactivado: dormir y volver a verificar (no loguear nada)
+                    await asyncio.sleep(30)
                     continue
                 # Usar run_interval_sec de la config como intervalo de polling
                 interval = config["run_interval_sec"] if config["run_interval_sec"] else default_interval
 
             await poll_protrack(provider, env)
 
+        except RuntimeError as cred_err:
+            # Credenciales no configuradas o cuenta sin permisos API → backoff largo, sin spam
+            err_str = str(cred_err)
+            if "Credenciales no configuradas" in err_str:
+                logger.warning(
+                    f"[Protrack] env='{env}' sin credenciales en .env. "
+                    f"Próximo intento en {LONG_BACKOFF_SEC // 60} min."
+                )
+            elif "10007" in err_str or "permission denied" in err_str.lower():
+                logger.warning(
+                    f"[Protrack] env='{env}' cuenta sin permisos de API Open (code=10007). "
+                    f"Contactar a Protrack para habilitarla. Próximo intento en {LONG_BACKOFF_SEC // 60} min."
+                )
+            else:
+                logger.error(f"[Protrack] Error de configuración en poll_loop env='{env}': {cred_err}")
+            interval = LONG_BACKOFF_SEC
+
         except Exception as e:
-            logger.error(f"[Protrack] Error inesperado en protrack_poll_loop env='{env}': {e}")
+            err_str = str(e)
+            # Errores conocidos que requieren acción externa → backoff largo
+            if "10007" in err_str or "permission denied" in err_str.lower():
+                logger.warning(
+                    f"[Protrack] env='{env}' cuenta sin permisos API (code=10007). "
+                    f"Próximo intento en {LONG_BACKOFF_SEC // 60} min."
+                )
+                interval = LONG_BACKOFF_SEC
+            else:
+                logger.error(f"[Protrack] Error inesperado en protrack_poll_loop env='{env}': {e}")
 
         await asyncio.sleep(interval)
+
