@@ -117,11 +117,10 @@ Contienen una única tabla central optimizada para indexación y consumo rápido
 
 Dado que SQLite no soporta múltiples transacciones de escritura simultáneas (bloqueo por `database is locked`), la arquitectura separa de forma limpia la **ejecución de red** de la **ejecución de base de datos**:
 
-1. **Lectura e Ignorado:** El worker obtiene los eventos `pending` y descarta los que están esperando backoff en memoria (`RETRIES_CACHE`).
-2. **Particionado y Auto-Escalado:** El "Director" orquesta dinámicamente cuántas manos (`asyncio.create_task`) leerán de SQLite y aplicará sub-lotes.
-3. **Bloqueo Atómico (Locking):** Inmediatamente al leer, los eventos se etiquetan como `processing`, permitiendo multi-threading sin colisiones sobre el mismo archivo `.db`.
-4. **Desbloqueo del Event Loop (Fire-and-Forget):** Múltiples tareas disparan las peticiones SOAP en paralelo contra RC a través de un `asyncio.Semaphore` (máx. 10 simultáneas). Esto asegura que el loop principal del Hub nunca quede bloqueado esperando la latencia de red, permitiendo una capacidad de lectura infinita y reduciendo los cuellos de botella E2E.
-5. **Escritura Masiva (Bulk Update):** Una vez resueltos, se ejecuta una **única transacción estructurada** utilizando `bulk_update_mappings` para todo el lote con `mark_batch_as_sent`, garantizando consistencia, eliminando el problema de N+1 consultas (sobrecarga IO) y bajando la latencia de actualización a ~0.01 milisegundos.
+1. **Lectura y Bloqueo:** El worker obtiene hasta 2000 eventos `pending` en un único barrido de SQLite e inmediatamente los bloquea etiquetándolos como `processing` para evitar lecturas duplicadas.
+2. **Particionado Paralelo:** El lote de 2000 eventos se divide en 40 sub-lotes de 50 eventos.
+3. **Ejecución HTTP Desacoplada:** Mediante un `ThreadPoolExecutor` de 200 hilos, los 40 sub-lotes disparan las peticiones SOAP a RC en paralelo puro. Esto asegura que la latencia total del procesamiento sea gobernada únicamente por la petición más lenta, y no por la suma de los tiempos secuenciales.
+4. **Escritura Atómica Masiva (Zero Lock Contention):** A diferencia de arquitecturas tradicionales, las 40 tareas *no* escriben en la base de datos al terminar su petición HTTP. En su lugar, entregan los resultados en memoria al hilo principal, el cual ejecuta una **única transacción masiva** (`bulk_update_mappings`) para los 2000 registros de una sola vez. Esto elimina al 100% las colas de bloqueo de escritura de SQLite (`database is locked`), bajando el overhead de base de datos a < 0.1s.
 
 ---
 
