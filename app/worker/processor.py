@@ -59,7 +59,7 @@ async def process_provider_events(provider: str, env: str):
     queue = QueueFactory.get_queue_service(provider, env)
     try:
         # 1. Obtener pendientes usando el servicio de colas abstraído
-        limit = 150
+        limit = 500
         pendings = await queue.get_pending_batch(provider, env, limit=limit)
                 
         if not pendings:
@@ -470,10 +470,10 @@ async def api_worker_loop(provider: str, env: str):
             if run_interval > 0:
                 await asyncio.wait_for(trigger.wait(), timeout=run_interval)
                 trigger.clear()
-                # Micro-batching: Si un evento nos despertó, esperamos 1 segundo para recolectar el resto de la ráfaga
-                await asyncio.sleep(1.0)
+                # Micro-batching: Si un evento nos despertó, esperamos un breve momento (100ms) para recolectar ráfagas sin violar SLA < 250ms
+                await asyncio.sleep(0.1)
             else:
-                await asyncio.sleep(0.5) # Pausa breve en modo ráfaga para no fundir la CPU
+                await asyncio.sleep(0.01) # Pausa mínima para ceder el Event Loop sin retrasar la ráfaga
         except asyncio.TimeoutError:
             pass
 

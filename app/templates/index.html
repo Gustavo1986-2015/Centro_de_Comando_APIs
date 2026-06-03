@@ -382,7 +382,6 @@
             <li id="tab-dashboard" class="active-tab" onclick="switchView('dashboard')">Dashboard Principal</li>
             <li id="tab-config" onclick="switchView('config')">Configuración Global</li>
             <li id="tab-simulator" onclick="switchView('simulator')">Simulador de Webhooks</li>
-            <li id="tab-logs" onclick="switchView('logs')">Logs de Auditoría Dinámica</li>
             <li id="tab-history" onclick="switchView('history')">Historial Diario</li>
             <li id="tab-db-viewer" onclick="switchView('db-viewer')">Visor de Base de Datos</li>
             <li id="tab-monitor" onclick="switchView('monitor')">Monitor Interno (APIs)</li>
@@ -501,33 +500,7 @@
         </div>
     </main>
 
-    <!-- VISTA LOGS DE AUDITORÍA -->
-    <main id="view-logs" style="display: none;">
-        <div class="recent-section">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
-                <h2>Auditoría Dinámica (Raw Payload)</h2>
-                <div style="display: flex; gap: 1rem;">
-                    <button class="btn-save" onclick="clearLogs()" style="background: rgba(255,255,255,0.1); color: var(--color-white)">🧹 Vaciar</button>
-                    <button class="btn-save" onclick="loadLogs()" style="background: var(--color-gray); color: var(--color-white)">Actualizar Logs</button>
-                </div>
-            </div>
-            
-            <div class="table-container">
-                <table>
-                    <thead>
-                        <tr>
-                            <th>Fecha/Hora</th>
-                            <th>Proveedor/Entorno</th>
-                            <th>Payload JSON</th>
-                        </tr>
-                    </thead>
-                    <tbody id="logs-table-body">
-                        <!-- Logs se inyectan via JS -->
-                    </tbody>
-                </table>
-            </div>
-        </div>
-    </main>
+    <!-- VISTA LOGS ELIMINADA A PETICION -->
 
     <!-- VISTA HISTORIAL DIARIO -->
     <main id="view-history" style="display: none;">
@@ -821,7 +794,6 @@
             document.getElementById('view-dashboard').style.display = view === 'dashboard' ? 'flex' : 'none';
             document.getElementById('view-config').style.display = view === 'config' ? 'flex' : 'none';
             document.getElementById('view-simulator').style.display = view === 'simulator' ? 'flex' : 'none';
-            document.getElementById('view-logs').style.display = view === 'logs' ? 'flex' : 'none';
             document.getElementById('view-history').style.display = view === 'history' ? 'flex' : 'none';
             document.getElementById('view-db-viewer').style.display = view === 'db-viewer' ? 'flex' : 'none';
             document.getElementById('view-monitor').style.display = view === 'monitor' ? 'flex' : 'none';
@@ -829,7 +801,6 @@
             document.getElementById('tab-dashboard').classList.toggle('active-tab', view === 'dashboard');
             document.getElementById('tab-config').classList.toggle('active-tab', view === 'config');
             document.getElementById('tab-simulator').classList.toggle('active-tab', view === 'simulator');
-            document.getElementById('tab-logs').classList.toggle('active-tab', view === 'logs');
             document.getElementById('tab-history').classList.toggle('active-tab', view === 'history');
             document.getElementById('tab-db-viewer').classList.toggle('active-tab', view === 'db-viewer');
             document.getElementById('tab-monitor').classList.toggle('active-tab', view === 'monitor');
@@ -842,8 +813,6 @@
                 loadConfig();
             } else if (view === 'simulator') {
                 loadSimulator();
-            } else if (view === 'logs') {
-                loadLogs();
             } else if (view === 'history') {
                 loadHistory();
             } else if (view === 'db-viewer') {

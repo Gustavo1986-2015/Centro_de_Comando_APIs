@@ -81,37 +81,35 @@ def _persist_batch(batch: list):
         finally:
             db.close()
             
-        # El worker lo levantará en su próximo ciclo natural
-
 async def _batch_processor_loop():
     """Consume de la cola y guarda en BD cada segundo o cuando hay 100 items."""
     while True:
         batch = []
         try:
-            # Esperar el primer item de forma indefinida
-            item = await _webhook_queue.get()
+            # Esperamos hasta 0.5s para acumular items
+            item = await asyncio.wait_for(_webhook_queue.get(), timeout=0.5)
             batch.append(item)
             
-            # Recolectar más items durante max 0.5s o hasta llegar a 100
-            end_time = asyncio.get_event_loop().time() + 0.5
-            while len(batch) < 100:
-                timeout = end_time - asyncio.get_event_loop().time()
-                if timeout <= 0: break
-                try:
-                    next_item = await asyncio.wait_for(_webhook_queue.get(), timeout=timeout)
-                    batch.append(next_item)
-                except asyncio.TimeoutError:
-                    break
-                    
-            # Guardar el lote en un thread aparte
+            while len(batch) < 100 and not _webhook_queue.empty():
+                batch.append(_webhook_queue.get_nowait())
+                
+        except asyncio.TimeoutError:
+            pass
+
+        if batch:
+            # Guardar el lote en un thread aparte para no bloquear el API
             await asyncio.to_thread(_persist_batch, batch)
+            
+            # Despertar worker de forma segura en el main thread
+            try:
+                from app.worker.processor import trigger_worker
+                # Avisar al worker que hay datos listos, el env es el del primer elemento del batch
+                trigger_worker("schmitz", batch[0][1])
+            except Exception as e:
+                pass
             
             for _ in range(len(batch)):
                 _webhook_queue.task_done()
-                
-        except Exception as e:
-            logger.error(f"Batch processor error: {e}")
-            await asyncio.sleep(1)
 
 async def start_webhook_batch_processor():
     """Inicia el loop de procesamiento por lotes. Llamar desde el startup de la app principal."""
