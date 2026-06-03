@@ -190,18 +190,10 @@ async def process_provider_events(provider: str, env: str):
                             "job_id": f"worker_err_{int(datetime.now().timestamp())}"
                         })
                         
-            # Escritura INMEDIATA en BD para este sub-lote (no espera a los demás)
-            if updates_to_retry:
-                await queue.schedule_batch_retry(provider, env, updates_to_retry)
-            if updates_to_fail:
-                await queue.mark_batch_as_failed(provider, env, updates_to_fail)
-            if updates_to_sent:
-                await queue.mark_batch_as_sent(provider, env, updates_to_sent)
-                
             metrics["retry"] = len(updates_to_retry)
             metrics["failed"] = len(updates_to_fail)
             metrics["sent"] = len(updates_to_sent)
-            return metrics
+            return metrics, updates_to_retry, updates_to_fail, updates_to_sent
 
         # 3. Disparar todos los sub-lotes en paralelo (cada uno auto-contenido con su propio SOAP + DB write)
         logger.info(f"Enviando {len(pendings)} eventos en {len(batches)} sub-lote(s) auto-contenido(s) para {provider}_{env}")
@@ -210,20 +202,37 @@ async def process_provider_events(provider: str, env: str):
             return_exceptions=True
         )
         
-        # 4. Consolidar métricas
+        # 4. Consolidar métricas y listas de updates
         total_sent = 0
         total_failed = 0
         total_retry = 0
         soap_ms_total = 0
         
+        all_updates_to_retry = []
+        all_updates_to_fail = []
+        all_updates_to_sent = []
+        
         for m in all_metrics:
             if isinstance(m, Exception):
                 logger.error(f"Excepción en sub-lote auto-contenido para {provider}_{env}: {m}")
                 continue
-            total_sent += m["sent"]
-            total_failed += m["failed"]
-            total_retry += m["retry"]
-            soap_ms_total += m["soap_ms"]
+            metrics, retry_list, fail_list, sent_list = m
+            total_sent += metrics["sent"]
+            total_failed += metrics["failed"]
+            total_retry += metrics["retry"]
+            soap_ms_total += metrics["soap_ms"]
+            
+            all_updates_to_retry.extend(retry_list)
+            all_updates_to_fail.extend(fail_list)
+            all_updates_to_sent.extend(sent_list)
+            
+        # 4.5. Escritura ATÓMICA masiva en BD para erradicar lock contention de SQLite
+        if all_updates_to_retry:
+            await queue.schedule_batch_retry(provider, env, all_updates_to_retry)
+        if all_updates_to_fail:
+            await queue.mark_batch_as_failed(provider, env, all_updates_to_fail)
+        if all_updates_to_sent:
+            await queue.mark_batch_as_sent(provider, env, all_updates_to_sent)
         
         soap_avg_ms = (soap_ms_total / len(batches)) if len(batches) > 0 else 0
         
