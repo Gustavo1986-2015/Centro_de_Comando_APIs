@@ -99,7 +99,7 @@ async def get_stats(
 
             # Obtener los 200 más recientes de esta BD particular
             recent = query.order_by(
-                NormalizedRCEvent.updated_at.desc()
+                NormalizedRCEvent.id.desc()
             ).limit(200).all()
             
             for r in recent:
