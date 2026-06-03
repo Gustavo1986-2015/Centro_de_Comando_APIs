@@ -422,7 +422,7 @@ async def api_worker_loop(provider: str, env: str):
                 purge_min = config["purge_interval_min"]
                 
                 if is_active:
-                    # El worker simplemente procesa un lote de hasta 500 eventos.
+                    # El worker simplemente procesa un lote de hasta 2000 eventos.
                     # Internamente `process_provider_events` particiona en sub-lotes de 50 
                     # y los envía en paralelo.
                     has_more = await process_provider_events(provider, env)
@@ -430,19 +430,14 @@ async def api_worker_loop(provider: str, env: str):
                     # Si aún quedan eventos, hacemos que el loop vuelva a ejecutarse casi de inmediato.
                     if has_more:
                         run_interval = 0
-                else:
-                    has_more = False
-                    
-                    # 3. Verificar si es tiempo de purga
+                        
+                    # Verificar si es tiempo de purga
                     now = datetime.now()
                     minutes_since_purge = (now - last_purge).total_seconds() / 60.0
                     if minutes_since_purge >= purge_min:
                         await purge_provider_events(provider, env)
                         last_purge = now
                         
-                    if has_more:
-                        # Modo ráfaga: omitimos el descanso porque sabemos que aún quedan eventos pendientes
-                        run_interval = 0
                 else:
                     run_interval = 5
             else:
