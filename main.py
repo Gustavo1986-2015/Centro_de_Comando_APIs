@@ -2,6 +2,7 @@ from fastapi import FastAPI
 import asyncio
 
 from app.api.routers import schmitz, dashboard, health
+from app.api.routers.schmitz import start_webhook_batch_processor
 from app.worker.processor import worker_loop
 
 app = FastAPI(title="Centro de Comando en Vivo - Telemática")
@@ -13,9 +14,9 @@ app.include_router(health.router)
 
 @app.on_event("startup")
 async def startup_event():
-    """Iniciar el worker background cuando la API arranca."""
-    # Correr el worker_loop en background sin bloquear la API
+    """Iniciar workers background cuando la API arranca."""
     asyncio.create_task(worker_loop())
+    await start_webhook_batch_processor()
 
 if __name__ == "__main__":
     import uvicorn
