@@ -6,8 +6,8 @@ Hub Telemático corporativo para recibir, parsear y encolar eventos GPS provenie
 El sistema ha sido diseñado para escalar a más de 15 proveedores simultáneos con cero pérdida de rendimiento, empleando un diseño moderno y seguro.
 
 - **Colas Híbridas (Per-Provider):** Cada proveedor puede configurar de manera granular su motor de colas. La `QueueFactory` ruteará los eventos de alto tráfico hacia **Redis** (in-memory) y los de tráfico estable hacia **SQLite** (`schmitz_prod.db`), maximizando el rendimiento sin perder flexibilidad.
-- **Auto-Escalado Dinámico (El Director):** El Worker ha sido rediseñado como un despachador inteligente. Si detecta cientos de eventos encolados, omite los descansos (Burst Mode) e invoca múltiples trabajadores (`asyncio.gather`) de manera dinámica (ej. 5 procesos paralelos). Esto derrite las colas masivas instantáneamente bajando la latencia a menos de un segundo.
-- **Guardado Atómico en Lote (Batch Save):** Para evitar los cuellos de botella de disco ("database is locked"), el Director agrupa las respuestas del Web Service y realiza una única escritura masiva a la base de datos por lote, eliminando el IO iterativo.
+- **Auto-Escalado Dinámico y Despertador Thread-Safe:** El Worker actúa como un despachador inteligente. Un mecanismo interno (`asyncio.Event`) lo despierta instantáneamente en milisegundos apenas ingresa un webhook. Si detecta ráfagas masivas (Burst Mode), despliega hilos paralelos soportados por un `ThreadPoolExecutor` ampliado (max_workers=200) para derretir las colas SQLite y evitar inanición HTTP, bajando la latencia interna a < 0.25s.
+- **Guardado Atómico en Lote (Batch Save):** Para evitar los cuellos de botella de disco, el router agrupa los eventos asíncronamente (esperando no más de 0.5s) y realiza una única escritura masiva a la base de datos por lote usando hilos independientes.
 - **Reintentos Asíncronos con Backoff Lineal:** Cuando un envío falla por problemas temporales de red o autenticación, el evento permanece en base de datos como `pending`. Se encola con tiempos de espera progresivos (1° intento: +10s, 2° intento: +45s, 3° intento: +120s, 4° intento: +300s, máx 4 intentos). El worker omite de forma inteligente estos eventos hasta cumplir su backoff, dejando que el resto del tráfico fluya de inmediato.
 - **Modelo Canónico (Pydantic):** Validación estricta. Todo lo que ingresa de un externo se transforma a un formato estándar de Assistcargo antes de viajar a Recurso Confiable.
 - **Seguridad Perimetral (Toggle Switch):** Los Webhooks receptores cuentan con validación de "API Keys" mediante cabeceras HTTP, las cuales pueden activarse/desactivarse en caliente desde el archivo `.env` para facilitar pruebas.
@@ -31,7 +31,6 @@ El servidor incluye una interfaz web interactiva (Vanilla JS, CSS Premium, sin f
 - **Historial Diario Inteligente:** Pestaña dedicada con un registro histórico consolidado persistente (`daily_stats`) de procesados, enviados y fallidos. El sistema calcula matemáticamente la medianoche local para realizar un barrido perfecto "Hoy" sin importar la zona horaria UTC del servidor.
 - **Configuración Global por API:** Panel visual para activar/desactivar el procesamiento de cada proveedor, establecer credenciales de RC, configurar el Motor de Colas (`sqlite` vs `redis`), y ajustar los intervalos de purga.
 - **Visor de Bases de Datos (DB Viewer):** Herramienta administrativa para consultar, sin salir de la web, la estructura y los datos en vivo de cualquier tabla en cualquiera de las bases de datos dinámicas (`.db`) del ecosistema.
-- **Logs de Auditoría:** Pantalla para inspeccionar en vivo los JSONs crudos que están ingresando al sistema.
 - **Simulador de Webhooks Blindado:** Herramienta interna para inyectar payloads de prueba, que desvía sus operaciones hacia un entorno `test_unit` para nunca corromper los datos reales del cliente en el visor.
 
 ## 💻 Ejecución en Desarrollo (Local)
@@ -41,11 +40,11 @@ El servidor incluye una interfaz web interactiva (Vanilla JS, CSS Premium, sin f
    ```
 2. Configurar entorno seguro:
    Copia el archivo `.env.example` y renómbralo a `.env`. Coloca allí tus credenciales reales (este archivo es ignorado por git por seguridad).
-3. Ejecutar el servidor web (con recarga automática):
+4. Ejecutar el servidor web:
    ```bash
-   uvicorn main:app --port 8000 --reload
+   python main.py
    ```
-4. Abrir el panel de control: [http://localhost:8000/dashboard](http://localhost:8000/dashboard)
+5. Abrir el panel de control: [http://localhost:8000/dashboard](http://localhost:8000/dashboard)
 
 ## 🌐 Despliegue en Producción (Servidor Windows / AWS)
 *Esta sección detalla cómo mantener el sistema vivo 24/7 sin consolas abiertas.*

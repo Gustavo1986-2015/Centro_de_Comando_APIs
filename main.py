@@ -15,6 +15,10 @@ app.include_router(health.router)
 @app.on_event("startup")
 async def startup_event():
     """Iniciar workers background cuando la API arranca."""
+    import concurrent.futures
+    loop = asyncio.get_running_loop()
+    # Aumentar drásticamente el pool de hilos para que zeep y sqlite no se pongan en cola
+    loop.set_default_executor(concurrent.futures.ThreadPoolExecutor(max_workers=200))
     asyncio.create_task(worker_loop())
     await start_webhook_batch_processor()
 
