@@ -243,12 +243,9 @@ async def process_provider_events(provider: str, env: str):
             f"sent={total_sent} failed={total_failed} retry={total_retry}"
         )
         
-        
-        # 5. Consolidar estadísticas del día de hoy en la base de datos global de forma asincrónica e independiente
-        try:
-            await asyncio.to_thread(update_daily_stats, provider, env)
-        except Exception as stats_e:
-            logger.error(f"Error al actualizar estadísticas diarias para {provider}_{env}: {stats_e}")
+        # NOTA: update_daily_stats ya no bloquea aquí. 
+        # Se movió al api_worker_loop como tarea fire-and-forget cada 5 segundos 
+        # para evitar sumar su demora SQL (~1.5s) a la métrica de Latencia Hub AC.
             
         return has_more
         
@@ -405,6 +402,7 @@ async def api_worker_loop(provider: str, env: str):
     """Loop asíncrono e independiente para procesar eventos de un proveedor y entorno específicos."""
     logger.info(f"Iniciando sub-worker independiente para {provider}_{env}")
     last_purge = datetime.now()
+    last_stats = datetime.now()
     
     # Registrar el evento trigger para despertar de forma instantánea
     key = f"{provider.lower()}_{env.lower()}"
@@ -446,6 +444,11 @@ async def api_worker_loop(provider: str, env: str):
                     if minutes_since_purge >= purge_min:
                         await purge_provider_events(provider, env)
                         last_purge = now
+                        
+                    # Actualizar estadísticas globales en background sin bloquear el worker
+                    if (now - last_stats).total_seconds() >= 5:
+                        asyncio.create_task(asyncio.to_thread(update_daily_stats, provider, env))
+                        last_stats = now
                         
                 else:
                     run_interval = 5
