@@ -6,13 +6,14 @@ from app.database import session_context
 from app.models.db_models import NormalizedRCEvent
 from app.core.queue_interface import MessageQueueInterface
 
+import asyncio
+
 class SQLiteQueue(MessageQueueInterface):
     """
     Implementación concreta de la cola de mensajes usando SQLite y SQLAlchemy.
-    Mantiene la compatibilidad con el esquema de almacenamiento relacional del Hub.
     """
 
-    async def get_pending_count(self, provider: str, env: str) -> int:
+    def _get_pending_count_sync(self, provider: str, env: str) -> int:
         with session_context(provider, env) as db:
             now_time = datetime.now()
             return db.query(NormalizedRCEvent).filter(
@@ -23,7 +24,10 @@ class SQLiteQueue(MessageQueueInterface):
                 )
             ).count()
 
-    async def get_pending_batch(self, provider: str, env: str, limit: int = 150) -> List[Any]:
+    async def get_pending_count(self, provider: str, env: str) -> int:
+        return await asyncio.to_thread(self._get_pending_count_sync, provider, env)
+
+    def _get_pending_batch_sync(self, provider: str, env: str, limit: int) -> List[Any]:
         with session_context(provider, env) as db:
             now_time = datetime.now()
             query = db.query(NormalizedRCEvent).filter(
@@ -38,7 +42,6 @@ class SQLiteQueue(MessageQueueInterface):
             
             if events:
                 event_ids = [ev.id for ev in events]
-                
                 for ev in events:
                     db.expunge(ev)
                     ev.status = "processing"
@@ -46,11 +49,12 @@ class SQLiteQueue(MessageQueueInterface):
                 db.query(NormalizedRCEvent).filter(NormalizedRCEvent.id.in_(event_ids)).update(
                     {"status": "processing"}, synchronize_session=False
                 )
-                # El commit se realizará automáticamente al salir del contexto
-                
             return events
 
-    async def mark_batch_as_sent(self, provider: str, env: str, updates: List[dict]) -> None:
+    async def get_pending_batch(self, provider: str, env: str, limit: int = 150) -> List[Any]:
+        return await asyncio.to_thread(self._get_pending_batch_sync, provider, env, limit)
+
+    def _mark_batch_as_sent_sync(self, provider: str, env: str, updates: List[dict]) -> None:
         with session_context(provider, env) as db:
             if updates:
                 mappings = [{
@@ -64,7 +68,10 @@ class SQLiteQueue(MessageQueueInterface):
                 } for u in updates]
                 db.bulk_update_mappings(NormalizedRCEvent, mappings)
 
-    async def mark_batch_as_failed(self, provider: str, env: str, updates: List[dict]) -> None:
+    async def mark_batch_as_sent(self, provider: str, env: str, updates: List[dict]) -> None:
+        await asyncio.to_thread(self._mark_batch_as_sent_sync, provider, env, updates)
+
+    def _mark_batch_as_failed_sync(self, provider: str, env: str, updates: List[dict]) -> None:
         with session_context(provider, env) as db:
             if updates:
                 mappings = [{
@@ -76,7 +83,10 @@ class SQLiteQueue(MessageQueueInterface):
                 } for u in updates]
                 db.bulk_update_mappings(NormalizedRCEvent, mappings)
 
-    async def schedule_batch_retry(self, provider: str, env: str, updates: List[dict]) -> None:
+    async def mark_batch_as_failed(self, provider: str, env: str, updates: List[dict]) -> None:
+        await asyncio.to_thread(self._mark_batch_as_failed_sync, provider, env, updates)
+
+    def _schedule_batch_retry_sync(self, provider: str, env: str, updates: List[dict]) -> None:
         with session_context(provider, env) as db:
             if updates:
                 mappings = [{
@@ -89,6 +99,9 @@ class SQLiteQueue(MessageQueueInterface):
                     "next_retry_at": u['next_retry_at']
                 } for u in updates]
                 db.bulk_update_mappings(NormalizedRCEvent, mappings)
+
+    async def schedule_batch_retry(self, provider: str, env: str, updates: List[dict]) -> None:
+        await asyncio.to_thread(self._schedule_batch_retry_sync, provider, env, updates)
 
     async def mark_as_sent(self, provider: str, env: str, event_id: int, elapsed_sec: float, rc_response: str, job_id: str) -> None:
         await self.mark_batch_as_sent(provider, env, [{"event_id": event_id, "elapsed_sec": elapsed_sec, "rc_response": rc_response, "job_id": job_id}])

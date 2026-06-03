@@ -415,7 +415,7 @@ async def api_worker_loop(provider: str, env: str):
     while True:
         run_interval = 5
         try:
-            config = get_provider_config(provider, env)
+            config = await asyncio.to_thread(get_provider_config, provider, env)
             if config:
                 is_active = config["is_active"]
                 run_interval = config["run_interval_sec"]
@@ -428,7 +428,7 @@ async def api_worker_loop(provider: str, env: str):
                     # 2. El Director revisa el volumen de la cola
                     from app.core.queue_factory import QueueFactory
                     queue = QueueFactory.get_queue_service(provider, env)
-                    pending_count = await queue.get_pending_count(provider, env)
+                    pending_count = await asyncio.to_thread(queue._get_pending_count_sync, provider, env)
                     
                     if pending_count > 0:
                         import math
