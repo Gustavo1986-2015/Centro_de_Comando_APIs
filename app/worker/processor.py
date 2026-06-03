@@ -59,7 +59,7 @@ async def process_provider_events(provider: str, env: str):
     queue = QueueFactory.get_queue_service(provider, env)
     try:
         # 1. Obtener pendientes usando el servicio de colas abstraído
-        limit = 500
+        limit = 2000
         pendings = await queue.get_pending_batch(provider, env, limit=limit)
                 
         if not pendings:
@@ -422,31 +422,16 @@ async def api_worker_loop(provider: str, env: str):
                 purge_min = config["purge_interval_min"]
                 
                 if is_active:
-                    # 1. Limpiar tareas terminadas del conjunto
-                    background_tasks.difference_update([t for t in background_tasks if t.done()])
+                    # El worker simplemente procesa un lote de hasta 500 eventos.
+                    # Internamente `process_provider_events` particiona en sub-lotes de 50 
+                    # y los envía en paralelo.
+                    has_more = await process_provider_events(provider, env)
                     
-                    # 2. El Director revisa el volumen de la cola
-                    from app.core.queue_factory import QueueFactory
-                    queue = QueueFactory.get_queue_service(provider, env)
-                    pending_count = await asyncio.to_thread(queue._get_pending_count_sync, provider, env)
-                    
-                    if pending_count > 0:
-                        import math
-                        # Auto-escalado dinámico: 1 worker por cada 50 eventos, sujeto a disponibilidad del semáforo
-                        available_slots = semaphore._value
-                        num_workers_needed = math.ceil(pending_count / 50)
-                        num_workers = min(available_slots, num_workers_needed)
-                        
-                        if num_workers > 0:
-                            logger.info(f"Director: {pending_count} pendientes para {provider}_{env}. Lanzando {num_workers} worker(s) en background.")
-                            for _ in range(num_workers):
-                                task = asyncio.create_task(process_with_semaphore())
-                                background_tasks.add(task)
-                        
-                        # Si quedan eventos y no hay slots, forzamos un chequeo rápido
-                        has_more = pending_count > (num_workers * 50)
-                    else:
-                        has_more = False
+                    # Si aún quedan eventos, hacemos que el loop vuelva a ejecutarse casi de inmediato.
+                    if has_more:
+                        run_interval = 0
+                else:
+                    has_more = False
                     
                     # 3. Verificar si es tiempo de purga
                     now = datetime.now()
@@ -488,9 +473,23 @@ async def worker_loop():
         if not configs:
             c1 = ProviderConfig(provider_name="schmitz", env="prod")
             c2 = ProviderConfig(provider_name="schmitz", env="test")
-            db.add_all([c1, c2])
+            c3 = ProviderConfig(provider_name="protrack", env="prod")
+            c4 = ProviderConfig(provider_name="protrack", env="test")
+            db.add_all([c1, c2, c3, c4])
             db.commit()
             configs = db.query(ProviderConfig).all()
+        else:
+            # Agregar registros de Protrack si aún no existen (migración incremental)
+            existing_names = {(c.provider_name, c.env) for c in configs}
+            to_add = []
+            if ("protrack", "prod") not in existing_names:
+                to_add.append(ProviderConfig(provider_name="protrack", env="prod"))
+            if ("protrack", "test") not in existing_names:
+                to_add.append(ProviderConfig(provider_name="protrack", env="test"))
+            if to_add:
+                db.add_all(to_add)
+                db.commit()
+                configs = db.query(ProviderConfig).all()
         
         providers = [(c.provider_name, c.env) for c in configs]
         
@@ -519,6 +518,147 @@ async def worker_loop():
     for provider, env in providers:
         task = asyncio.create_task(api_worker_loop(provider, env))
         tasks.append(task)
+        # Lanzar loop de polling PULL para Protrack
+        if provider == "protrack":
+            poll_task = asyncio.create_task(protrack_poll_loop(provider, env))
+            tasks.append(poll_task)
         
     logger.info(f"Registrados {len(tasks)} sub-workers independientes en ejecución paralela.")
     await asyncio.gather(*tasks)
+
+
+# ============================================================
+# PROTRACK — Loop de Polling PULL
+# ============================================================
+
+async def poll_protrack(provider: str, env: str):
+    """
+    Consulta la API Protrack365 (PULL):
+      1. Lista dispositivos -> obtiene IMEIs y metadata
+      2. Consulta posición actual (/api/track)
+      3. Mapea al modelo canónico
+      4. Inserta en BD como eventos 'pending'
+      5. Despierta el worker de envío a RC
+    """
+    from app.providers.protrack.client import get_protrack_client
+    from app.providers.protrack.mapper import map_protrack_track
+    import json
+    from app.core.auditor import audit_event
+    import threading
+
+    try:
+        client = get_protrack_client(env)
+    except RuntimeError as e:
+        logger.error(f"[Protrack] No se pudo crear cliente para env='{env}': {e}")
+        return
+
+    try:
+        # 1. Obtener lista de dispositivos (IMEI + metadata)
+        devices = await client.get_devices()
+        if not devices:
+            logger.debug(f"[Protrack] Sin dispositivos para env='{env}'.")
+            return
+
+        device_index = {d.get("imei"): d for d in devices if d.get("imei")}
+        imeis = list(device_index.keys())
+
+        # 2. Posición actual
+        tracks = await client.get_track(imeis)
+        if not tracks:
+            logger.debug(f"[Protrack] Sin datos de posición para env='{env}'.")
+            return
+
+        # 3. Mapear y persistir
+        db = get_session(provider, env)
+        try:
+            events_to_add = []
+            for track in tracks:
+                imei_key = str(track.get("imei", "")).strip()
+                dev_info = device_index.get(imei_key, {})
+
+                try:
+                    canonical = map_protrack_track(track, dev_info)
+                except Exception as map_err:
+                    logger.warning(f"[Protrack] Error de mapping para IMEI {imei_key}: {map_err}")
+                    continue
+
+                # Auditoría fire-and-forget
+                threading.Thread(
+                    target=audit_event,
+                    args=(f"protrack_{env}", track),
+                    daemon=True
+                ).start()
+
+                from app.models.db_models import NormalizedRCEvent
+                events_to_add.append(NormalizedRCEvent(
+                    provider=provider,
+                    status="pending",
+                    raw_data=json.dumps(track, ensure_ascii=False),
+                    chassis_number=canonical.chassis_number,
+                    latitude=canonical.latitude,
+                    longitude=canonical.longitude,
+                    speed=canonical.speed,
+                    code=canonical.code,
+                    date=canonical.date,
+                    altitude=canonical.altitude,
+                    battery=canonical.battery,
+                    course=canonical.course,
+                    humidity=canonical.humidity,
+                    ignition=canonical.ignition,
+                    odometer=canonical.odometer,
+                    temperature=canonical.temperature,
+                    serial_number=canonical.serial_number,
+                    shipment=canonical.shipment,
+                    vehicle_type=canonical.vehicle_type,
+                    vehicle_brand=canonical.vehicle_brand,
+                    vehicle_model=canonical.vehicle_model,
+                ))
+
+            if events_to_add:
+                db.add_all(events_to_add)
+                db.commit()
+                logger.info(
+                    f"[Protrack] {len(events_to_add)} eventos insertados en BD "
+                    f"(provider={provider}, env={env})."
+                )
+                # Despertar el worker de procesamiento (envío a RC)
+                trigger_worker(provider, env)
+
+        except Exception as db_err:
+            logger.error(f"[Protrack] Error al persistir eventos para env='{env}': {db_err}")
+        finally:
+            db.close()
+
+    except Exception as e:
+        logger.error(f"[Protrack] Error en poll_protrack env='{env}': {e}")
+
+
+async def protrack_poll_loop(provider: str, env: str):
+    """
+    Loop de polling PULL para Protrack.
+    Lee el intervalo desde la configuración activa del proveedor;
+    si no hay config, usa el valor de la variable de entorno PROTRACK_POLL_INTERVAL_SEC (default 30s).
+    Se detiene (durmiendo) si el proveedor está desactivado en la BD.
+    """
+    import os
+    default_interval = int(os.getenv("PROTRACK_POLL_INTERVAL_SEC", "30"))
+    logger.info(f"[Protrack] Iniciando poll_loop para env='{env}' (intervalo default: {default_interval}s).")
+
+    while True:
+        interval = default_interval
+        try:
+            config = await asyncio.to_thread(get_provider_config, provider, env)
+            if config:
+                if not config["is_active"]:
+                    # Proveedor desactivado: dormir y volver a verificar
+                    await asyncio.sleep(10)
+                    continue
+                # Usar run_interval_sec de la config como intervalo de polling
+                interval = config["run_interval_sec"] if config["run_interval_sec"] else default_interval
+
+            await poll_protrack(provider, env)
+
+        except Exception as e:
+            logger.error(f"[Protrack] Error inesperado en protrack_poll_loop env='{env}': {e}")
+
+        await asyncio.sleep(interval)
