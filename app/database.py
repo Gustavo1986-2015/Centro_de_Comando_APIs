@@ -97,6 +97,7 @@ def get_engine(provider: str, env: str = "prod"):
             cursor = dbapi_connection.cursor()
             cursor.execute("PRAGMA journal_mode=WAL")
             cursor.execute("PRAGMA synchronous=NORMAL")
+            cursor.execute("PRAGMA busy_timeout=3000")
             cursor.close()
         
         # Asegurar que los modelos estén registrados en Base.metadata
