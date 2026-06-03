@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Request, Depends, status, Query, HTTPException, Header
+from fastapi import APIRouter, Request, Depends, status, Query, HTTPException, Header, BackgroundTasks
 from sqlalchemy.orm import Session
 import asyncio
 import json
@@ -29,8 +29,8 @@ router = APIRouter(prefix="/schmitz", tags=["Schmitz"])
 
 def _persist_webhook_event(payload: dict, env: str):
     """
-    Ejecuta TODO el trabajo pesado de I/O en un thread del pool del sistema operativo,
-    liberando el event loop de asyncio para atender la siguiente petición de inmediato.
+    Ejecuta TODO el trabajo pesado de I/O.
+    Al usarse como BackgroundTask, no penaliza el tiempo de respuesta HTTP.
     """
     # 1. Auditoría fire-and-forget: se dispara en su propio hilo daemon sin bloquear
     threading.Thread(
@@ -73,6 +73,9 @@ def _persist_webhook_event(payload: dict, env: str):
         )
         db.add(new_event)
         db.commit()
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).error(f"Error persisting webhook: {e}")
     finally:
         db.close()
 
@@ -87,23 +90,22 @@ def _persist_webhook_event(payload: dict, env: str):
 @router.post("/webhook", status_code=status.HTTP_202_ACCEPTED)
 async def schmitz_webhook(
     request: Request,
+    background_tasks: BackgroundTasks,
     env: str = Query("prod", description="Entorno: test o prod"),
     authorized: bool = Depends(verify_api_key)
 ):
     """
     Endpoint receptor para webhooks de Schmitz Cargobull.
-    Recibe el payload, lo adapta, lo guarda en auditoría dinámica y lo encola en SQLite.
-    Devuelve HTTP 202 Accepted.
-    
-    Toda la I/O bloqueante (audit + SQLite) se ejecuta en un thread pool para no
-    congelar el event loop de asyncio y permitir atender peticiones concurrentes.
+    Recibe el payload crudo y responde inmediatamente con HTTP 202.
+    El procesamiento y guardado se delegan a un BackgroundTask de FastAPI.
     """
     try:
         payload = await request.json()
     except Exception as e:
         return {"error": "Invalid JSON format", "detail": str(e)}
 
-    # Ejecutar la persistencia en un thread del pool (no bloquea el event loop)
-    await asyncio.to_thread(_persist_webhook_event, payload, env)
+    # Delegar la persistencia a un background task.
+    # Esto asegura que el response se envía al instante (< 50ms)
+    background_tasks.add_task(_persist_webhook_event, payload, env)
 
     return {"status": "accepted"}
