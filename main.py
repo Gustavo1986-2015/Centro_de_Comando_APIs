@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 import asyncio
 
-from app.api.routers import schmitz, dashboard, health
+from app.api.routers import schmitz, dashboard, health, inspector, dynamic_webhook
 from app.api.routers.schmitz import start_webhook_batch_processor
 from app.worker.processor import worker_loop
 
@@ -11,6 +11,8 @@ app = FastAPI(title="Centro de Comando en Vivo - Telemática")
 app.include_router(schmitz.router)
 app.include_router(dashboard.router)
 app.include_router(health.router)
+app.include_router(inspector.router)
+app.include_router(dynamic_webhook.router)
 
 @app.on_event("startup")
 async def startup_event():

@@ -28,7 +28,15 @@ class ConfigUpdate(BaseModel):
 @router.get("/dashboard", response_class=HTMLResponse)
 async def get_dashboard(request: Request):
     """Renderiza el Centro de Comando en Vivo."""
-    return templates.TemplateResponse(request=request, name="index.html")
+    return templates.TemplateResponse(
+        request=request, 
+        name="index.html",
+        headers={
+            "Cache-Control": "no-cache, no-store, must-revalidate",
+            "Pragma": "no-cache",
+            "Expires": "0"
+        }
+    )
 
 @router.get("/api/stats")
 async def get_stats(
@@ -163,12 +171,12 @@ async def get_stats(
             "id": ev.id,
             "chassis": ev.chassis_number,
             "status": ev.status,
-            "time": ev.updated_at.strftime("%Y-%m-%d %H:%M:%S (UTC)") if ev.updated_at else ev.created_at.strftime("%Y-%m-%d %H:%M:%S (UTC)"),
-            "time_received": ev.created_at.strftime("%Y-%m-%d %H:%M:%S (UTC)"),
-            "time_sent": time_sent_dt.strftime("%Y-%m-%d %H:%M:%S (UTC)") if ev.status in ('sent', 'failed') and time_sent_dt else "Procesando" if ev.status == 'processing' else "Pendiente" if ev.status == 'pending' else "Fallido",
-            "time_received_rc": time_received_rc_dt.strftime("%Y-%m-%d %H:%M:%S (UTC)") if ev.status in ('sent', 'failed') and time_received_rc_dt else "Procesando" if ev.status == 'processing' else "Pendiente" if ev.status == 'pending' else "Fallido",
-            "latency_sec": round(latency_sec, 2) if latency_sec is not None else None,
-            "rc_latency_sec": round(rc_latency_val, 2) if rc_latency_val is not None else None,
+            "time": (ev.updated_at or ev.created_at).strftime("%Y-%m-%d %H:%M:%S.%f")[:-3] + " (UTC)",
+            "time_received": ev.created_at.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3] + " (UTC)",
+            "time_sent": (time_sent_dt.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3] + " (UTC)") if ev.status in ('sent', 'failed') and time_sent_dt else "Procesando" if ev.status == 'processing' else "Pendiente" if ev.status == 'pending' else "Fallido",
+            "time_received_rc": (time_received_rc_dt.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3] + " (UTC)") if ev.status in ('sent', 'failed') and time_received_rc_dt else "Procesando" if ev.status == 'processing' else "Pendiente" if ev.status == 'pending' else "Fallido",
+            "latency_sec": round(latency_sec, 3) if latency_sec is not None else None,
+            "rc_latency_sec": round(rc_latency_val, 3) if rc_latency_val is not None else None,
             "transmission_latency_sec": transmission_latency_sec,
             "rc_response": getattr(ev, 'rc_response', ""),
             "provider": getattr(ev, 'provider_name', "N/A").upper(),
@@ -211,7 +219,8 @@ async def get_stats(
                 "vehicleType": getattr(ev, 'vehicle_type', "") or "",
                 "vehicleBrand": getattr(ev, 'vehicle_brand', "") or "",
                 "vehicleModel": getattr(ev, 'vehicle_model', "") or ""
-            }
+            },
+            "raw_data": ev.raw_data
         })
 
     avg_latency = round(total_latency_seconds / latency_samples, 2) if latency_samples > 0 else 0
@@ -224,8 +233,137 @@ async def get_stats(
         "retries": total_retries,
         "avg_latency_sec": avg_latency,
         "avg_rc_latency_sec": avg_rc_latency,
-        "recent": recent_list
+        "recent": recent_list,
+        "all_providers": list(set([p.provider_name for p in providers]))
     }
+
+@router.get("/api/config/providers")
+async def get_providers():
+    config_db = get_session("system_config", "global")
+    try:
+        providers = config_db.query(ProviderConfig).all()
+        return [{"id": p.id, "provider_name": p.provider_name, "env": p.env} for p in providers]
+    finally:
+        config_db.close()
+
+@router.post("/api/config/providers")
+async def create_provider(payload: dict):
+    provider_name = payload.get("provider_name")
+    if not provider_name:
+        return {"status": "error", "message": "Falta el nombre del proveedor."}
+        
+    config_db = get_session("system_config", "global")
+    try:
+        provider_name = provider_name.lower().strip()
+        # Verificar si ya existe en algun entorno
+        exists = config_db.query(ProviderConfig).filter(
+            ProviderConfig.provider_name == provider_name
+        ).first()
+        
+        if exists:
+            return {"status": "error", "message": f"El proveedor {provider_name} ya existe."}
+            
+        new_prod = ProviderConfig(
+            provider_name=provider_name,
+            env="prod",
+            is_active=False,
+            queue_backend="sqlite",
+            mapping_schema={}
+        )
+        new_test = ProviderConfig(
+            provider_name=provider_name,
+            env="test",
+            is_active=True,
+            queue_backend="sqlite",
+            mapping_schema={}
+        )
+        
+        config_db.add_all([new_prod, new_test])
+        config_db.commit()
+        return {"status": "success", "message": "Proveedor creado exitosamente en prod y test."}
+    except Exception as e:
+        config_db.rollback()
+        return {"status": "error", "message": str(e)}
+    finally:
+        config_db.close()
+
+@router.post("/api/config/{provider_name}/{env}/mapping")
+async def save_mapping(provider_name: str, env: str, payload: dict):
+    config_db = get_session("system_config", "global")
+    try:
+        config = config_db.query(ProviderConfig).filter(
+            ProviderConfig.provider_name.ilike(provider_name),
+            ProviderConfig.env == env
+        ).first()
+        if not config:
+            return {"status": "error", "message": "Provider not found"}
+            
+        # Compatibilidad: si el payload tiene la llave 'mapping', extraerla, si no, asumir que todo es mapping
+        if 'mapping' in payload:
+            config.mapping_schema = payload.get('mapping', {})
+            if 'fetch' in payload:
+                config.fetch_config = payload.get('fetch', {})
+        else:
+            config.mapping_schema = payload
+            
+        config_db.commit()
+        return {"status": "success"}
+    except Exception as e:
+        config_db.rollback()
+        return {"status": "error", "message": str(e)}
+    finally:
+        config_db.close()
+        
+@router.get("/api/config/{provider_name}/{env}/mapping")
+async def get_mapping(provider_name: str, env: str):
+    config_db = get_session("system_config", "global")
+    try:
+        config = config_db.query(ProviderConfig).filter(
+            ProviderConfig.provider_name.ilike(provider_name),
+            ProviderConfig.env == env
+        ).first()
+        if not config:
+            return {}
+        return {
+            "mapping": config.mapping_schema or {},
+            "fetch": config.fetch_config or {}
+        }
+    finally:
+        config_db.close()
+
+@router.post("/api/config/{provider_name}/{env}/enrichment")
+async def save_enrichment(provider_name: str, env: str, payload: dict):
+    config_db = get_session("system_config", "global")
+    try:
+        config = config_db.query(ProviderConfig).filter(
+            ProviderConfig.provider_name.ilike(provider_name),
+            ProviderConfig.env == env
+        ).first()
+        if not config:
+            return {"status": "error", "message": "Provider not found"}
+            
+        config.enrichment_config = payload
+        config_db.commit()
+        return {"status": "success"}
+    except Exception as e:
+        config_db.rollback()
+        return {"status": "error", "message": str(e)}
+    finally:
+        config_db.close()
+        
+@router.get("/api/config/{provider_name}/{env}/enrichment")
+async def get_enrichment(provider_name: str, env: str):
+    config_db = get_session("system_config", "global")
+    try:
+        config = config_db.query(ProviderConfig).filter(
+            ProviderConfig.provider_name.ilike(provider_name),
+            ProviderConfig.env == env
+        ).first()
+        if not config:
+            return {}
+        return config.enrichment_config or {}
+    finally:
+        config_db.close()
 
 @router.get("/api/config")
 async def get_all_configs():
