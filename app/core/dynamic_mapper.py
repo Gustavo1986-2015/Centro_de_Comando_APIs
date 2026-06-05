@@ -1,0 +1,156 @@
+from typing import Any, Dict, Optional
+from datetime import datetime, timezone
+import dateutil.parser
+from app.schemas.canonical import RCCanonicalModel
+import logging
+
+logger = logging.getLogger(__name__)
+
+class DynamicMapper:
+    @staticmethod
+    def _extract_value(payload: Dict[str, Any], path: str) -> Any:
+        """
+        Extrae un valor de un diccionario anidado usando notación de puntos (ej: 'StatusData.0.Position.Latitude').
+        Soporta el operador de fallback '||' (ej: 'Plate || ChassisNumber').
+        """
+        if not path:
+            return None
+            
+        paths = [p.strip() for p in path.split('||')]
+        
+        for p in paths:
+            if not p:
+                continue
+            keys = p.split('.')
+            curr = payload
+            found = True
+            for k in keys:
+                if isinstance(curr, dict) and k in curr:
+                    curr = curr[k]
+                elif isinstance(curr, list) and k.isdigit() and int(k) < len(curr):
+                    curr = curr[int(k)]
+                else:
+                    found = False
+                    break
+            if found and curr is not None:
+                return curr
+                
+        return None
+
+    @staticmethod
+    def map_payload(payload: Dict[str, Any], schema: Dict[str, str], provider_name: str = None, env: str = None) -> RCCanonicalModel:
+        """
+        Mapea dinámicamente un payload JSON entrante al modelo estándar (RCCanonicalModel)
+        basándose en un esquema de rutas configurado en la base de datos por el usuario.
+        """
+        
+        def parse_date(date_str: Any) -> Optional[datetime]:
+            if not date_str:
+                return None
+            try:
+                # Si es un timestamp UNIX numérico puro
+                if str(date_str).replace('.', '', 1).isdigit():
+                    return datetime.fromtimestamp(float(date_str), tz=timezone.utc)
+                dt = dateutil.parser.parse(str(date_str))
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=timezone.utc)
+                return dt.astimezone(timezone.utc)
+            except Exception:
+                return None
+                
+        def parse_float(val: Any) -> Optional[float]:
+            if val is None or str(val).strip().lower() in ["", "null", "none"]:
+                return None
+            try:
+                return float(val)
+            except Exception:
+                return None
+
+        # Buscar imei original para contingencia PULL y preservación
+        original_imei = "UNKNOWN"
+        inner_payload = payload.get("payload", payload) if isinstance(payload, dict) else payload
+        
+        for imei_key in ["imei", "serial_number", "serial", "device_id"]:
+            if isinstance(inner_payload, dict):
+                val = inner_payload.get(imei_key)
+                if not val and "record" in inner_payload and isinstance(inner_payload["record"], list) and len(inner_payload["record"]) > 0:
+                    val = inner_payload["record"][0].get(imei_key)
+                if val:
+                    original_imei = str(val)
+                    break
+
+        # Identificador principal
+        chassis_val = DynamicMapper._extract_value(payload, schema.get("chassis_number", ""))
+        chassis_number = str(chassis_val) if chassis_val is not None else original_imei
+        
+        # --- NUEVO: Inyección al Vuelo (Diccionario de Metadatos) ---
+        if provider_name and env and chassis_number != "UNKNOWN":
+            from app.database import get_session
+            from app.models.config_models import ProviderDictionary
+            db_global = get_session("system_config", "global")
+            try:
+                dict_entry = db_global.query(ProviderDictionary).filter_by(
+                    provider_name=provider_name, 
+                    env=env, 
+                    dict_key=chassis_number
+                ).first()
+                if dict_entry and dict_entry.dict_value:
+                    chassis_number = dict_entry.dict_value
+                    logger.debug(f"Inyección al vuelo: {chassis_val} reemplazado por {chassis_number}")
+            except Exception as e:
+                logger.error(f"Error en inyección al vuelo para {provider_name}_{env}: {e}")
+            finally:
+                db_global.close()
+        
+        # Coordenadas y Velocidad
+        latitude = parse_float(DynamicMapper._extract_value(payload, schema.get("latitude", "")))
+        longitude = parse_float(DynamicMapper._extract_value(payload, schema.get("longitude", "")))
+        speed = parse_float(DynamicMapper._extract_value(payload, schema.get("speed", ""))) or 0.0
+        
+        # Evento o Motivo (Siempre debe ser string, por defecto '1' para Reporte Periódico de Posición)
+        code_raw = DynamicMapper._extract_value(payload, schema.get("code", ""))
+        code = str(code_raw) if code_raw is not None else "1"
+        
+        # Fecha en UTC
+        date_val = parse_date(DynamicMapper._extract_value(payload, schema.get("date", "")))
+        
+        # Campos accesorios opcionales
+        altitude = parse_float(DynamicMapper._extract_value(payload, schema.get("altitude", "")))
+        battery = parse_float(DynamicMapper._extract_value(payload, schema.get("battery", "")))
+        course = parse_float(DynamicMapper._extract_value(payload, schema.get("course", "")))
+        humidity = parse_float(DynamicMapper._extract_value(payload, schema.get("humidity", "")))
+        odometer = parse_float(DynamicMapper._extract_value(payload, schema.get("odometer", "")))
+        temperature = parse_float(DynamicMapper._extract_value(payload, schema.get("temperature", "")))
+        
+        ignition_raw = DynamicMapper._extract_value(payload, schema.get("ignition", ""))
+        ignition = bool(ignition_raw) if ignition_raw is not None else None
+        
+        serial_num = DynamicMapper._extract_value(payload, schema.get("serial_number", ""))
+        if serial_num is None and original_imei != "UNKNOWN":
+            serial_num = original_imei
+            
+        shipment_num = DynamicMapper._extract_value(payload, schema.get("shipment", ""))
+        veh_type = DynamicMapper._extract_value(payload, schema.get("vehicle_type", ""))
+        veh_brand = DynamicMapper._extract_value(payload, schema.get("vehicle_brand", ""))
+        veh_model = DynamicMapper._extract_value(payload, schema.get("vehicle_model", ""))
+        
+        return RCCanonicalModel(
+            chassis_number=chassis_number,
+            latitude=latitude,
+            longitude=longitude,
+            speed=speed,
+            code=code,
+            date=date_val,
+            altitude=altitude,
+            battery=battery,
+            course=course,
+            humidity=humidity,
+            ignition=ignition,
+            odometer=odometer,
+            temperature=temperature,
+            serial_number=str(serial_num) if serial_num is not None else None,
+            shipment=str(shipment_num) if shipment_num is not None else None,
+            vehicle_type=str(veh_type) if veh_type is not None else None,
+            vehicle_brand=str(veh_brand) if veh_brand is not None else None,
+            vehicle_model=str(veh_model) if veh_model is not None else None
+        )

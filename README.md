@@ -33,6 +33,13 @@ El servidor incluye una interfaz web interactiva (Vanilla JS, CSS Premium, sin f
 - **Visor de Bases de Datos (DB Viewer):** Herramienta administrativa para consultar, sin salir de la web, la estructura y los datos en vivo de cualquier tabla en cualquiera de las bases de datos dinámicas (`.db`) del ecosistema.
 - **Simulador de Webhooks Blindado:** Herramienta interna para inyectar payloads de prueba, que desvía sus operaciones hacia un entorno `test_unit` para nunca corromper los datos reales del cliente en el visor.
 
+## 🔌 Integration Studio (iPaaS)
+La plataforma ha evolucionado para convertirse en un *Integration Platform as a Service*. Ahora es posible conectar nuevas empresas de rastreo GPS sin necesidad de programar líneas de código.
+
+- **API Inspector (Postman Integrado):** Herramienta embebida con modos PULL (para extraer datos vía GET/POST saltando restricciones de navegador) y PUSH (genera una URL temporal de webhook para atrapar datos enviados por el proveedor en tiempo real).
+- **Mapeador Visual (No-Code Mapper):** Una interfaz gráfica donde puedes vincular campos de un Payload JSON entrante (usando rutas `JSON Path` y soporte para fallbacks `||`) directamente hacia nuestro Modelo Canónico.
+- **Webhook Dinámico Universal:** Un único Endpoint maestro (`POST /webhook/dynamic/{proveedor}`) capaz de recibir cualquier estructura de datos del mundo y traducirla automáticamente basándose en las reglas dibujadas en el Studio. Todo con compatibilidad nativa para bases de datos **PostgreSQL**.
+
 ## 💻 Ejecución en Desarrollo (Local)
 1. Instalar dependencias:
    ```bash

@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Boolean, Date, Float
+from sqlalchemy import Column, Integer, String, Boolean, Date, Float, JSON
 from app.database import Base
 
 class ProviderConfig(Base):
@@ -12,7 +12,19 @@ class ProviderConfig(Base):
     rc_password = Column(String, default="")
     purge_interval_min = Column(Integer, default=15)
     run_interval_sec = Column(Integer, default=5)
-    queue_backend = Column(String, default="sqlite")
+    queue_backend = Column(String, default="sqlite") # sqlite, redis, postgres
+    mapping_schema = Column(JSON, default={})
+    fetch_config = Column(JSON, default={})        # Guarda URL, auth_type, user, pass para extraer telemetría
+    enrichment_config = Column(JSON, default={})   # Guarda URL y reglas para extraer el diccionario (IMEI -> Placa)
+
+class ProviderDictionary(Base):
+    """Almacena pares Key-Value del diccionario de metadatos (Ej. IMEI -> Placa)."""
+    __tablename__ = "provider_dictionary"
+    id = Column(Integer, primary_key=True, index=True)
+    provider_name = Column(String, index=True)
+    env = Column(String, index=True)
+    dict_key = Column(String, index=True)  # Ej. '512345678901234' (IMEI)
+    dict_value = Column(String)            # Ej. 'ABC1234' (Placa)
 
 class DailyStat(Base):
     """Modelo de base de datos para almacenar el histórico de eventos procesados por día calendario."""
@@ -31,4 +43,4 @@ class SystemSettings(Base):
     """Modelo para configuración global e infraestructura del Hub."""
     __tablename__ = "system_settings"
     id = Column(Integer, primary_key=True, index=True)
-    active_queue_backend = Column(String, default="sqlite") # 'sqlite' o 'redis'
+    active_queue_backend = Column(String, default="sqlite") # 'sqlite', 'redis' o 'postgres'

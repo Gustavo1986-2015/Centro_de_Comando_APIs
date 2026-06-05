@@ -246,6 +246,52 @@
             100% { color: var(--color-white); transform: scale(1); }
         }
 
+        /* --- JSON Tree Visual Mapper --- */
+        .json-tree {
+            font-family: 'Courier New', Courier, monospace;
+            font-size: 0.8rem;
+            color: #a5b4fc;
+            padding-left: 1rem;
+            list-style-type: none;
+            margin: 0;
+        }
+        .json-tree-container {
+            background-color: #0b0d14;
+            padding: 1rem 1rem 1rem 0;
+            border-radius: 6px;
+            border: 1px solid var(--card-border);
+            max-height: 400px;
+            overflow-y: auto;
+            margin-top: 0.5rem;
+        }
+        .json-node { margin: 0.2rem 0; }
+        .json-key { color: var(--color-green-vibrant); font-weight: bold; }
+        .json-value { color: var(--color-yellow); }
+        .json-clickable {
+            cursor: pointer;
+            padding: 0.1rem 0.3rem;
+            border-radius: 4px;
+            transition: background 0.2s;
+            display: inline-block;
+        }
+        .json-clickable:hover {
+            background: rgba(16, 185, 129, 0.2);
+            outline: 1px dashed var(--color-green-vibrant);
+        }
+        .mapper-input-active {
+            border: 2px solid var(--color-green-vibrant) !important;
+            box-shadow: 0 0 8px rgba(16, 185, 129, 0.4);
+            background: rgba(16, 185, 129, 0.05) !important;
+            transition: all 0.2s;
+        }
+        .mapper-flash {
+            animation: flash-green 0.5s ease-out;
+        }
+        @keyframes flash-green {
+            0% { background-color: var(--color-green-vibrant); color: black; transform: scale(1.02); }
+            100% { background-color: rgba(16, 185, 129, 0.05); color: white; transform: scale(1); }
+        }
+
         /* Sidebar Menu */
         .sidebar {
             position: fixed;
@@ -371,6 +417,231 @@
         input:checked + .slider { background-color: var(--color-green-vibrant); }
         input:checked + .slider:before { transform: translateX(26px); }
 
+    
+        /* ESTILOS IPAAS STUDIO */
+        
+
+        
+
+        
+
+        /* Navbar */
+        
+
+        .logo-area h1 {
+            font-size: 1.25rem;
+            font-weight: 700;
+            background: linear-gradient(135deg, #fff, #a5b4fc);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .nav-links a {
+            color: var(--text-muted);
+            text-decoration: none;
+            margin-left: 1.5rem;
+            font-weight: 500;
+            transition: color 0.2s;
+        }
+        .nav-links a:hover, .nav-links a.active {
+            color: var(--primary);
+        }
+
+        /* Layout Principal */
+        
+
+        .panel {
+            background-color: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 1.5rem;
+            display: flex;
+            flex-direction: column;
+            gap: 1rem;
+        }
+
+        .panel-title {
+            font-size: 1.1rem;
+            font-weight: 600;
+            border-bottom: 1px solid var(--border);
+            padding-bottom: 0.75rem;
+            margin-bottom: 0.5rem;
+        }
+
+        /* Controles de Formulario */
+        #view-integrations label {
+            font-size: 0.85rem;
+            color: var(--text-muted);
+            margin-bottom: 0.25rem;
+            display: block;
+        }
+
+        #view-integrations select, #view-integrations input[type="text"], #view-integrations input[type="password"] {
+            width: 100%;
+            padding: 0.6rem;
+            background-color: #0b0d14;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            color: var(--text-main);
+            font-family: inherit;
+            margin-bottom: 1rem;
+        }
+
+        #view-integrations select:focus, #view-integrations input[type="text"]:focus, #view-integrations input[type="password"]:focus {
+            outline: none;
+            border-color: var(--primary);
+        }
+
+        #view-integrations button {
+            background-color: var(--primary);
+            color: white;
+            border: none;
+            padding: 0.6rem 1.2rem;
+            border-radius: 6px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s;
+            font-family: inherit;
+        }
+
+        #view-integrations button:hover {
+            background-color: var(--primary-hover);
+        }
+
+        #view-integrations button.btn-secondary {
+            background-color: transparent;
+            border: 1px solid var(--border);
+        }
+
+        #view-integrations button.btn-secondary:hover {
+            background-color: rgba(255,255,255,0.05);
+        }
+
+        #view-integrations button.btn-success {
+            background-color: var(--success);
+        }
+        #view-integrations button.btn-success:hover {
+            background-color: #0d9668;
+        }
+
+        .mapping-row {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+            margin-bottom: 0.75rem;
+        }
+
+        .mapping-row .dest-field {
+            width: 140px;
+            font-weight: 500;
+            font-size: 0.9rem;
+            flex-shrink: 0;
+        }
+
+        .mapping-row .form-control {
+            flex: 1;
+            margin-bottom: 0;
+        }
+
+        /* Inspector Tabs */
+        .tabs {
+            display: flex;
+            gap: 0.5rem;
+            margin-bottom: 1rem;
+        }
+        .tab {
+            padding: 0.5rem 1rem;
+            background: transparent;
+            border: 1px solid var(--border);
+            color: var(--text-muted);
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.85rem;
+        }
+        .tab.active {
+            background: var(--primary);
+            color: white;
+            border-color: var(--primary);
+        }
+
+        .tab-content {
+            display: none;
+        }
+        .tab-content.active {
+            display: block;
+        }
+
+        /* JSON Display */
+        pre {
+            background-color: #0b0d14;
+            padding: 1rem;
+            border-radius: 6px;
+            border: 1px solid var(--border);
+            overflow-x: auto;
+            font-family: 'Courier New', Courier, monospace;
+            font-size: 0.85rem;
+            color: #a5b4fc;
+            max-height: 400px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+        }
+
+        .code-url {
+            background: rgba(74, 110, 224, 0.1);
+            color: #a5b4fc;
+            padding: 0.5rem;
+            border-radius: 4px;
+            font-size: 0.8rem;
+            word-break: break-all;
+            margin-bottom: 1rem;
+            border: 1px dashed var(--primary);
+        }
+
+        /* Editor de Mapeo */
+        .mapping-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 1.5rem;
+        }
+
+        .mapping-row {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+            margin-bottom: 0.75rem;
+        }
+
+        .mapping-row .dest-field {
+            width: 130px;
+            font-weight: 500;
+            font-size: 0.9rem;
+        }
+
+        .mapping-row input {
+            margin-bottom: 0;
+            flex: 1;
+        }
+
+        .hint {
+            font-size: 0.75rem;
+            color: var(--text-muted);
+            margin-top: 0.25rem;
+            display: block;
+        }
+
+        .status-badge {
+            display: inline-block;
+            padding: 0.25rem 0.5rem;
+            border-radius: 4px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            background: rgba(16, 185, 129, 0.1);
+            color: var(--success);
+            margin-left: 1rem;
+        }
+
+        .hidden { display: none !important; }
+    
     </style>
 </head>
 <body>
@@ -380,6 +651,7 @@
     <nav class="sidebar" id="sidebar">
         <ul>
             <li id="tab-dashboard" class="active-tab" onclick="switchView('dashboard')">Dashboard Principal</li>
+            <li id="tab-integrations" onclick="switchView('integrations')" style="color: #10B981; font-weight: bold;">⚡ Integration Studio (iPaaS)</li>
             <li id="tab-config" onclick="switchView('config')">Configuración Global</li>
             <li id="tab-simulator" onclick="switchView('simulator')">Simulador de Webhooks</li>
             <li id="tab-history" onclick="switchView('history')">Historial Diario</li>
@@ -453,12 +725,11 @@
                 <table>
                     <thead>
                         <tr>
-                            <th style="white-space: nowrap;">Proveedor</th>
-                            <th style="white-space: nowrap;">Activo / Patente</th>
-                             <th style="white-space: nowrap;" title="Estado actual del evento en el Hub de Assistcargo y fecha/hora del último cambio de estado">Estado & Actualización (UTC)</th>
-                             <th style="white-space: nowrap;">Localización</th>
-                             <th style="white-space: nowrap;">Sensores (Telemetría)</th>
-                             <th style="white-space: nowrap;" title="Tiempos detallados de procesamiento en el Hub de Assistcargo y envío a Recurso Confiable">Trazabilidad AC -> RC</th>
+                            <th style="min-width: 120px;">Proveedor</th>
+                            <th style="min-width: 160px;">Activo / Patente</th>
+                            <th>Ubicación</th>
+                            <th>Sensores Clave</th>
+                            <th style="min-width: 180px;">Trazabilidad AC -> RC</th>
                         </tr>
                     </thead>
                     <tbody id="recent-table-body">
@@ -635,6 +906,208 @@
         </div>
     </main>
 
+    <!-- VISTA IPAAS STUDIO -->
+    <main id="view-integrations" style="display: none; padding: 2rem; flex-direction: column; gap: 2rem; max-width: 98%; margin: 0 auto; width: 100%;">
+        <div style="display: grid; grid-template-columns: 350px 1fr; gap: 2rem; width: 100%;">
+
+            <!-- Columna Izquierda: Controles e Inspector -->
+            <div style="display: flex; flex-direction: column; gap: 2rem;">
+
+                <div class="panel">
+                    <div class="panel-title">1. Seleccionar Proveedor</div>
+                    <label>Proveedor (API Objetivo)</label>
+                    <div style="display:flex; gap:0.5rem;">
+                        <select id="providerSelect" style="flex:1;">
+                            <option value="">Cargando...</option>
+                        </select>
+                        <button onclick="createNewProvider()" class="btn-success" style="height: 38px; padding: 0 1rem; white-space: nowrap;">+ Nuevo</button>
+                    </div>
+                </div>
+
+                <div class="panel">
+                    <div class="panel-title">2. API Inspector (Postman)</div>
+                    <p style="font-size: 0.75rem; color: var(--color-gray); margin-bottom:1rem;">Atrapa un dato de prueba para facilitar el mapeo.</p>
+
+                    <div style="display: flex; gap: 0.5rem; margin-bottom: 1rem;">
+                        <button class="ipaas-tab active" onclick="switchInspectorTab('push')" id="itab-push" style="padding: 0.5rem 1rem; background: var(--color-green-vibrant); color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 0.85rem;">Push (Recibir)</button>
+                        <button class="ipaas-tab" onclick="switchInspectorTab('manual')" id="itab-manual" style="padding: 0.5rem 1rem; background: transparent; color: var(--color-gray); border: 1px solid var(--card-border); border-radius: 6px; cursor: pointer; font-size: 0.85rem;">Pegar JSON (Manual)</button>
+                    </div>
+
+                    <!-- Tab PUSH -->
+                    <div id="inspector-tab-push">
+                        <p style="font-size: 0.75rem; color: var(--color-gray);">Pídele al proveedor que envíe un JSON de prueba a esta URL temporal:</p>
+                        <div id="webhookUrl" style="background: rgba(74, 110, 224, 0.1); color: #a5b4fc; padding: 0.5rem; border-radius: 4px; font-size: 0.8rem; word-break: break-all; margin: 0.5rem 0 1rem 0; border: 1px dashed #4a6ee0;">Generando...</div>
+                        <button onclick="startListening()" id="btnListen" style="width:100%; background: transparent; border: 1px solid var(--card-border); color: var(--color-white); padding: 0.6rem; border-radius: 6px; cursor: pointer;">Comenzar a Escuchar (Polling)</button>
+                        <div id="listenStatus" style="margin-top:0.5rem; text-align:center; color: var(--color-yellow); font-size: 0.75rem;"></div>
+                    </div>
+
+                    <!-- Tab MANUAL -->
+                    <div id="inspector-tab-manual" style="display: none;">
+                        <p style="font-size: 0.75rem; color: var(--color-gray); margin-bottom: 0.5rem;">Copia el JSON de ejemplo desde la documentación o Postman y pégalo aquí:</p>
+                        <textarea id="manualJsonInput" class="form-control" rows="8" placeholder='{"position": {"latitude": -34.6037, "longitude": -58.3816}}' style="font-family: monospace; font-size: 0.8rem; background: rgba(0,0,0,0.3); border: 1px solid var(--card-border);"></textarea>
+                        <button onclick="loadManualJson()" style="width:100%; background: var(--color-green-vibrant); color: white; border: none; padding: 0.7rem; border-radius: 6px; cursor: pointer; font-weight: 700; font-size: 0.9rem; margin-top: 0.5rem;">🚀 Cargar JSON al Editor</button>
+                    </div>
+
+                    <div id="payloadResult" style="display:none; margin-top:1rem;">
+                        <label style="color: var(--color-white); font-size: 0.85rem; font-weight: 600;">Payload Cargado (Formato JSON):</label>
+                        <p style="font-size: 0.75rem; color: var(--color-yellow); margin-top:0.25rem;">💡 <b>Haz clic en un campo a la derecha</b>, y luego <b>haz clic en el valor aquí abajo</b> para mapearlo automáticamente.</p>
+                        <div id="jsonTreeContainer" class="json-tree-container"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Columna Derecha: Editor Visual de Mapeo -->
+            <div class="panel" style="flex: 1;">
+                <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--card-border); padding-bottom: 0.75rem; margin-bottom: 1.5rem;">
+                    <div style="font-size: 1.1rem; font-weight: 600;">3. Motor de Mapeo (Rutas JSON → SOAP RC)</div>
+                    <button onclick="saveMapping(event)" style="background: var(--color-green-vibrant); color: var(--color-black); border: none; padding: 0.6rem 1.2rem; border-radius: 6px; font-weight: 700; cursor: pointer; transition: all 0.3s;">💾 Guardar Reglas</button>
+                </div>
+
+                <p style="font-size: 0.75rem; color: var(--color-gray); margin-bottom:1.5rem;">Usa sintaxis de punto (ej. <code>position.latitude</code>). Usa <code>||</code> para alternativas (ej. <code>plate || chassis_number</code>). Los campos opcionales vacíos se envían como <code>null</code> o <code>0</code> a Recurso Confiable.</p>
+
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem;">
+                    <!-- Columna Izquierda: Campos Requeridos -->
+                    <div>
+                        <h4 style="margin-bottom: 1rem; color: var(--color-green-vibrant);">Campos Requeridos RC (SOAP)</h4>
+                        <div class="mapping-row"><div class="dest-field">Patente/Chasis</div><input type="text" id="map_chassis_number" placeholder="Ej: Plate" class="form-control"></div>
+                        <div class="mapping-row"><div class="dest-field">Latitud</div><input type="text" id="map_latitude" placeholder="Ej: StatusData.0.Position.Latitude" class="form-control"></div>
+                        <div class="mapping-row"><div class="dest-field">Longitud</div><input type="text" id="map_longitude" placeholder="Ej: StatusData.0.Position.Longitude" class="form-control"></div>
+                        <div class="mapping-row"><div class="dest-field">Velocidad (km/h)</div><input type="text" id="map_speed" placeholder="Ej: StatusData.0.EBS.Velocity" class="form-control"></div>
+                        <div class="mapping-row"><div class="dest-field">Fecha (UTC)</div><input type="text" id="map_date" placeholder="Ej: DeviceTime" class="form-control"></div>
+                        <div class="mapping-row"><div class="dest-field">Código Motivo</div><input type="text" id="map_code" placeholder="Ej: Reason.ItemElementName" class="form-control"></div>
+                    </div>
+
+                    <!-- Columna Derecha: Campos Opcionales -->
+                    <div>
+                        <h4 style="margin-bottom: 1rem; color: var(--color-gray);">Campos Opcionales (fallback → null/0)</h4>
+                        <div class="mapping-row"><div class="dest-field">Ignición (Motor)</div><input type="text" id="map_ignition" placeholder="Ej: SensorStatus.IsIgnitionOn" class="form-control"></div>
+                        <div class="mapping-row"><div class="dest-field">Temperatura (°C)</div><input type="text" id="map_temperature" placeholder="Ej: DoorTemp" class="form-control"></div>
+                        <div class="mapping-row"><div class="dest-field">Odómetro (km)</div><input type="text" id="map_odometer" placeholder="Ej: EBS.Milage" class="form-control"></div>
+                        <div class="mapping-row"><div class="dest-field">Batería (V)</div><input type="text" id="map_battery" placeholder="Ruta JSON..." class="form-control"></div>
+                        <div class="mapping-row"><div class="dest-field">Altitud (m)</div><input type="text" id="map_altitude" placeholder="Ruta JSON..." class="form-control"></div>
+                        <div class="mapping-row"><div class="dest-field">Rumbo / Course (°)</div><input type="text" id="map_course" placeholder="Ruta JSON..." class="form-control"></div>
+                        <div class="mapping-row"><div class="dest-field">Humedad (%)</div><input type="text" id="map_humidity" placeholder="Ruta JSON..." class="form-control"></div>
+                        <div class="mapping-row"><div class="dest-field">N° Serie GPS</div><input type="text" id="map_serial_number" placeholder="Ruta JSON..." class="form-control"></div>
+                        <div class="mapping-row"><div class="dest-field">ID Envío (Trip)</div><input type="text" id="map_shipment" placeholder="Ruta JSON..." class="form-control"></div>
+                        <div class="mapping-row"><div class="dest-field">Tipo Vehículo</div><input type="text" id="map_vehicle_type" placeholder="Ruta JSON..." class="form-control"></div>
+                        <div class="mapping-row"><div class="dest-field">Marca Vehículo</div><input type="text" id="map_vehicle_brand" placeholder="Ruta JSON..." class="form-control"></div>
+                        <div class="mapping-row"><div class="dest-field">Modelo Vehículo</div><input type="text" id="map_vehicle_model" placeholder="Ruta JSON..." class="form-control"></div>
+                    </div>
+                </div>
+
+                <div id="saveToast" style="display:none; margin-top: 1rem; text-align: center; padding: 0.5rem; border-radius: 6px; background: rgba(16, 185, 129, 0.15); color: var(--color-green-vibrant); font-weight: 600; font-size: 0.85rem;">¡Mapeo Guardado Exitosamente!</div>
+            </div>
+            
+            <!-- Panel Intermedio: Telemetría PULL -->
+            <div class="panel" style="flex: 1; margin-top: 2rem;">
+                <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--card-border); padding-bottom: 0.75rem; margin-bottom: 1.5rem;">
+                    <div style="font-size: 1.1rem; font-weight: 600;">3.5 Extracción Activa (PULL Telemetría)</div>
+                </div>
+                <p style="font-size: 0.8rem; color: var(--color-gray); margin-bottom: 1.5rem;">Configura esto SI EL PROVEEDOR NO ENVÍA DATOS POR WEBHOOK y debemos ir a buscarlos periódicamente (Ej. Protrack <code>/api/track</code>). Se ejecutará cada X segundos según la configuración global.</p>
+                
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem;">
+                    <div>
+                        <div class="form-group">
+                            <label class="form-label">URL de Extracción (Endpoint de Posiciones)</label>
+                            <input type="text" id="pullUrl" class="form-control" placeholder="Ej: http://api.protrack365.com/api/track">
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">Método HTTP</label>
+                            <select id="pullMethod" class="form-control">
+                                <option value="GET">GET</option>
+                                <option value="POST">POST</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div>
+                        <div class="form-group">
+                            <label class="form-label">Autenticación (API de Origen)</label>
+                            <select id="authType" class="form-control" onchange="document.getElementById('pullAuthFields').style.display = this.value === 'none' ? 'none' : 'block';">
+                                <option value="none">Sin Autenticación Pública</option>
+                                <option value="protrack">Protrack (Doble Paso: MD5 → Token)</option>
+                                <option value="md5_dynamic">Firma MD5 Dinámica Estándar</option>
+                                <option value="bearer">Bearer Token Fijo</option>
+                            </select>
+                        </div>
+                        <div class="form-group" id="pullAuthFields" style="display:none; padding: 10px; background: rgba(0,0,0,0.2); border-radius: 4px; border: 1px dashed var(--border);">
+                            <input type="text" id="pullAuthUser" class="form-control" placeholder="Cuenta / Usuario" style="margin-bottom:0.5rem;">
+                            <input type="password" id="pullAuthPass" class="form-control" placeholder="Contraseña" style="margin-bottom:0.5rem;">
+                            <input type="text" id="bearerTokenValue" class="form-control" placeholder="Token Bearer (si aplica)">
+                        </div>
+                        <div class="form-group" style="display:none;">
+                            <input type="hidden" id="pullHeaders" value="{}">
+                            <input type="hidden" id="pullBody" value="{}">
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Panel 4: Diccionario de Metadatos -->
+            <div class="panel" style="flex: 1; margin-top: 2rem;">
+                <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--card-border); padding-bottom: 0.75rem; margin-bottom: 1.5rem;">
+                    <div style="font-size: 1.1rem; font-weight: 600;">4. Enriquecimiento de Datos (Diccionario IMEI → Placa)</div>
+                    <label class="switch" style="display:flex; align-items:center; gap:10px; cursor:pointer;">
+                        <input type="checkbox" id="enableEnrichment" onchange="toggleEnrichment()" style="width:18px; height:18px; accent-color: var(--color-green-vibrant);">
+                        <span style="font-weight:600; color:var(--color-gray);">Activar Diccionario</span>
+                    </label>
+                </div>
+                
+                <div id="enrichmentPanel" style="display: none;">
+                    <p style="font-size: 0.8rem; color: var(--color-gray); margin-bottom: 1.5rem;">Esta sección permite realizar un PULL automático (ej. 1 vez al día) a un endpoint de metadatos (como <code>/api/device/list</code>) para construir una caché local de IMEI a Patente/Placa. Luego, durante la telemetría, el Motor buscará el IMEI e inyectará la Placa al vuelo.</p>
+                    
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem;">
+                        <!-- Conf Conexión -->
+                        <div>
+                            <div class="form-group">
+                                <label class="form-label">URL de Sincronización de Metadatos</label>
+                                <input type="text" id="dictUrl" class="form-control" placeholder="Ej: http://api.protrack365.com/api/device/list">
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">Método HTTP</label>
+                                <select id="dictMethod" class="form-control">
+                                    <option value="GET">GET</option>
+                                    <option value="POST">POST</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">Autenticación (API de Origen)</label>
+                                <select id="dictAuthType" class="form-control" onchange="document.getElementById('dictAuthFields').style.display = this.value === 'none' ? 'none' : 'block';">
+                                    <option value="none">Sin Autenticación Pública</option>
+                                    <option value="protrack">Protrack (Doble Paso: MD5 → Token)</option>
+                                    <option value="md5_dynamic">Firma MD5 Dinámica Estándar</option>
+                                </select>
+                            </div>
+                            <div class="form-group" id="dictAuthFields" style="display:none; padding: 10px; background: rgba(0,0,0,0.2); border-radius: 4px; border: 1px dashed var(--border);">
+                                <input type="text" id="dictAuthUser" class="form-control" placeholder="Cuenta / Usuario" style="margin-bottom:0.5rem;">
+                                <input type="password" id="dictAuthPass" class="form-control" placeholder="Contraseña">
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">Frecuencia de Sincronización (Horas)</label>
+                                <input type="number" id="dictFrequency" class="form-control" placeholder="Ej: 24 (1 vez al día)" value="24">
+                            </div>
+                        </div>
+                        
+                        <!-- Conf Mapeo del Diccionario -->
+                        <div>
+                            <div class="form-group">
+                                <label class="form-label">JSON Path de la LLAVE (Ej. IMEI)</label>
+                                <input type="text" id="dictKeyPath" class="form-control" placeholder="Ej: record.0.imei">
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">JSON Path del VALOR (Ej. Placa)</label>
+                                <input type="text" id="dictValuePath" class="form-control" placeholder="Ej: record.0.platenumber">
+                            </div>
+                            <div style="margin-top: 1.5rem; text-align: right;">
+                                <button onclick="saveEnrichment(event)" style="background: var(--color-green-vibrant); color: var(--color-black); border: none; padding: 0.6rem 1.2rem; border-radius: 6px; font-weight: 700; cursor: pointer; transition: all 0.3s;">💾 Guardar Diccionario</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+        </div>
+    </main>
+
     <footer style="text-align: center; padding: 1.5rem; border-top: 1px solid var(--card-border); color: var(--color-gray); font-size: 0.85rem; font-weight: 300;">
         Desarrollado por Area de Integraciones GPS Assistcargo | Gustavo Gómez & Roberto Herrera &reg;
     </footer>
@@ -797,6 +1270,9 @@
             document.getElementById('view-history').style.display = view === 'history' ? 'flex' : 'none';
             document.getElementById('view-db-viewer').style.display = view === 'db-viewer' ? 'flex' : 'none';
             document.getElementById('view-monitor').style.display = view === 'monitor' ? 'flex' : 'none';
+            if(document.getElementById('view-integrations')) {
+                document.getElementById('view-integrations').style.display = view === 'integrations' ? 'flex' : 'none';
+            }
             
             document.getElementById('tab-dashboard').classList.toggle('active-tab', view === 'dashboard');
             document.getElementById('tab-config').classList.toggle('active-tab', view === 'config');
@@ -804,6 +1280,9 @@
             document.getElementById('tab-history').classList.toggle('active-tab', view === 'history');
             document.getElementById('tab-db-viewer').classList.toggle('active-tab', view === 'db-viewer');
             document.getElementById('tab-monitor').classList.toggle('active-tab', view === 'monitor');
+            if(document.getElementById('tab-integrations')) {
+                document.getElementById('tab-integrations').classList.toggle('active-tab', view === 'integrations');
+            }
             
             toggleMenu(); // Cierra el menú al elegir
  
@@ -819,6 +1298,8 @@
                 loadDatabases();
             } else if (view === 'monitor') {
                 loadMonitor();
+            } else if (view === 'integrations') {
+                loadIntegrationStudio();
             } else {
                 fetchStats();
                 statsInterval = setInterval(fetchStats, 2000);
@@ -926,12 +1407,13 @@
                 // Populate provider dropdown dynamically
                 const dropdown = document.getElementById('filter-provider');
                 const existingOptions = Array.from(dropdown.options).map(o => o.value);
-                const uniqueProviders = [...new Set(data.recent.map(e => e.provider.toLowerCase()))];
+                const uniqueProviders = data.all_providers || [...new Set(data.recent.map(e => e.provider.toLowerCase()))];
                 uniqueProviders.forEach(p => {
-                    if (!existingOptions.includes(p)) {
+                    const pLower = p.toLowerCase();
+                    if (!existingOptions.includes(pLower)) {
                         const opt = document.createElement('option');
-                        opt.value = p;
-                        opt.innerText = p.toUpperCase();
+                        opt.value = pLower;
+                        opt.innerText = pLower.toUpperCase();
                         opt.style.color = "black";
                         opt.style.background = "white";
                         dropdown.appendChild(opt);
@@ -993,7 +1475,7 @@
             document.getElementById('current-filter-label').innerText = labelText;
 
             if (filtered.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="6" style="text-align:center; color: var(--color-gray)">No hay eventos con estos filtros.</td></tr>';
+                tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; color: var(--color-gray)">No hay eventos con estos filtros.</td></tr>';
                 return;
             }
 
@@ -1021,12 +1503,11 @@
                 if (ev.transmission_latency_sec !== null && ev.transmission_latency_sec !== undefined) {
                     let transSec = ev.transmission_latency_sec;
                     let displayTime = transSec >= 60 ? `${Math.floor(transSec / 60)}m ${Math.round(transSec % 60)}s` : `${transSec.toFixed(1)}s`;
-                    transmissionHtml = `<div>Latencia Transmisión: <span style="color:var(--color-yellow); font-weight:bold;" title="Tiempo transcurrido entre el reporte del equipo GPS en el camión y la recepción del dato en Assistcargo (del AVL a nosotros)">${displayTime}</span></div>`;
+                    transmissionHtml = `<span style="background:rgba(251,191,36,0.1); color:var(--color-yellow); border:1px solid rgba(251,191,36,0.3); padding:2px 5px; border-radius:4px; font-size:0.7rem; margin-left:5px;" title="Tiempo de viaje desde el dispositivo hasta el Hub">📡 ${displayTime}</span>`;
                 }
 
                 let locHtml = `<div style="font-size:0.8rem; color:var(--color-gray); line-height: 1.4;">`;
                 locHtml += `<div>Fecha GPS: <span style="color:var(--color-white); font-weight:bold;">${ev.device_date}</span></div>`;
-                locHtml += transmissionHtml;
                 locHtml += `<div>Coords: <span style="color:var(--color-white)">${ev.coords}</span></div>`;
                 locHtml += `<div>Dir: <span style="color:var(--color-white)">${ev.course !== null ? ev.course + '°' : 'N/A'}</span> | Alt: <span style="color:var(--color-white)">${ev.altitude !== null ? ev.altitude + 'm' : 'N/A'}</span></div>`;
                 locHtml += `</div>`;
@@ -1038,7 +1519,16 @@
                 sensorHtml += `<div>Odom: <span style="color:var(--color-white)">${ev.odometer !== null ? ev.odometer : 'N/A'}</span> | Código EV: <span style="color:var(--color-yellow)">${ev.code}</span></div>`;
                 sensorHtml += `</div>`;
 
+                const fallbackTime = ev.time_received || ev.device_date || "time";
                 let rcHtml = `<div style="font-size:0.8rem; color:var(--color-gray); line-height: 1.4;">`;
+                
+                // Status Inlined
+                let statusHtml = `<span class="badge ${statusClass}" style="${badgeStyle}">${statusText.toUpperCase()}</span>`;
+                if (ev.status === 'pending' && ev.retry_count && ev.retry_count > 0 && ev.next_retry_in_sec !== undefined) {
+                    statusHtml += `<br><span style="font-size:0.7rem; color:var(--color-yellow); display:inline-block; margin-top:2px;">⏳ Retrying in ${ev.next_retry_in_sec}s</span>`;
+                }
+                rcHtml += `<div style="margin-bottom: 4px;">${statusHtml}</div>`;
+
                 let jobStyle = 'color:var(--color-white)';
                 if (ev.status === 'sent') {
                     jobStyle = 'color:var(--color-green-bright); font-weight:bold;';
@@ -1046,21 +1536,22 @@
                     jobStyle = 'color:var(--color-red); font-weight:bold;';
                 }
                 rcHtml += `<div>Job ID: <span style="${jobStyle}">${ev.job_id || 'N/A'}</span></div>`;
-                rcHtml += `<div>Recepcionado Assistcargo: <span style="color:var(--color-white)">${ev.time_received || 'N/A'}</span></div>`;
+                rcHtml += `<div>Recibido AC: <span style="color:var(--color-white)">${ev.time_received || 'N/A'}</span>${transmissionHtml}</div>`;
                 
                 let internalLatencyHtml = '';
+                let displayLat = '';
                 if (ev.status === 'sent' && ev.latency_sec !== null && ev.latency_sec !== undefined) {
                     let lat = ev.latency_sec;
-                    let displayLat = lat >= 60 ? `${Math.floor(lat / 60)}m ${Math.round(lat % 60)}s` : `${lat.toFixed(2)}s`;
-                    internalLatencyHtml = ` <span style="color:var(--color-green-bright); font-size:0.75rem; font-weight:bold;" title="Tiempo total de procesamiento y espera en cola en el Hub de Assistcargo (Hub AC)">(Hub AC: ${displayLat})</span>`;
+                    displayLat = lat >= 60 ? `${Math.floor(lat / 60)}m ${Math.round(lat % 60)}s` : `${lat.toFixed(3)}s`;
+                    internalLatencyHtml = ` <span style="color:var(--color-green-bright); font-size:0.75rem; font-weight:bold;">(Hub: ${displayLat})</span>`;
                 }
-                rcHtml += `<div>Enviado a RC: <span style="color:var(--color-white)">${ev.time_sent || 'N/A'}</span>${internalLatencyHtml}</div>`;
+                rcHtml += `<div>Enviado RC: <span style="color:var(--color-white)">${ev.time_sent || 'N/A'}</span>${internalLatencyHtml}</div>`;
                 
                 let latencyBadge = '';
                 if (ev.rc_latency_sec !== null && ev.rc_latency_sec !== undefined) {
                     let rcLat = ev.rc_latency_sec;
                     let c = rcLat <= 2 ? 'var(--color-green-bright)' : (rcLat <= 9 ? 'var(--color-orange)' : 'var(--color-red)');
-                    latencyBadge = `<span style="font-size: 0.7rem; background: ${c}; color: var(--color-black); font-weight: bold; padding: 2px 4px; border-radius: 4px; margin-left: 5px;" title="Tiempo de respuesta (latencia de red SOAP) de Recurso Confiable">${rcLat.toFixed(2)}s</span>`;
+                    latencyBadge = `<span style="font-size: 0.7rem; background: ${c}; color: var(--color-black); font-weight: bold; padding: 2px 4px; border-radius: 4px; margin-left: 5px;" title="Tiempo de respuesta (latencia de red SOAP) de Recurso Confiable">${rcLat.toFixed(3)}s</span>`;
                 }
                 
                 let rcStatusHtml = '';
@@ -1071,45 +1562,57 @@
                 } else {
                     rcStatusHtml = `<span class="badge ${statusClass}" style="${badgeStyle}">${statusText}</span>`;
                 }
-                rcHtml += `<div>Recepcionado RC: ${rcStatusHtml}${latencyBadge}</div>`;
-                if (ev.status === 'pending' && ev.retry_count && ev.retry_count > 0 && ev.next_retry_in_sec !== undefined) {
-                    rcHtml += `<div style="font-size:0.7rem; color:var(--color-yellow); margin-top:2px; cursor:help;" title="Intervalos de reintentos programados:&#10;• 1° reintento: 10 segundos&#10;• 2° reintento: 45 segundos&#10;• 3° reintento: 120 segundos&#10;• 4° reintento: 300 segundos">⏳ Siguiente reintento en: ${ev.next_retry_in_sec}s</div>`;
-                }
+                rcHtml += `<div>RC Confirma: ${rcStatusHtml}${latencyBadge}</div>`;
                 
-                const jsonPayload = encodeURIComponent(JSON.stringify(ev.rc_format, null, 2));
-                // Para ev.time, usamos ev.time_received si ev.time no existe (ya que se cambió a time_received en el backend)
-                const fallbackTime = ev.time_received || ev.device_date || "time";
+                let rcFormatFinal = ev.rc_format || {};
+                if (ev.job_id && typeof rcFormatFinal === 'object') {
+                    rcFormatFinal = { ...rcFormatFinal, _rc_assigned_job_id: ev.job_id };
+                }
+                const jsonPayload = encodeURIComponent(JSON.stringify(rcFormatFinal, null, 2));
                 const safeTime = fallbackTime.replace(/[: ()]/g, '');
-                const uniqueId = `${ev.chassis}_${safeTime}`;
-                const isExpanded = expandedRows.has(uniqueId);
+                
+                // Texto plano para copiar
+                const plainTransmission = transmissionHtml ? `(Demora Transmisión: ${ev.transmission_latency_sec.toFixed(1)}s)` : '';
+                const plainText = `Job ID: ${ev.job_id || 'N/A'}
+Recibido AC: ${ev.time_received || 'N/A'} ${plainTransmission}
+Enviado RC: ${ev.time_sent || 'N/A'} (Hub: ${displayLat || '0.000s'})
+RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency_sec.toFixed(3) + 's' : '0.000s'}`;
+                const plainTextEncoded = encodeURIComponent(plainText);
                 
                 rcHtml += `<div style="margin-top: 8px; display: flex; gap: 5px; flex-wrap: wrap;">`;
-                rcHtml += `<button onclick="toggleRaw(this, '${uniqueId}')" style="background:rgba(255,255,255,0.1); border:1px solid var(--color-gray); color:var(--color-white); border-radius:4px; font-size:0.7rem; cursor:pointer; padding:2px 5px;" title="Ver Payload enviado a RC">${isExpanded ? '👁️ Ocultar JSON' : '👁️ Ver JSON'}</button>`;
-                rcHtml += `<a href="data:text/json;charset=utf-8,${jsonPayload}" download="evento_RC_${ev.chassis}_${safeTime}.json" style="color: var(--color-green-bright); text-decoration: none; font-size: 0.7rem; border: 1px solid var(--color-green-bright); padding: 2px 6px; border-radius: 4px; display: inline-block; transition: all 0.2s;" title="Descargar Payload formato RC">📥 Bajar JSON</a>`;
+                rcHtml += `<button onclick='viewRawJson(${JSON.stringify(rcFormatFinal).replace(/'/g, "&#39;")}, "Payload Procesado (Hacia SOAP RC)")' style="background: #047857; color: white; border: none; padding: 2px 6px; border-radius: 4px; font-size: 0.7em; cursor: pointer;">
+                                🚀 JSON RC
+                            </button>`;
+                rcHtml += `<a href="data:text/json;charset=utf-8,${jsonPayload}" download="evento_RC_${ev.chassis}_${safeTime}.json" style="color: var(--color-green-bright); text-decoration: none; font-size: 0.7rem; border: 1px solid var(--color-green-bright); padding: 2px 6px; border-radius: 4px; display: inline-block;">📥 Bajar</a>`;
+                rcHtml += `<button onclick="navigator.clipboard.writeText(decodeURIComponent('${plainTextEncoded}')); this.innerText='✅ Copiado!'; setTimeout(()=>this.innerText='📋 Copiar Info', 2000)" style="background: #2563EB; color: white; border: none; padding: 2px 6px; border-radius: 4px; font-size: 0.7em; cursor: pointer;" title="Copiar bloque de Trazabilidad">📋 Copiar Info</button>`;
                 
                 if (ev.status === 'failed' && ev.rc_response) {
                     let errStr = String(ev.rc_response).replace(/'/g, "\\'").replace(/"/g, '&quot;').replace(/\n/g, ' ');
-                    rcHtml += `<button style="background-color: rgba(239, 68, 68, 0.2); border: 1px solid #EF4444; padding: 2px 5px; color: #EF4444; font-size: 0.7rem; border-radius:4px; cursor:pointer;" onclick="alert('Error RC:\\n${errStr}')" title="Ver Error de Recurso Confiable">⚠️ Ver Error</button>`;
+                    rcHtml += `<button style="background-color: rgba(239, 68, 68, 0.2); border: 1px solid #EF4444; padding: 2px 5px; color: #EF4444; font-size: 0.7rem; border-radius:4px; cursor:pointer;" onclick="alert('Error RC:\\n${errStr}')">⚠️ Error</button>`;
                 }
                 rcHtml += `</div>`;
-                rcHtml += `<div class="raw-data-row" style="display:${isExpanded ? 'block' : 'none'}; margin-top:5px;">${rawHtml}</div>`;
                 rcHtml += `</div>`;
                 
-                let statusHtml = `<span class="badge ${statusClass}" style="${badgeStyle}">${statusText.toUpperCase()}</span>`;
-                if (ev.status === 'pending' && ev.retry_count && ev.retry_count > 0 && ev.next_retry_in_sec !== undefined) {
-                    statusHtml += `<br><span style="font-size:0.7rem; color:var(--color-yellow); display:inline-block; margin-top:2px; cursor:help;" title="Intervalos de reintentos programados:&#10;• 1° reintento: 10 segundos&#10;• 2° reintento: 45 segundos&#10;• 3° reintento: 120 segundos&#10;• 4° reintento: 300 segundos">⏳ Siguiente reintento en: ${ev.next_retry_in_sec}s</span>`;
-                }
-                statusHtml += `<br><span style="font-size:0.75rem; color:var(--color-gray); display:inline-block; margin-top:4px;">${fallbackTime}</span>`;
-                
+                let chassisHtml = `
+                    <div style="display: flex; flex-direction: column; align-items: flex-start;">
+                        <span style="color:var(--color-yellow); font-weight:bold;">${ev.chassis || 'N/A'}</span>
+                        ${ev.serial && ev.serial !== ev.chassis ? `<span style="color:var(--color-gray); font-size: 0.8rem;">IMEI: ${ev.serial}</span>` : ''}
+                        <span style="color:var(--color-gray); font-size: 0.75rem; margin-top: 2px;">Dato Original: <span style="color:var(--color-white)">${ev.device_date || 'N/A'}</span></span>
+                        <div style="margin-top: 4px;">
+                            <button onclick='viewRawJson(${JSON.stringify(ev.raw_data || "{}").replace(/'/g, "&#39;")}, "Payload Original (Crudo del Proveedor)")' style="background: #374151; color: white; border: none; padding: 2px 6px; border-radius: 4px; font-size: 0.7em; cursor: pointer;" title="Ver payload JSON original sin procesar">
+                                📄 JSON Origen
+                            </button>
+                        </div>
+                    </div>`;
+
                 tr.innerHTML = `
                     <td>
                         <span style="font-weight:bold; color:var(--color-white)">${ev.provider.toUpperCase()}</span><br>
                         <span class="badge ${badgeClass}" style="margin-top:5px">${ev.env.toUpperCase()}</span>
                     </td>
                     <td>
-                        <span style="color:var(--color-yellow); font-weight:bold;">${ev.chassis}</span>
+                        ${chassisHtml}
                     </td>
-                    <td style="white-space: nowrap;">${statusHtml}</td>
                     <td>${locHtml}</td>
                     <td>${sensorHtml}</td>
                     <td>${rcHtml}</td>
@@ -1119,19 +1622,6 @@
         }
         
         // UI Helpers
-        function toggleRaw(btn, uniqueId) {
-            const row = btn.parentElement.nextElementSibling;
-            if(row.style.display === 'none') {
-                row.style.display = 'block';
-                btn.innerText = '👁️ Ocultar JSON';
-                expandedRows.add(uniqueId);
-            } else {
-                row.style.display = 'none';
-                btn.innerText = '👁️ Ver JSON';
-                expandedRows.delete(uniqueId);
-            }
-        }
-
         // Configuración
         async function loadConfig() {
             try {
@@ -1174,6 +1664,7 @@
                             <td>
                                 <select id="queue_${c._originalIdx}" class="form-control" style="width: 100px; background-color: var(--color-black); cursor: pointer;">
                                     <option value="sqlite" ${c.queue_backend === 'sqlite' ? 'selected' : ''}>SQLite</option>
+                                    <option value="postgres" ${c.queue_backend === 'postgres' ? 'selected' : ''}>PostgreSQL</option>
                                     <option value="redis" ${c.queue_backend === 'redis' ? 'selected' : ''}>Redis</option>
                                 </select>
                             </td>
@@ -1431,6 +1922,460 @@
         // Inicio
         fetchStats();
         statsInterval = setInterval(fetchStats, 2000);
+
+
+        const API_BASE = "/api/config";
+        let ipaasProviders = [];
+        let currentIpaasProvider = null;
+        let sessionUuid = crypto.randomUUID();
+        let pollingInterval = null;
+
+        function loadIntegrationStudio() {
+            document.getElementById('webhookUrl').innerText = window.location.origin + "/inspector/catch/" + sessionUuid;
+            loadProviders();
+        }
+
+        async function loadProviders() {
+            try {
+                const res = await fetch(API_BASE + '/providers');
+                ipaasProviders = await res.json();
+                const select = document.getElementById('providerSelect');
+                select.innerHTML = '<option value="">-- Selecciona un Proveedor --</option>';
+                ipaasProviders.forEach(p => {
+                    select.innerHTML += `<option value="${p.provider_name}|${p.env}">${p.provider_name.toUpperCase()} (${p.env})</option>`;
+                });
+                select.onchange = function() {
+                    const val = this.value;
+                    if(val) {
+                        const [name, env] = val.split('|');
+                        currentIpaasProvider = {name, env};
+                        loadMapping(name, env);
+                        if(typeof loadEnrichment === 'function') loadEnrichment(name, env);
+                    } else {
+                        currentIpaasProvider = null;
+                    }
+                };
+            } catch (e) {
+                console.error("Error loading providers", e);
+            }
+        }
+
+        async function loadMapping(name, env) {
+            try {
+                const res = await fetch(`${API_BASE}/${name}/${env}/mapping`);
+                const data = await res.json();
+                document.querySelectorAll('#view-integrations .mapping-row input').forEach(inp => inp.value = '');
+                
+                const mapping = data.mapping || data;
+                for(const key in mapping) {
+                    const inp = document.getElementById('map_' + key);
+                    if(inp) inp.value = mapping[key];
+                }
+                
+                if (data.fetch) {
+                    const f = data.fetch;
+                    if(f.url) document.getElementById('pullUrl').value = f.url;
+                    if(f.method) document.getElementById('pullMethod').value = f.method;
+                    if(f.auth_type) {
+                        document.getElementById('authType').value = f.auth_type;
+                        document.getElementById('pullAuthFields').style.display = f.auth_type === 'none' ? 'none' : 'block';
+                    }
+                    if(f.auth_user) document.getElementById('pullAuthUser').value = f.auth_user;
+                    if(f.auth_pass) document.getElementById('pullAuthPass').value = f.auth_pass;
+                    if(f.bearer_token) {
+                        const bt = document.getElementById('bearerTokenValue');
+                        if(bt) bt.value = f.bearer_token;
+                    }
+                }
+            } catch (e) {
+                console.error("Error loading mapping", e);
+            }
+        }
+
+        async function saveMapping(event) {
+            if(!currentIpaasProvider) {
+                alert("Selecciona un proveedor primero.");
+                return;
+            }
+
+            let btn = null;
+            let originalText = "💾 Guardar Reglas";
+            if (event && event.target) {
+                btn = event.target;
+                originalText = btn.innerText;
+                btn.innerText = "⏳ Guardando...";
+                btn.style.opacity = "0.7";
+            }
+
+            const mappingData = {};
+            document.querySelectorAll('#view-integrations .mapping-row input').forEach(inp => {
+                const key = inp.id.replace('map_', '');
+                if(inp.value.trim() !== '') {
+                    mappingData[key] = inp.value.trim();
+                }
+            });
+            
+            const elUrl = document.getElementById('pullUrl');
+            const elMethod = document.getElementById('pullMethod');
+            const elAuthType = document.getElementById('authType');
+            const elUser = document.getElementById('pullAuthUser');
+            const elPass = document.getElementById('pullAuthPass');
+            const elBearer = document.getElementById('bearerTokenValue');
+            const elHeaders = document.getElementById('pullHeaders');
+            const elBody = document.getElementById('pullBody');
+
+            const fetchData = {
+                url: elUrl ? elUrl.value.trim() : "",
+                method: elMethod ? elMethod.value : "GET",
+                auth_type: elAuthType ? elAuthType.value : "none",
+                auth_user: elUser ? elUser.value.trim() : "",
+                auth_pass: elPass ? elPass.value.trim() : "",
+                bearer_token: elBearer ? elBearer.value.trim() : "",
+                headers: elHeaders ? elHeaders.value.trim() : "",
+                body: elBody ? elBody.value.trim() : ""
+            };
+            
+            const payload = {
+                mapping: mappingData,
+                fetch: fetchData
+            };
+            
+            try {
+                const res = await fetch(`${API_BASE}/${currentIpaasProvider.name}/${currentIpaasProvider.env}/mapping`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(payload)
+                });
+                const data = await res.json();
+                if(data.status === 'success') {
+                    if (btn) {
+                        btn.innerText = "✅ Guardado!";
+                        btn.style.opacity = "1";
+                        btn.style.background = "#10B981"; // Un verde un poco mas oscuro
+                        setTimeout(() => {
+                            btn.innerText = originalText;
+                            btn.style.background = "var(--color-green-vibrant)";
+                        }, 2500);
+                    }
+                } else {
+                    if(btn) { btn.innerText = originalText; btn.style.opacity = "1"; }
+                    alert("Error al guardar: " + data.message);
+                }
+            } catch(e) {
+                if(btn) { btn.innerText = originalText; btn.style.opacity = "1"; }
+                alert("Error de red al guardar las reglas.");
+            }
+        }
+
+        // --- Logica de Diccionarios (Enriquecimiento) ---
+        function toggleEnrichment() {
+            const isEnabled = document.getElementById('enableEnrichment').checked;
+            document.getElementById('enrichmentPanel').style.display = isEnabled ? 'block' : 'none';
+        }
+        
+        async function loadEnrichment(name, env) {
+            try {
+                const res = await fetch(`${API_BASE}/${name}/${env}/enrichment`);
+                const data = await res.json();
+                
+                if (data && data.url) {
+                    document.getElementById('enableEnrichment').checked = data.enabled || false;
+                    toggleEnrichment();
+                    document.getElementById('dictUrl').value = data.url || "";
+                    document.getElementById('dictMethod').value = data.method || "GET";
+                    document.getElementById('dictFrequency').value = data.frequency || 24;
+                    document.getElementById('dictKeyPath').value = data.key_path || "";
+                    document.getElementById('dictValuePath').value = data.value_path || "";
+                    document.getElementById('dictAuthType').value = data.auth_type || "none";
+                    document.getElementById('dictAuthUser').value = data.auth_user || "";
+                    document.getElementById('dictAuthPass').value = data.auth_pass || "";
+                    document.getElementById('dictAuthFields').style.display = (data.auth_type && data.auth_type !== 'none') ? 'block' : 'none';
+                } else {
+                    document.getElementById('enableEnrichment').checked = false;
+                    toggleEnrichment();
+                    document.getElementById('dictUrl').value = "";
+                    document.getElementById('dictKeyPath').value = "";
+                    document.getElementById('dictValuePath').value = "";
+                    document.getElementById('dictAuthType').value = "none";
+                    document.getElementById('dictAuthUser').value = "";
+                    document.getElementById('dictAuthPass').value = "";
+                    document.getElementById('dictAuthFields').style.display = 'none';
+                }
+            } catch (e) {
+                console.error("Error loading enrichment", e);
+            }
+        }
+        
+        async function saveEnrichment(event) {
+            if(!currentIpaasProvider) {
+                alert("Selecciona un proveedor primero.");
+                return;
+            }
+            
+            let btn = null;
+            let originalText = "💾 Guardar Diccionario";
+            if (event && event.target) {
+                btn = event.target;
+                originalText = btn.innerText;
+                btn.innerText = "⏳ Guardando...";
+                btn.style.opacity = "0.7";
+            }
+            
+            const payload = {
+                enabled: document.getElementById('enableEnrichment').checked,
+                url: document.getElementById('dictUrl').value.trim(),
+                method: document.getElementById('dictMethod').value,
+                frequency: parseInt(document.getElementById('dictFrequency').value) || 24,
+                key_path: document.getElementById('dictKeyPath').value.trim(),
+                value_path: document.getElementById('dictValuePath').value.trim(),
+                auth_type: document.getElementById('dictAuthType').value,
+                auth_user: document.getElementById('dictAuthUser').value.trim(),
+                auth_pass: document.getElementById('dictAuthPass').value.trim()
+            };
+            
+            try {
+                const res = await fetch(`${API_BASE}/${currentIpaasProvider.name}/${currentIpaasProvider.env}/enrichment`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(payload)
+                });
+                const data = await res.json();
+                if(data.status === 'success') {
+                    if (btn) {
+                        btn.innerText = "✅ Guardado!";
+                        btn.style.opacity = "1";
+                        btn.style.background = "#10B981";
+                        setTimeout(() => {
+                            btn.innerText = originalText;
+                            btn.style.background = "var(--color-green-vibrant)";
+                        }, 2500);
+                    }
+                } else {
+                    if(btn) { btn.innerText = originalText; btn.style.opacity = "1"; }
+                    alert("Error al guardar: " + data.message);
+                }
+            } catch(e) {
+                if(btn) { btn.innerText = originalText; btn.style.opacity = "1"; }
+                alert("Error de red.");
+            }
+        }
+
+        function switchInspectorTab(tabId) {
+            document.getElementById('inspector-tab-push').style.display = tabId === 'push' ? 'block' : 'none';
+            document.getElementById('inspector-tab-manual').style.display = tabId === 'manual' ? 'block' : 'none';
+            document.getElementById('itab-push').style.background = tabId === 'push' ? 'var(--color-green-vibrant)' : 'transparent';
+            document.getElementById('itab-push').style.color = tabId === 'push' ? 'white' : 'var(--color-gray)';
+            document.getElementById('itab-push').style.border = tabId === 'push' ? 'none' : '1px solid var(--card-border)';
+            document.getElementById('itab-manual').style.background = tabId === 'manual' ? 'var(--color-green-vibrant)' : 'transparent';
+            document.getElementById('itab-manual').style.color = tabId === 'manual' ? 'white' : 'var(--color-gray)';
+            document.getElementById('itab-manual').style.border = tabId === 'manual' ? 'none' : '1px solid var(--card-border)';
+        }
+
+        function startListening() {
+            const btn = document.getElementById('btnListen');
+            const status = document.getElementById('listenStatus');
+            if(pollingInterval) {
+                clearInterval(pollingInterval);
+                pollingInterval = null;
+                btn.innerText = "Comenzar a Escuchar (Polling)";
+                status.innerText = "";
+                return;
+            }
+            btn.innerText = "⏹ Detener Escucha";
+            status.innerText = "Esperando petición POST en la URL temporal...";
+            pollingInterval = setInterval(async () => {
+                try {
+                    const res = await fetch(`/inspector/catch/${sessionUuid}/latest`);
+                    const data = await res.json();
+                    if(data.has_data) {
+                        showPayload(data.data.payload);
+                        clearInterval(pollingInterval);
+                        pollingInterval = null;
+                        btn.innerText = "Comenzar a Escuchar (Polling)";
+                        status.innerText = "¡Payload Recibido Exitosamente!";
+                        status.style.color = "var(--color-green-vibrant)";
+                    }
+                } catch(e) {}
+            }, 2000);
+        }
+
+        // --- Variables de Estado para el Click-to-Map ---
+        let activeMappingInput = null;
+
+        document.addEventListener('DOMContentLoaded', () => {
+            // Inicializar listeners en los inputs del motor de mapeo
+            const mapInputs = document.querySelectorAll('.mapping-row input.form-control');
+            mapInputs.forEach(input => {
+                input.addEventListener('focus', function() {
+                    // Quitar la clase a todos
+                    mapInputs.forEach(i => i.classList.remove('mapper-input-active'));
+                    // Asignarla al seleccionado
+                    this.classList.add('mapper-input-active');
+                    activeMappingInput = this;
+                });
+            });
+            
+            // Si el usuario hace clic fuera de todo, podríamos quitar la clase, pero es mejor
+            // dejarlo seleccionado para que sea mas comodo.
+        });
+
+        // --- Modo Manual (Pegar JSON) ---
+        function loadManualJson() {
+            const rawJson = document.getElementById('manualJsonInput').value.trim();
+            if (!rawJson) {
+                alert("Por favor, pega un JSON primero.");
+                return;
+            }
+            try {
+                const parsed = JSON.parse(rawJson);
+                showPayload(parsed);
+                // Vaciar la caja después de cargar por limpieza
+                document.getElementById('manualJsonInput').value = '';
+            } catch (e) {
+                alert("Error: El texto ingresado no es un formato JSON válido.");
+            }
+        }
+
+        function showPayload(data) {
+            document.getElementById('payloadResult').style.display = 'block';
+            const container = document.getElementById('jsonTreeContainer');
+            container.innerHTML = ''; // Limpiar anterior
+            
+            const ul = document.createElement('ul');
+            ul.className = 'json-tree';
+            buildTree(data, '', ul);
+            container.appendChild(ul);
+        }
+
+        function buildTree(obj, currentPath, parentElement) {
+            if (typeof obj !== 'object' || obj === null) return;
+
+            const keys = Object.keys(obj);
+            keys.forEach(key => {
+                const val = obj[key];
+                const newPath = currentPath ? `${currentPath}.${key}` : key;
+                
+                const li = document.createElement('li');
+                li.className = 'json-node';
+
+                const keySpan = document.createElement('span');
+                keySpan.className = 'json-key';
+                keySpan.textContent = `"${key}": `;
+                li.appendChild(keySpan);
+
+                if (typeof val === 'object' && val !== null) {
+                    const typeSpan = document.createElement('span');
+                    typeSpan.style.color = 'var(--color-gray)';
+                    typeSpan.textContent = Array.isArray(val) ? '[ ... ]' : '{ ... }';
+                    li.appendChild(typeSpan);
+                    
+                    const subUl = document.createElement('ul');
+                    subUl.className = 'json-tree';
+                    buildTree(val, newPath, subUl);
+                    li.appendChild(subUl);
+                } else {
+                    const valSpan = document.createElement('span');
+                    valSpan.className = 'json-value';
+                    valSpan.textContent = typeof val === 'string' ? `"${val}"` : String(val);
+                    
+                    const clickableWrapper = document.createElement('span');
+                    clickableWrapper.className = 'json-clickable';
+                    clickableWrapper.appendChild(valSpan);
+                    clickableWrapper.title = `Clic para mapear: ${newPath}`;
+                    clickableWrapper.onclick = (e) => {
+                        e.stopPropagation();
+                        injectMapping(newPath);
+                    };
+                    
+                    li.appendChild(clickableWrapper);
+                }
+                parentElement.appendChild(li);
+            });
+        }
+
+        function injectMapping(path) {
+            if (!activeMappingInput) {
+                alert("💡 Primero haz clic en una de las cajas de la derecha (Ej. Latitud) para decirme dónde rellenar este dato.");
+                return;
+            }
+            activeMappingInput.value = path;
+            
+            // Animación de flash (Trigger reflow para reiniciar animacion)
+            activeMappingInput.classList.remove('mapper-flash');
+            void activeMappingInput.offsetWidth; 
+            activeMappingInput.classList.add('mapper-flash');
+        }
+
+        async function createNewProvider() {
+            const name = prompt("Ingrese el nombre del nuevo proveedor (Ej. geotab, samsara):");
+            if(!name) return;
+            
+            try {
+                const res = await fetch('/api/config/providers', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({provider_name: name})
+                });
+                const data = await res.json();
+                if(data.status === 'success') {
+                    alert("Proveedor creado exitosamente.");
+                    await loadProviders();
+                } else {
+                    alert("Error: " + data.message);
+                }
+            } catch(e) {
+                alert("Error de red");
+            }
+        }
+
+        function viewRawJson(rawJsonStr, title = "Payload Original") {
+            try {
+                // El raw_data llega como string desde la DB (sqlite lo guarda como text)
+                const parsed = typeof rawJsonStr === 'string' ? JSON.parse(rawJsonStr) : rawJsonStr;
+                const pretty = JSON.stringify(parsed, null, 4);
+                
+                // Crear modal on the fly
+                const overlay = document.createElement('div');
+                overlay.style.position = 'fixed';
+                overlay.style.top = '0'; overlay.style.left = '0'; overlay.style.width = '100vw'; overlay.style.height = '100vh';
+                overlay.style.backgroundColor = 'rgba(0,0,0,0.8)';
+                overlay.style.zIndex = '9999';
+                overlay.style.display = 'flex';
+                overlay.style.alignItems = 'center';
+                overlay.style.justifyContent = 'center';
+                
+                const modal = document.createElement('div');
+                modal.style.backgroundColor = 'var(--color-black)';
+                modal.style.padding = '20px';
+                modal.style.borderRadius = '8px';
+                modal.style.border = '1px solid var(--color-gray-dark)';
+                modal.style.width = '600px';
+                modal.style.maxWidth = '90vw';
+                
+                modal.innerHTML = `
+                    <h3 style="margin-top:0; color: white;">${title}</h3>
+                    <textarea id="json-copy-area" readonly style="width: 100%; height: 300px; background: #111; color: #0f0; font-family: monospace; border: none; padding: 10px; margin-bottom: 10px;">${pretty}</textarea>
+                    <div style="display: flex; justify-content: flex-end; gap: 10px;">
+                        <button id="btn-copy-json" style="background: var(--color-green-bright); color: black; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer; font-weight: bold;">Copiar</button>
+                        <button id="btn-close-json" style="background: #ef4444; color: white; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer; font-weight: bold;">Cerrar</button>
+                    </div>
+                `;
+                
+                overlay.appendChild(modal);
+                document.body.appendChild(overlay);
+                
+                document.getElementById('btn-close-json').onclick = () => overlay.remove();
+                document.getElementById('btn-copy-json').onclick = () => {
+                    const txt = document.getElementById('json-copy-area');
+                    txt.select();
+                    document.execCommand('copy');
+                    alert('¡Copiado al portapapeles!');
+                };
+            } catch (e) {
+                alert("Error parseando JSON: " + e.message);
+            }
+        }
+
     </script>
 </body>
 </html>

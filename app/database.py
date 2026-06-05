@@ -36,6 +36,21 @@ def check_and_migrate_db():
             if "queue_backend" not in columns:
                 cursor.execute("ALTER TABLE provider_config ADD COLUMN queue_backend TEXT DEFAULT 'sqlite'")
                 conn.commit()
+            if "mapping_schema" not in columns:
+                cursor.execute("ALTER TABLE provider_config ADD COLUMN mapping_schema JSON DEFAULT '{}'")
+                conn.commit()
+            if "fetch_config" not in columns:
+                cursor.execute("ALTER TABLE provider_config ADD COLUMN fetch_config TEXT DEFAULT '{}'")
+                conn.commit()
+            if "enrichment_config" not in columns:
+                cursor.execute("ALTER TABLE provider_config ADD COLUMN enrichment_config TEXT DEFAULT '{}'")
+                conn.commit()
+            
+            cursor.execute("CREATE TABLE IF NOT EXISTS provider_dictionary (id INTEGER PRIMARY KEY AUTOINCREMENT, provider_name TEXT, env TEXT, dict_key TEXT, dict_value TEXT)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS ix_provider_dictionary_provider_name ON provider_dictionary (provider_name)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS ix_provider_dictionary_env ON provider_dictionary (env)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS ix_provider_dictionary_dict_key ON provider_dictionary (dict_key)")
+            conn.commit()
             
         # 2. Migración para daily_stats
         cursor.execute("PRAGMA table_info(daily_stats)")
