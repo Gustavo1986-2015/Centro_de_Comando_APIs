@@ -151,8 +151,13 @@ class RCSOAPClient:
         
         event_dicts = []
         for event in events:
-            # Recurso Confiable asume UTC puro siempre, según documentación
-            rc_date = event.date if event.date else datetime.now()
+            # Recurso Confiable exige estricto UTC 0.
+            # Convertimos o aseguramos que la fecha esté en UTC puro y le añadimos la Z del estándar ISO 8601
+            base_date = event.date if event.date else datetime.now(timezone.utc)
+            if base_date.tzinfo is None:
+                base_date = base_date.replace(tzinfo=timezone.utc)
+            else:
+                base_date = base_date.astimezone(timezone.utc)
             
             # Sanitizar velocidad por si Schmitz envía literal "null"
             def clean_speed(s):
@@ -168,7 +173,7 @@ class RCSOAPClient:
                 'asset': event.chassis_number or "",
                 'code': event.code or "1",
                 'customer': {'id': '', 'name': ''},
-                'date': rc_date.strftime("%Y-%m-%dT%H:%M:%S"),
+                'date': base_date.strftime("%Y-%m-%dT%H:%M:%SZ"),
                 'direction': str(event.course) if event.course is not None else "0",
                 'ignition': "true" if event.ignition else "false",
                 'latitude': str(event.latitude) if event.latitude is not None else "0",

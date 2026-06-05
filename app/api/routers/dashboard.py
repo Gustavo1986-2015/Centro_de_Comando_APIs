@@ -57,6 +57,10 @@ async def get_stats(
     total_failed = 0
     total_retries = 0
     recent_events_global = []
+    
+    throughput_per_provider = {}
+    provider_tz_offsets = {}
+    thirty_secs_ago = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(seconds=30)
 
     # Obtener proveedores directamente desde la BD de configuración
     config_db = get_session("system_config", "global")
@@ -79,6 +83,16 @@ async def get_stats(
         if provider_filter and provider_filter.lower() != 'all' and provider_name.lower() != provider_filter.lower():
             continue
             
+        # Extraer offset horario del proveedor
+        tz_offset = 0
+        try:
+            if p.enrichment_config:
+                enrich_data = p.enrichment_config if isinstance(p.enrichment_config, dict) else json.loads(p.enrichment_config)
+                tz_offset = int(enrich_data.get('timezone_offset', 0))
+        except:
+            pass
+        provider_tz_offsets[f"{provider_name}_{provider_env}"] = tz_offset
+            
         db = get_session(provider_name, provider_env)
         try:
             total_pending += db.query(NormalizedRCEvent).filter(NormalizedRCEvent.status == "pending").count()
@@ -98,6 +112,12 @@ async def get_stats(
                 NormalizedRCEvent.status == "failed",
                 NormalizedRCEvent.created_at >= today_start
             ).count()
+            
+            # Throughput (30s)
+            throughput_count = db.query(NormalizedRCEvent).filter(
+                NormalizedRCEvent.created_at >= thirty_secs_ago
+            ).count()
+            throughput_per_provider[f"{provider_name}_{provider_env}"] = throughput_count
 
             # Base query
             query = db.query(NormalizedRCEvent)
@@ -166,13 +186,19 @@ async def get_stats(
             next_retry_naive = ev.next_retry_at.replace(tzinfo=None)
             if next_retry_naive > now_naive:
                 next_retry_in_sec = max(0, int((next_retry_naive - now_naive).total_seconds()))
+        # Recuperar offset del proveedor
+        tz_offset = provider_tz_offsets.get(f"{getattr(ev, 'provider_name', '')}_{getattr(ev, 'env', '')}", 0)
+        
+        # Calcular fechas locales compensadas
+        time_received_local = ev.created_at + timedelta(hours=tz_offset)
+        device_date_local = ev.date + timedelta(hours=tz_offset) if getattr(ev, 'date') and ev.date else None
             
         recent_list.append({
             "id": ev.id,
             "chassis": ev.chassis_number,
             "status": ev.status,
             "time": (ev.updated_at or ev.created_at).strftime("%Y-%m-%d %H:%M:%S.%f")[:-3] + " (UTC)",
-            "time_received": ev.created_at.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3] + " (UTC)",
+            "time_received": time_received_local.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3] + (" (Local)" if tz_offset != 0 else " (UTC)"),
             "time_sent": (time_sent_dt.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3] + " (UTC)") if ev.status in ('sent', 'failed') and time_sent_dt else "Procesando" if ev.status == 'processing' else "Pendiente" if ev.status == 'pending' else "Fallido",
             "time_received_rc": (time_received_rc_dt.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3] + " (UTC)") if ev.status in ('sent', 'failed') and time_received_rc_dt else "Procesando" if ev.status == 'processing' else "Pendiente" if ev.status == 'pending' else "Fallido",
             "latency_sec": round(latency_sec, 3) if latency_sec is not None else None,
@@ -181,7 +207,7 @@ async def get_stats(
             "rc_response": getattr(ev, 'rc_response', ""),
             "provider": getattr(ev, 'provider_name', "N/A").upper(),
             "env": getattr(ev, 'env', "N/A").upper(),
-            "device_date": ev.date.strftime("%Y-%m-%d %H:%M:%S") + " (UTC)" if getattr(ev, 'date') and ev.date else "N/A",
+            "device_date": device_date_local.strftime("%Y-%m-%d %H:%M:%S") + (" (Local)" if tz_offset != 0 else " (UTC)") if device_date_local else "N/A",
             "speed": getattr(ev, 'speed', 0),
             "coords": f"{ev.latitude}, {ev.longitude}" if getattr(ev, 'latitude') and ev.latitude else "Sin GPS",
             "ignition": "ON" if getattr(ev, 'ignition') else "OFF",
@@ -234,6 +260,7 @@ async def get_stats(
         "avg_latency_sec": avg_latency,
         "avg_rc_latency_sec": avg_rc_latency,
         "recent": recent_list,
+        "throughput": throughput_per_provider,
         "all_providers": list(set([p.provider_name for p in providers]))
     }
 
