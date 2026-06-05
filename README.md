@@ -12,6 +12,7 @@ El sistema ha sido diseñado para escalar a más de 15 proveedores simultáneos 
 - **Modelo Canónico (Pydantic):** Validación estricta. Todo lo que ingresa de un externo se transforma a un formato estándar de Assistcargo antes de viajar a Recurso Confiable.
 - **Seguridad Perimetral (Toggle Switch):** Los Webhooks receptores cuentan con validación de "API Keys" mediante cabeceras HTTP, las cuales pueden activarse/desactivarse en caliente desde el archivo `.env` para facilitar pruebas.
 - **Auditoría Dinámica y Recuperación Ante Desastres:** Cada payload crudo recibido se guarda instantáneamente en un `.jsonl` rotativo por proveedor. Adicionalmente, ante apagones de servidor bruscos, el Hub recupera automáticamente eventos "atascados" devolviéndolos a la cola principal.
+- **Motor PULL Dinámico (Cron-Driven):** Además de la ingesta PUSH (Webhooks), el Hub incorpora un motor PULL inteligente impulsado por `httpx` asíncrono. Permite orquestar consumos periódicos (ej. cada 30 segundos) hacia APIs externas (como Protrack). Extrae automáticamente la lista de activos a consumir desde un Diccionario de Configuración en caliente (`provider_dictionary`) e inyecta propiedades dinámicas al vuelo, incluyendo el parseo matemático avanzado de fechas crudas (Unix Timestamps).
 
 ### 🛠️ Tecnologías Clave Utilizadas
 - **Python 3.12+** / **FastAPI**: Backend de altísimo rendimiento asíncrono.
