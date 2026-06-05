@@ -73,23 +73,33 @@
             display: flex;
             align-items: center;
             justify-content: flex-end;
-            gap: 8px;
-            font-size: 0.9rem;
-            color: var(--color-gray);
+            justify-self: end;
+            width: max-content;
+            gap: 12px;
+            font-size: 1.2rem;
+            font-weight: 700;
+            color: var(--color-green-bright);
+            text-transform: uppercase;
+            letter-spacing: 1.5px;
+            text-shadow: 0 0 10px rgba(16, 185, 129, 0.5);
+            background: rgba(16, 185, 129, 0.1);
+            padding: 8px 16px;
+            border-radius: 8px;
+            border: 1px solid rgba(16, 185, 129, 0.3);
         }
 
         .pulse {
-            width: 10px;
-            height: 10px;
+            width: 14px;
+            height: 14px;
             background-color: var(--color-green-bright);
             border-radius: 50%;
-            animation: pulsing 2s infinite;
+            animation: pulsing 1.5s infinite;
         }
 
         @keyframes pulsing {
-            0% { box-shadow: 0 0 0 0 rgba(0, 255, 102, 0.4); }
-            70% { box-shadow: 0 0 0 10px rgba(0, 255, 102, 0); }
-            100% { box-shadow: 0 0 0 0 rgba(0, 255, 102, 0); }
+            0% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7); }
+            70% { box-shadow: 0 0 0 15px rgba(16, 185, 129, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
         }
 
         /* Main Content */
@@ -158,6 +168,43 @@
             letter-spacing: 1px;
             margin-bottom: 0.5rem;
             font-weight: 600;
+        }
+
+        /* Custom Scrollbar for the entire app and textareas */
+        ::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+        ::-webkit-scrollbar-track {
+            background: var(--bg-dark);
+            border-radius: 4px;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #2D333B;
+            border-radius: 4px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: var(--color-gray);
+        }
+
+        .monitor-textarea {
+            font-family: 'Consolas', 'Courier New', monospace;
+            font-size: 0.85rem;
+            width: 100%;
+            height: 450px;
+            resize: vertical;
+            background: #0D0F12;
+            color: #A0AEC0;
+            border: 1px solid #1E2229;
+            border-radius: 8px;
+            padding: 1rem;
+            outline: none;
+            box-shadow: inset 0 2px 8px rgba(0,0,0,0.3);
+            line-height: 1.5;
+            transition: border-color 0.3s;
+        }
+        .monitor-textarea:focus {
+            border-color: rgba(59, 130, 246, 0.5);
         }
 
         .card-value {
@@ -893,14 +940,27 @@
                 </div>
             </div>
             
-            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1.5rem;">
-                <div>
-                    <h3 style="color: var(--color-green-bright); margin-bottom: 0.5rem; font-size: 1rem;">GET /api/stats</h3>
-                    <textarea id="monitor-stats" class="form-control" rows="22" readonly style="font-family: monospace; font-size: 0.85rem; width: 100%; resize: vertical; background: #0F1115; color: #E5E7EB;"></textarea>
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(400px, 1fr)); gap: 1.5rem;">
+                <div style="grid-column: 1 / -1; background: rgba(15, 17, 21, 0.4); border: 1px solid rgba(255,255,255,0.05); border-radius: 12px; padding: 1.5rem; backdrop-filter: blur(10px);">
+                    <h3 style="color: var(--color-green-bright); margin-bottom: 1.2rem; font-size: 1.1rem; display: flex; align-items: center; gap: 10px; font-weight: 600;">
+                        <span style="font-size: 1.3rem;">📊</span> Throughput en Vivo
+                    </h3>
+                    <div id="monitor-throughput" style="display: flex; gap: 1.2rem; flex-wrap: wrap;">
+                        <span style="color: var(--color-gray); font-size: 0.85rem;">Cargando...</span>
+                    </div>
                 </div>
-                <div>
-                    <h3 style="color: #3b82f6; margin-bottom: 0.5rem; font-size: 1rem;">GET /health</h3>
-                    <textarea id="monitor-health" class="form-control" rows="22" readonly style="font-family: monospace; font-size: 0.85rem; width: 100%; resize: vertical; background: #0F1115; color: #E5E7EB;"></textarea>
+
+                <div style="background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 12px; padding: 1.2rem;">
+                    <h3 style="color: var(--color-green-bright); margin-bottom: 1rem; font-size: 1rem; display: flex; align-items: center; gap: 8px;">
+                        <span style="display: inline-block; width: 8px; height: 8px; background: var(--color-green-bright); border-radius: 50%;"></span> GET /api/stats
+                    </h3>
+                    <textarea id="monitor-stats" class="monitor-textarea" readonly></textarea>
+                </div>
+                <div style="background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 12px; padding: 1.2rem;">
+                    <h3 style="color: #3b82f6; margin-bottom: 1rem; font-size: 1rem; display: flex; align-items: center; gap: 8px;">
+                        <span style="display: inline-block; width: 8px; height: 8px; background: #3b82f6; border-radius: 50%;"></span> GET /health
+                    </h3>
+                    <textarea id="monitor-health" class="monitor-textarea" readonly></textarea>
                 </div>
             </div>
         </div>
@@ -1042,15 +1102,26 @@
                 </div>
             </div>
 
-            <!-- Panel 4: Diccionario de Metadatos -->
+            <!-- Panel 4: Diccionario de Metadatos y Ajustes Globales -->
             <div class="panel" style="flex: 1; margin-top: 2rem;">
                 <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--card-border); padding-bottom: 0.75rem; margin-bottom: 1.5rem;">
-                    <div style="font-size: 1.1rem; font-weight: 600;">4. Enriquecimiento de Datos (Diccionario IMEI → Placa)</div>
-                    <label class="switch" style="display:flex; align-items:center; gap:10px; cursor:pointer;">
-                        <input type="checkbox" id="enableEnrichment" onchange="toggleEnrichment()" style="width:18px; height:18px; accent-color: var(--color-green-vibrant);">
-                        <span style="font-weight:600; color:var(--color-gray);">Activar Diccionario</span>
-                    </label>
+                    <div style="font-size: 1.1rem; font-weight: 600;">4. Enriquecimiento (Diccionario) y Ajustes Globales</div>
+                    <div style="display:flex; align-items:center; gap: 1.5rem;">
+                        <label class="switch" style="display:flex; align-items:center; gap:10px; cursor:pointer;">
+                            <input type="checkbox" id="enableEnrichment" onchange="toggleEnrichment()" style="width:18px; height:18px; accent-color: var(--color-green-vibrant);">
+                            <span style="font-weight:600; color:var(--color-gray);">Activar Diccionario</span>
+                        </label>
+                        <button onclick="saveEnrichment(event)" style="background: var(--color-green-vibrant); color: var(--color-black); border: none; padding: 0.5rem 1rem; border-radius: 6px; font-weight: 700; cursor: pointer; transition: all 0.3s;">💾 Guardar Ajustes (Panel 4)</button>
+                    </div>
                 </div>
+                
+                <div style="margin-bottom: 1.5rem; display: flex; align-items: center; gap: 1rem;">
+                    <label style="color: var(--color-gray); font-size: 0.9rem; font-weight: bold;">🌍 Zona Horaria del Proveedor (UTC Offset):</label>
+                    <input type="number" id="timezoneOffset" class="form-control" style="width: 100px; text-align: center;" placeholder="Ej: -6" value="0">
+                    <span style="font-size: 0.75rem; color: var(--color-gray);">Este valor se usa para mostrar la hora correcta en el Dashboard. RC siempre recibe UTC 0.</span>
+                </div>
+                
+                <hr style="border: 0; border-top: 1px solid var(--card-border); margin-bottom: 1.5rem;">
                 
                 <div id="enrichmentPanel" style="display: none;">
                     <p style="font-size: 0.8rem; color: var(--color-gray); margin-bottom: 1.5rem;">Esta sección permite realizar un PULL automático (ej. 1 vez al día) a un endpoint de metadatos (como <code>/api/device/list</code>) para construir una caché local de IMEI a Patente/Placa. Luego, durante la telemetría, el Motor buscará el IMEI e inyectará la Placa al vuelo.</p>
@@ -1096,9 +1167,6 @@
                             <div class="form-group">
                                 <label class="form-label">JSON Path del VALOR (Ej. Placa)</label>
                                 <input type="text" id="dictValuePath" class="form-control" placeholder="Ej: record.0.platenumber">
-                            </div>
-                            <div style="margin-top: 1.5rem; text-align: right;">
-                                <button onclick="saveEnrichment(event)" style="background: var(--color-green-vibrant); color: var(--color-black); border: none; padding: 0.6rem 1.2rem; border-radius: 6px; font-weight: 700; cursor: pointer; transition: all 0.3s;">💾 Guardar Diccionario</button>
                             </div>
                         </div>
                     </div>
@@ -1306,15 +1374,31 @@
             }
         }
 
+        // Monitor Interno
         async function loadMonitor() {
             try {
-                // Fetch stats
-                const statsRes = await fetch('/api/stats');
-                if (statsRes.ok) {
-                    const statsData = await statsRes.json();
-                    document.getElementById('monitor-stats').value = JSON.stringify(statsData, null, 2);
+                const res = await fetch('/api/stats');
+                const data = await res.json();
+                document.getElementById('monitor-stats').value = JSON.stringify(data, null, 2);
+                
+                // Renderizar Throughput
+                const tpContainer = document.getElementById('monitor-throughput');
+                if (data.throughput && Object.keys(data.throughput).length > 0) {
+                    let tpHtml = '';
+                    for (const [provider, count] of Object.entries(data.throughput)) {
+                        let color = count > 0 ? 'var(--color-green-bright)' : 'var(--color-gray)';
+                        let shadow = count > 0 ? `text-shadow: 0 0 15px ${color}80;` : '';
+                        tpHtml += `
+                            <div style="background: rgba(20, 23, 30, 0.5); padding: 1.2rem 1.5rem; border-radius: 12px; border: 1px solid rgba(255,255,255,0.03); border-left: 4px solid ${color}; display: flex; flex-direction: column; min-width: 180px; box-shadow: 0 4px 15px rgba(0,0,0,0.2);">
+                                <span style="color: var(--color-gray); font-weight: 600; font-size: 0.8rem; letter-spacing: 1.5px; text-transform: uppercase;">${provider.replace('_', ' ')}</span>
+                                <span style="color: ${color}; font-size: 2.5rem; font-weight: 700; margin: 10px 0; line-height: 1; ${shadow}">${count}</span>
+                                <span style="color: #6B7280; font-size: 0.75rem; letter-spacing: 1px;">EVENTOS / 30S</span>
+                            </div>
+                        `;
+                    }
+                    tpContainer.innerHTML = tpHtml;
                 } else {
-                    document.getElementById('monitor-stats').value = "Error fetching /api/stats: " + statsRes.status;
+                    tpContainer.innerHTML = '<span style="color: var(--color-gray); font-size: 0.85rem;">Sin actividad reciente.</span>';
                 }
                 
                 // Fetch health
@@ -1597,7 +1681,6 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
                     <div style="display: flex; flex-direction: column; align-items: flex-start;">
                         <span style="color:var(--color-yellow); font-weight:bold;">${ev.chassis || 'N/A'}</span>
                         ${ev.serial && ev.serial !== ev.chassis ? `<span style="color:var(--color-gray); font-size: 0.8rem;">IMEI: ${ev.serial}</span>` : ''}
-                        <span style="color:var(--color-gray); font-size: 0.75rem; margin-top: 2px;">Dato Original: <span style="color:var(--color-white)">${ev.device_date || 'N/A'}</span></span>
                         <div style="margin-top: 4px;">
                             <button onclick='viewRawJson(${JSON.stringify(ev.raw_data || "{}").replace(/'/g, "&#39;")}, "Payload Original (Crudo del Proveedor)")' style="background: #374151; color: white; border: none; padding: 2px 6px; border-radius: 4px; font-size: 0.7em; cursor: pointer;" title="Ver payload JSON original sin procesar">
                                 📄 JSON Origen
@@ -1972,7 +2055,7 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
                     if(inp) inp.value = mapping[key];
                 }
                 
-                if (data.fetch) {
+                if (data.fetch && Object.keys(data.fetch).length > 0) {
                     const f = data.fetch;
                     if(f.url) document.getElementById('pullUrl').value = f.url;
                     if(f.method) document.getElementById('pullMethod').value = f.method;
@@ -1986,6 +2069,15 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
                         const bt = document.getElementById('bearerTokenValue');
                         if(bt) bt.value = f.bearer_token;
                     }
+                } else {
+                    document.getElementById('pullUrl').value = '';
+                    document.getElementById('pullMethod').value = 'GET';
+                    document.getElementById('authType').value = 'none';
+                    document.getElementById('pullAuthFields').style.display = 'none';
+                    document.getElementById('pullAuthUser').value = '';
+                    document.getElementById('pullAuthPass').value = '';
+                    const bt = document.getElementById('bearerTokenValue');
+                    if(bt) bt.value = '';
                 }
             } catch (e) {
                 console.error("Error loading mapping", e);
@@ -2078,9 +2170,10 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
                 const res = await fetch(`${API_BASE}/${name}/${env}/enrichment`);
                 const data = await res.json();
                 
-                if (data && data.url) {
+                if (data && (data.url || data.timezone_offset !== undefined)) {
                     document.getElementById('enableEnrichment').checked = data.enabled || false;
                     toggleEnrichment();
+                    document.getElementById('timezoneOffset').value = data.timezone_offset !== undefined ? data.timezone_offset : 0;
                     document.getElementById('dictUrl').value = data.url || "";
                     document.getElementById('dictMethod').value = data.method || "GET";
                     document.getElementById('dictFrequency').value = data.frequency || 24;
@@ -2093,6 +2186,7 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
                 } else {
                     document.getElementById('enableEnrichment').checked = false;
                     toggleEnrichment();
+                    document.getElementById('timezoneOffset').value = 0;
                     document.getElementById('dictUrl').value = "";
                     document.getElementById('dictKeyPath').value = "";
                     document.getElementById('dictValuePath').value = "";
@@ -2123,6 +2217,7 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
             
             const payload = {
                 enabled: document.getElementById('enableEnrichment').checked,
+                timezone_offset: parseInt(document.getElementById('timezoneOffset').value) || 0,
                 url: document.getElementById('dictUrl').value.trim(),
                 method: document.getElementById('dictMethod').value,
                 frequency: parseInt(document.getElementById('dictFrequency').value) || 24,
