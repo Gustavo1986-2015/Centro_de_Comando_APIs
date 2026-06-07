@@ -137,7 +137,7 @@ class RCSOAPClient:
 
     def _get_token_sync(self) -> str:
         """Devuelve el token en caché, o lo renueva si expiró, protegiendo con lock para evitar llamadas paralelas."""
-        with self._lock:
+        with self.__class__._global_lock:
             # 1. Intentar de memoria
             if self._token and self._token_expires_at and datetime.now() < self._token_expires_at:
                 return self._token
