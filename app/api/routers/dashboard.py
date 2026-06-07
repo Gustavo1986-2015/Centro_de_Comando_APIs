@@ -13,6 +13,8 @@ from app.models.db_models import NormalizedRCEvent
 from app.models.config_models import ProviderConfig, DailyStat
 from pydantic import BaseModel
 from typing import List
+from datetime import datetime, timezone, timedelta
+from sqlalchemy import func, case
 
 
 security = HTTPBasic()
@@ -63,7 +65,6 @@ async def get_stats_data(
     Retorna las estadísticas en tiempo real sumando los datos de
     TODAS las bases de datos SQLite de los distintos proveedores.
     """
-    from datetime import datetime, timezone
     local_now = datetime.now().astimezone()
     today_start_local = datetime.combine(local_now.date(), datetime.min.time()).replace(tzinfo=local_now.tzinfo)
     today_start = today_start_local.astimezone(timezone.utc).replace(tzinfo=None)
@@ -293,7 +294,8 @@ async def get_providers(_: None = Depends(verify_dashboard_auth)):
 @router.get("/api/stats")
 async def get_stats(
     status_filter: str = Query(None, alias="status"),
-    provider_filter: str = Query(None, alias="provider")
+    provider_filter: str = Query(None, alias="provider"),
+    _: None = Depends(verify_dashboard_auth)
 ):
     return await get_stats_data(status_filter, provider_filter)
 
