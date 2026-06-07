@@ -71,6 +71,14 @@ async def process_provider_events(provider: str, env: str):
         # Contadores compartidos (se acumulan al final)
         batch_metrics = []
         
+        # Leer credenciales desde config
+        db_conf = get_session("system_config", "global")
+        conf = db_conf.query(ProviderConfig).filter_by(provider_name=provider, env=env).first()
+        rc_u = conf.rc_user if conf else None
+        rc_p = conf.rc_password if conf else None
+        db_conf.close()
+        rc_client = get_rc_client(rc_u, rc_p)
+        
         async def process_single_batch(batch, batch_idx):
             """Tarea auto-contenida: SOAP + escritura en BD inmediata para un solo sub-lote."""
             metrics = {"sent": 0, "failed": 0, "retry": 0, "soap_ms": 0}
@@ -101,7 +109,7 @@ async def process_provider_events(provider: str, env: str):
             
             # Disparar SOAP y medir
             try:
-                results, elapsed_sec = await send_batch_and_measure(canonical_events)
+                results, elapsed_sec = await send_batch_and_measure(canonical_events, rc_client)
                 metrics["soap_ms"] = elapsed_sec * 1000
                 batch_outcome = (results, elapsed_sec)
             except Exception as e:
