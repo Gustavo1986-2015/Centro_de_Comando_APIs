@@ -3,7 +3,6 @@ from sqlalchemy.orm import Session
 import asyncio
 import json
 import os
-import threading
 import logging
 
 from app.database import get_session
@@ -41,10 +40,6 @@ def _persist_batch(batch: list):
     for current_env in envs:
         items_for_env = [item[0] for item in batch if item[1] == current_env]
         
-        # 1. Auditoría fire-and-forget
-        for payload in items_for_env:
-            threading.Thread(target=audit_event, args=(f"schmitz_{current_env}", payload), daemon=True).start()
-            
         # 2. Persistir en SQLite en un solo COMMIT
         db = get_session("schmitz", current_env)
         try:
@@ -97,6 +92,10 @@ async def _batch_processor_loop():
             pass
 
         if batch:
+            # 1. Auditoría fire-and-forget asíncrona (DEBT-04)
+            for payload, env_val in batch:
+                asyncio.create_task(asyncio.to_thread(audit_event, f"schmitz_{env_val}", payload))
+                
             # Guardar el lote en un thread aparte para no bloquear el API
             await asyncio.to_thread(_persist_batch, batch)
             
