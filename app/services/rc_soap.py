@@ -20,7 +20,7 @@ RC_USE_MOCK = os.getenv("RC_USE_MOCK", "True").lower() == "true"
 
 class RCSOAPClient:
     _global_zeep_client = None
-    _global_lock = threading.Lock()
+    _global_lock = threading.RLock()
 
     def __init__(self, username: str = RC_USERNAME, password: str = RC_PASSWORD, endpoint: str = RC_ENDPOINT):
         self.username = username
