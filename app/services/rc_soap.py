@@ -19,25 +19,32 @@ RC_ENDPOINT = os.getenv("RC_ENDPOINT", "http://gps.rcontrol.com.mx/Tracking/wcf/
 RC_USE_MOCK = os.getenv("RC_USE_MOCK", "True").lower() == "true"
 
 class RCSOAPClient:
+    _global_zeep_client = None
+    _global_lock = threading.Lock()
+
     def __init__(self, username: str = RC_USERNAME, password: str = RC_PASSWORD, endpoint: str = RC_ENDPOINT):
         self.username = username
         self.password = password
         self.endpoint = endpoint
         self._token = None
         self._token_expires_at = None
-        self._zeep_client = None
-        self._lock = threading.Lock()
 
-    def _get_zeep_client(self):
-        if not self._zeep_client:
-            from zeep import Client
-            wsdl = self.endpoint + "?wsdl"
-            self._zeep_client = Client(wsdl)
-        return self._zeep_client
+    @classmethod
+    def _get_zeep_client(cls, endpoint: str):
+        # Verificación rápida sin lock (fast path)
+        if cls._global_zeep_client:
+            return cls._global_zeep_client
+        # Inicialización con lock (slow path, solo primera vez)
+        with cls._global_lock:
+            if not cls._global_zeep_client:  # double-check dentro del lock
+                from zeep import Client
+                wsdl = endpoint + "?wsdl"
+                cls._global_zeep_client = Client(wsdl)
+        return cls._global_zeep_client
 
     def _load_token_from_cache(self):
         """Carga el token desde el archivo de caché en disco si existe y es válido."""
-        cache_path = "./db/rc_token_cache.json"
+        cache_path = "./db/rc_token_cache_{self.username}.json"
         if not os.path.exists(cache_path):
             return None
         try:
@@ -59,7 +66,7 @@ class RCSOAPClient:
 
     def _save_token_to_cache(self, token: str, expires_at: datetime):
         """Guarda el token en el archivo de caché en disco."""
-        cache_path = "./db/rc_token_cache.json"
+        cache_path = "./db/rc_token_cache_{self.username}.json"
         try:
             os.makedirs(os.path.dirname(cache_path), exist_ok=True)
             with open(cache_path, "w", encoding="utf-8") as f:
@@ -75,7 +82,7 @@ class RCSOAPClient:
         """Borra la caché de token en memoria y en disco."""
         self._token = None
         self._token_expires_at = None
-        cache_path = "./db/rc_token_cache.json"
+        cache_path = "./db/rc_token_cache_{self.username}.json"
         if os.path.exists(cache_path):
             try:
                 os.remove(cache_path)
@@ -89,7 +96,7 @@ class RCSOAPClient:
         for attempt in range(max_retries):
             try:
                 logger.info(f"Autenticando contra Recurso Confiable (Zeep) - Intento {attempt + 1}...")
-                client = self._get_zeep_client()
+                client = self._get_zeep_client(self.endpoint)
                 res = client.service.GetUserToken(self.username, self.password)
                 
                 from zeep.helpers import serialize_object
@@ -147,7 +154,7 @@ class RCSOAPClient:
     def _send_batch_sync(self, events: list[RCCanonicalModel]):
         """Ejecuta la llamada SOAP síncrona para un lote de eventos."""
         token = self._get_token_sync()
-        client = self._get_zeep_client()
+        client = self._get_zeep_client(self.endpoint)
         
         event_dicts = []
         for event in events:
@@ -327,3 +334,9 @@ class RCSOAPClient:
 
 rc_client = RCSOAPClient()
 
+
+
+def get_rc_client(username: str = None, password: str = None) -> RCSOAPClient:
+    username = username or RC_USERNAME
+    password = password or RC_PASSWORD
+    return RCSOAPClient(username=username, password=password)

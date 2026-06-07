@@ -7,14 +7,12 @@ from datetime import datetime, timezone, timedelta, date
 from app.database import get_session
 from app.models.db_models import NormalizedRCEvent
 from app.schemas.canonical import RCCanonicalModel
-from app.services.rc_soap import rc_client
+from app.services.rc_soap import get_rc_client
 
 from app.models.config_models import ProviderConfig, DailyStat
 
 logger = logging.getLogger(__name__)
 
-# Caché en memoria para rastrear reintentos por eventos fallidos debido a errores de autenticación o red
-RETRIES_CACHE = {}
 
 # Registro global de eventos para despertar a los workers de forma instantánea
 WORKER_TRIGGERS = {}
@@ -28,7 +26,7 @@ def trigger_worker(provider: str, env: str):
         except Exception:
             pass
 
-async def send_batch_and_measure(canonical_events):
+async def send_batch_and_measure(canonical_events, rc_client):
     start_time = time.time()
     results = await rc_client.send_events_batch(canonical_events)
     elapsed = time.time() - start_time
@@ -416,9 +414,7 @@ async def api_worker_loop(provider: str, env: str):
         async with semaphore:
             return await process_provider_events(provider, env)
     
-    # Conjunto para mantener referencias a las tareas en background y evitar que el garbage collector las elimine
-    background_tasks = set()
-    
+
     while True:
         run_interval = 5
         try:
@@ -432,7 +428,7 @@ async def api_worker_loop(provider: str, env: str):
                     # El worker simplemente procesa un lote de hasta 2000 eventos.
                     # Internamente `process_provider_events` particiona en sub-lotes de 50 
                     # y los envía en paralelo.
-                    has_more = await process_provider_events(provider, env)
+                    has_more = await process_with_semaphore()
                     
                     # Si aún quedan eventos, hacemos que el loop vuelva a ejecutarse casi de inmediato.
                     if has_more:

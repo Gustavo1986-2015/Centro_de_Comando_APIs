@@ -44,8 +44,11 @@ class SQLiteQueue(MessageQueueInterface):
                 event_ids = [ev.id for ev in events]
                 for ev in events:
                     db.expunge(ev)
-                    ev.status = "processing"
                     
+                # Marcar atómicamente como "processing" en BD para evitar re-procesamiento.
+                # Los objetos `events` retornados al caller tendrán status="pending" (valor leído
+                # de BD antes del update), lo cual es inofensivo: el caller no depende del status
+                # de los objetos devueltos, solo usa sus datos de payload.
                 db.query(NormalizedRCEvent).filter(NormalizedRCEvent.id.in_(event_ids)).update(
                     {"status": "processing"}, synchronize_session=False
                 )
@@ -64,7 +67,8 @@ class SQLiteQueue(MessageQueueInterface):
                     "job_id": u['job_id'],
                     "rc_latency_sec": u['elapsed_sec'],
                     "retry_count": 0,
-                    "next_retry_at": None
+                    "next_retry_at": None,
+                    "updated_at": datetime.now()
                 } for u in updates]
                 db.bulk_update_mappings(NormalizedRCEvent, mappings)
 
@@ -79,7 +83,8 @@ class SQLiteQueue(MessageQueueInterface):
                     "status": "failed",
                     "rc_response": u['rc_response'],
                     "job_id": u['job_id'],
-                    "rc_latency_sec": u['elapsed_sec']
+                    "rc_latency_sec": u['elapsed_sec'],
+                    "updated_at": datetime.now()
                 } for u in updates]
                 db.bulk_update_mappings(NormalizedRCEvent, mappings)
 
@@ -96,7 +101,8 @@ class SQLiteQueue(MessageQueueInterface):
                     "job_id": u['job_id'],
                     "rc_latency_sec": u['elapsed_sec'],
                     "retry_count": u['retry_count'],
-                    "next_retry_at": u['next_retry_at']
+                    "next_retry_at": u['next_retry_at'],
+                    "updated_at": datetime.now()
                 } for u in updates]
                 db.bulk_update_mappings(NormalizedRCEvent, mappings)
 
