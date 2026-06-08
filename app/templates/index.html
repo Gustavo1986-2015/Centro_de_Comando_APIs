@@ -1208,6 +1208,7 @@
     </footer>
 
     <script>
+        const _metricState = {};
         let currentConfigs = [];
         let statsInterval;
         
@@ -1560,12 +1561,44 @@
 
         function updateValue(elementId, newValue) {
             const el = document.getElementById(elementId);
-            if (el.textContent !== String(newValue)) {
-                el.textContent = newValue;
-                el.classList.remove('value-update');
-                void el.offsetWidth;
-                el.classList.add('value-update');
+            if (!el) return;
+
+            const isNumeric = !isNaN(parseFloat(newValue)) && String(newValue).match(/^[\d.]+/);
+
+            if (!isNumeric) {
+                if (el.textContent !== String(newValue)) {
+                    el.textContent = newValue;
+                    el.classList.remove('value-update');
+                    void el.offsetWidth;
+                    el.classList.add('value-update');
+                }
+                return;
             }
+
+            const targetNum = parseFloat(newValue);
+            const suffix    = String(newValue).replace(/^[\d.]+/, '');
+            const startNum  = _metricState[elementId] !== undefined
+                              ? _metricState[elementId] : targetNum;
+            _metricState[elementId] = targetNum;
+
+            if (startNum === targetNum) return;
+
+            const isFloat   = suffix !== '' || String(newValue).includes('.');
+            const duration  = 400;
+            const startTime = performance.now();
+
+            function step(now) {
+                const elapsed  = now - startTime;
+                const progress = Math.min(elapsed / duration, 1);
+                const eased    = 1 - (1 - progress) * (1 - progress);
+                const current  = startNum + (targetNum - startNum) * eased;
+                el.textContent = isFloat
+                    ? current.toFixed(2) + suffix
+                    : Math.round(current) + suffix;
+                if (progress < 1) requestAnimationFrame(step);
+            }
+
+            requestAnimationFrame(step);
         }
 
         function renderRecentTable() {
