@@ -774,6 +774,26 @@
         .provider-pill.active    .pill-dot { background: var(--color-green-bright); animation: pulsing 2s infinite; }
         .provider-pill.has-failed .pill-dot { background: var(--color-red); }
         .pill-rate { color: var(--color-gray-label); font-weight: 400; font-size: 0.7rem; }
+
+        .skeleton-row td {
+            background: linear-gradient(
+                90deg,
+                var(--level-1) 25%,
+                var(--level-2) 50%,
+                var(--level-1) 75%
+            );
+            background-size: 200% 100%;
+            animation: shimmer 1.6s infinite;
+            color: transparent !important;
+            border-radius: 4px;
+            height: 48px;
+            pointer-events: none;
+            user-select: none;
+        }
+        @keyframes shimmer {
+            0%   { background-position:  200% 0; }
+            100% { background-position: -200% 0; }
+        }
     
     </style>
 </head>
@@ -1355,6 +1375,14 @@
             }).join('');
         }
 
+        function injectSkeletonRows(tbodyId, cols, rowCount = 5) {
+            const tbody = document.getElementById(tbodyId);
+            if (!tbody || tbody.children.length > 0) return;
+            tbody.innerHTML = Array(rowCount).fill(null).map(() =>
+                `<tr class="skeleton-row">${Array(cols).fill('<td>&nbsp;</td>').join('')}</tr>`
+            ).join('');
+        }
+
         let currentConfigs = [];
         let statsInterval;
         
@@ -1646,6 +1674,8 @@
         
         function initSSE() {
             if (!window.evtSource) {
+                injectSkeletonRows('recent-table-body',  6, 6);
+                injectSkeletonRows('history-table-body', 9, 4);
                 window.evtSource = new EventSource('/api/stats/stream');
                 window.evtSource.onmessage = e => renderStats(JSON.parse(e.data));
                 window.evtSource.onerror = () => {
