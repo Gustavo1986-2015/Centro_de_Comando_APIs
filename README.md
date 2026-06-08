@@ -24,11 +24,12 @@ El sistema ha sido diseñado para escalar a más de 15 proveedores simultáneos 
 ## 🎛️ Dashboard y Panel de Administración
 El servidor incluye una interfaz web interactiva (Vanilla JS, CSS Premium, sin frameworks pesados) para la gestión visual del Hub.
 
-- **Dashboard Principal:** Métricas en tiempo real (Pendientes, Enviados, Fallidos, Reintentos) y streaming de la última actividad global.
+- **Dashboard Principal (SSE):** Métricas de flujo en vivo alimentadas por **Server-Sent Events (SSE)** optimizados para no saturar el cliente, y streaming de la última actividad global.
+- **Sparklines Integrados:** Gráficos SVG en vivo y ultra-ligeros incrustados en las tarjetas de estadísticas para visualizar la tendencia matemática de los eventos en tiempo real.
 - **Doble Capa de Visibilidad de Latencia:** 
   - *Latencia de Transmisión:* Muestra en la columna Localización el retraso satelital/celular externo desde que el GPS del camión reportó el dato hasta que ingresó a Assistcargo.
   - *Latencia del Hub (Hub: Xs):* Muestra de forma destacada en verde brillante cuánto tiempo exacto demoró el Hub de Assistcargo en procesar y despachar el dato a RC una vez recibido en nuestra API.
-- **Filtros Interactivos:** Filtrado dinámico instantáneo en el DOM por proveedor y por rangos de latencia de RC (Baja $\le$ 2s, Media 3-9s, Alta $\ge$ 10s).
+- **Filtros Interactivos y Experiencia de Usuario:** Filtrado dinámico instantáneo en el DOM. Incorpora **Skeleton Screens** (carga asíncrona visual) y un **Modo Compacto** CSS-only (con memoria en localStorage) para maximizar la densidad de datos en monitores de NOC.
 - **Historial Diario Inteligente:** Pestaña dedicada con un registro histórico consolidado persistente (`daily_stats`) de procesados, enviados y fallidos. El sistema calcula matemáticamente la medianoche local para realizar un barrido perfecto "Hoy" sin importar la zona horaria UTC del servidor.
 - **Configuración Global por API:** Panel visual para activar/desactivar el procesamiento de cada proveedor, establecer credenciales de RC, configurar el Motor de Colas (`sqlite` vs `redis`), y ajustar los intervalos de purga.
 - **Visor de Bases de Datos (DB Viewer):** Herramienta administrativa para consultar, sin salir de la web, la estructura y los datos en vivo de cualquier tabla en cualquiera de las bases de datos dinámicas (`.db`) del ecosistema.

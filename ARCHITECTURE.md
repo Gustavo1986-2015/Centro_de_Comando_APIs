@@ -54,7 +54,7 @@ graph TD
         P -->|Lee últimos 200 eventos globales| G
         P -->|Calcula latencias de red y transmisión| P
         P -->|Resuelve Medianoche Local| P
-        P -->|Retorna JSON de estadísticas| Q[Frontend UI: app/templates/index.html]
+        P -->|Server-Sent Events (SSE) Stream| Q[Frontend UI: app/templates/index.html]
     end
 ```
 
@@ -75,8 +75,8 @@ A continuación se detalla la matriz de impacto y el rol de cada script en el si
 | **`app/worker/processor.py`** | En ejecución 24/7 (Loop asíncrono) | Parámetros de `system_config_global.db` | Consume eventos de las DBs de proveedores, los envía a RC y escribe estadísticas de éxito/falla | Core del despacho. Actúa como **Director** orquestando sub-workers dinámicos auto-escalables en paralelo, procesamiento Batch y purga. |
 | **`app/core/queue_factory.py`** | Al invocar un worker | String provider_name, env | Instancia el motor abstracto (`SQLiteQueue` o `RedisQueue`) | Factoría que resuelve en tiempo de ejecución qué motor usar según la configuración del proveedor (Modelo Híbrido). |
 | **`app/services/rc_soap.py`** | Llamado por el Worker | Objetos de datos `RCCanonicalModel` | Construye el XML SOAP, interactúa con el WSDL de RC y gestiona la caché de tokens | Integrador SOAP. Controla la autenticación persistente y re-autenticación automática si expira el token. |
-| **`app/api/routers/dashboard.py`** | Consulta del Frontend (cada 2 seg) | Datos de bases de datos globales e individuales | Payload JSON formateado con métricas y lista de eventos | API de control. consolida estadísticas, calcula desfase satelital y tiempo de cola en el Hub. |
-| **`app/templates/index.html`** | Cargado en navegador por operador | Respuestas JSON de `/api/stats` e `/api/config` | Renderiza grillas en caliente, temporizadores de backoff e histórico consolidado | Consola de visualización. Provee filtros interactivos y el simulador de webhooks. |
+| **`app/api/routers/dashboard.py`** | Streaming SSE ininterrumpido | Datos de bases de datos globales e individuales | Payload JSON transmitido en vivo (Server-Sent Events) | API de control. consolida estadísticas, calcula desfase satelital y empuja métricas al cliente. |
+| **`app/templates/index.html`** | Cargado en navegador por operador | Stream de Server-Sent Events (SSE) | Renderiza grillas en caliente, Sparklines, temporizadores y modo compacto | Consola de visualización. Provee filtros interactivos, Skeleton Screens y el simulador de webhooks. |
 
 ---
 
