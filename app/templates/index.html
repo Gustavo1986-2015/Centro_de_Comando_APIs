@@ -1388,25 +1388,25 @@
 
         const _providerEventCounts = {};
         const _seenEventIds = new Set();
+        const SEEN_IDS_MAX = 2000;
         const RATE_WINDOW_MS = 60_000;
 
         function updateProviderBar(recentEvents) {
             const now = Date.now();
             recentEvents.forEach(ev => {
-                const key = ev.provider.toLowerCase();
-                const eventId = ev.id || (key + '_' + ev.time_received + '_' + ev.plate);
-                
-                if (!_seenEventIds.has(eventId)) {
-                    _seenEventIds.add(eventId);
-                    if (!_providerEventCounts[key]) _providerEventCounts[key] = [];
-                    _providerEventCounts[key].push(now);
+                if (!ev.id || _seenEventIds.has(ev.id)) return;  // ya contado, ignorar
+
+                // Agregar al Set con límite de tamaño (evita memory leak en sesiones largas)
+                _seenEventIds.add(ev.id);
+                if (_seenEventIds.size > SEEN_IDS_MAX) {
+                    // Eliminar el primer elemento insertado (el más antiguo)
+                    _seenEventIds.delete(_seenEventIds.values().next().value);
                 }
+
+                const key = ev.provider.toLowerCase();
+                if (!_providerEventCounts[key]) _providerEventCounts[key] = [];
+                _providerEventCounts[key].push(now);
             });
-            
-            // Prevent memory leak
-            if (_seenEventIds.size > 50000) {
-                _seenEventIds.clear();
-            }
 
             Object.keys(_providerEventCounts).forEach(key => {
                 _providerEventCounts[key] = _providerEventCounts[key]

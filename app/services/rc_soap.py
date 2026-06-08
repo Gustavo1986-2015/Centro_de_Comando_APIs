@@ -44,7 +44,7 @@ class RCSOAPClient:
 
     def _load_token_from_cache(self):
         """Carga el token desde el archivo de caché en disco si existe y es válido."""
-        cache_path = "./db/rc_token_cache_{self.username}.json"
+        cache_path = f"./db/rc_token_cache_{self.username}.json"
         if not os.path.exists(cache_path):
             return None
         try:
@@ -66,7 +66,7 @@ class RCSOAPClient:
 
     def _save_token_to_cache(self, token: str, expires_at: datetime):
         """Guarda el token en el archivo de caché en disco."""
-        cache_path = "./db/rc_token_cache_{self.username}.json"
+        cache_path = f"./db/rc_token_cache_{self.username}.json"
         try:
             os.makedirs(os.path.dirname(cache_path), exist_ok=True)
             with open(cache_path, "w", encoding="utf-8") as f:
@@ -82,7 +82,7 @@ class RCSOAPClient:
         """Borra la caché de token en memoria y en disco."""
         self._token = None
         self._token_expires_at = None
-        cache_path = "./db/rc_token_cache_{self.username}.json"
+        cache_path = f"./db/rc_token_cache_{self.username}.json"
         if os.path.exists(cache_path):
             try:
                 os.remove(cache_path)
@@ -332,7 +332,7 @@ class RCSOAPClient:
             return results[0]
         return False, f"rc_err_empty_{int(datetime.now().timestamp())}", "No response from batch dispatcher"
 
-rc_client = RCSOAPClient()
+
 
 
 
