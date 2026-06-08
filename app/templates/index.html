@@ -715,6 +715,29 @@
         }
 
         .hidden { display: none !important; }
+
+        .sparkline-wrap {
+            margin-top: 0.5rem;
+            height: 30px;
+            overflow: hidden;
+        }
+        .sparkline {
+            width: 100%;
+            height: 100%;
+            display: block;
+        }
+        .sparkline polyline {
+            fill: none;
+            stroke-width: 1.5;
+            vector-effect: non-scaling-stroke;
+            stroke-linecap: round;
+            stroke-linejoin: round;
+            opacity: 0.7;
+        }
+        #spark-pending  polyline { stroke: #F59E0B; }
+        #spark-sent     polyline { stroke: var(--color-green-vibrant); }
+        #spark-failed   polyline { stroke: var(--color-red); }
+        #spark-retries  polyline { stroke: var(--color-orange); }
     
     </style>
 </head>
@@ -749,18 +772,30 @@
             <div class="card pending-card" style="cursor: pointer; transition: transform 0.2s;" onclick="setFilterStatus('pending')" onmouseover="this.style.transform='scale(1.02)'" onmouseout="this.style.transform='scale(1)'" title="Clic para filtrar pendientes">
                 <div class="card-title">En Cola (Pendientes)</div>
                 <div class="card-value" id="val-pending">0</div>
+                <div class="sparkline-wrap">
+                    <svg class="sparkline" id="spark-pending" viewBox="0 0 120 30" preserveAspectRatio="none"></svg>
+                </div>
             </div>
             <div class="card" style="cursor: pointer; transition: transform 0.2s;" onclick="setFilterStatus('sent')" onmouseover="this.style.transform='scale(1.02)'" onmouseout="this.style.transform='scale(1)'" title="Clic para filtrar enviados">
                 <div class="card-title">Enviados (Hoy)</div>
                 <div class="card-value" id="val-sent">0</div>
+                <div class="sparkline-wrap">
+                    <svg class="sparkline" id="spark-sent" viewBox="0 0 120 30" preserveAspectRatio="none"></svg>
+                </div>
             </div>
             <div class="card failed" style="cursor: pointer; transition: transform 0.2s;" onclick="setFilterStatus('failed')" onmouseover="this.style.transform='scale(1.02)'" onmouseout="this.style.transform='scale(1)'" title="Clic para filtrar fallidos">
                 <div class="card-title">Fallidos (Hoy)</div>
                 <div class="card-value" id="val-failed">0</div>
+                <div class="sparkline-wrap">
+                    <svg class="sparkline" id="spark-failed" viewBox="0 0 120 30" preserveAspectRatio="none"></svg>
+                </div>
             </div>
             <div class="card" style="border-top: 4px solid var(--color-yellow); cursor: pointer; transition: transform 0.2s;" onclick="setFilterStatus('pending')" onmouseover="this.style.transform='scale(1.02)'" onmouseout="this.style.transform='scale(1)'" title="Clic para filtrar pendientes en reintento">
                 <div class="card-title">En Reintento</div>
                 <div class="card-value" id="val-retries" style="color: var(--color-yellow);">0</div>
+                <div class="sparkline-wrap">
+                    <svg class="sparkline" id="spark-retries" viewBox="0 0 120 30" preserveAspectRatio="none"></svg>
+                </div>
             </div>
             <div class="card" style="border-top: 4px solid #8b5cf6;" title="Tiempo promedio de espera en el Hub. Por estándar empresarial y seguridad, el código implementa 1.0s de ventana fija (Micro-Batching) para agrupar ráfagas y proteger el endpoint de Recurso Confiable.">
                 <div class="card-title">Latencia Hub AC</div>
@@ -1209,6 +1244,36 @@
 
     <script>
         const _metricState = {};
+        const SPARK_HISTORY = {
+            'spark-pending':  new Array(60).fill(0),
+            'spark-sent':     new Array(60).fill(0),
+            'spark-failed':   new Array(60).fill(0),
+            'spark-retries':  new Array(60).fill(0),
+        };
+
+        function updateSparkline(sparkId, metricId) {
+            const history = SPARK_HISTORY[sparkId];
+            history.push(_metricState[metricId] || 0);
+            history.shift();
+
+            const svg = document.getElementById(sparkId);
+            if (!svg) return;
+
+            const max = Math.max(...history, 1);
+            const W = 120, H = 28;
+            const pts = history.map((v, i) => {
+                const x = (i / (history.length - 1)) * W;
+                const y = H - (v / max) * H;
+                return `${x.toFixed(1)},${y.toFixed(1)}`;
+            }).join(' ');
+
+            let poly = svg.querySelector('polyline');
+            if (!poly) {
+                poly = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
+                svg.appendChild(poly);
+            }
+            poly.setAttribute('points', pts);
+        }
         let currentConfigs = [];
         let statsInterval;
         
@@ -1530,6 +1595,11 @@
                 updateValue('val-retries', data.retries);
                 updateValue('val-latency', (data.avg_latency_sec || 0).toFixed(2) + 's');
                 updateValue('val-rc-latency', (data.avg_rc_latency_sec || 0).toFixed(2) + 's');
+
+                updateSparkline('spark-pending',  'val-pending');
+                updateSparkline('spark-sent',     'val-sent');
+                updateSparkline('spark-failed',   'val-failed');
+                updateSparkline('spark-retries',  'val-retries');
 
                 allRecentEvents = data.recent;
                 
