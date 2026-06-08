@@ -11,7 +11,7 @@ El siguiente diagrama detalla cómo viaja la información desde que el camión r
 ```mermaid
 graph TD
     %% Bloque Ingesta Webhook (PUSH)
-    subgraph 1. Ingesta y Normalización
+    subgraph 1a. Ingesta y Normalización (PUSH)
         A[Proveedor: Schmitz/Otros] -->|POST HTTP /provider/webhook?env=test| B[FastAPI: app/api/routers/schmitz.py]
         B -->|1. Resguardo Crudo| C[Auditor: app/core/auditor.py]
         C -->|Escribe logs diarios| D[(audit/schmitz_test/schmitz_test.jsonl)]
@@ -19,6 +19,16 @@ graph TD
         E -->|Mapea JSON a Canonical Model| F[Validador Pydantic: app/schemas/canonical.py]
         F -->|3. Persistencia Local| G[(db/schmitz_test.db)]
         B -->|Retorna HTTP 202 Accepted| A
+    end
+
+    %% Bloque Ingesta Pull (Cron-Driven)
+    subgraph 1b. Ingesta PULL (APIs Externas)
+        A2[Pull Engine: app/worker/pull_engine.py] -->|1. Lee Config e IMEIs| I[(db/system_config_global.db)]
+        A2 -->|2. HTTP GET Asíncrono| B2[API Externa Ej. Protrack]
+        B2 -->|3. Resguardo Crudo| C2[Auditor]
+        B2 -->|4. Adaptación Dinámica| E2[DynamicMapper: app/core/dynamic_mapper.py]
+        E2 -->|Mapea y Parsea Fechas Unix| F2[Validador Pydantic]
+        F2 -->|5. Persistencia Local| G
     end
 
     %% Bloque Worker de Despacho (Asíncrono)
@@ -57,8 +67,10 @@ A continuación se detalla la matriz de impacto y el rol de cada script en el si
 | Script / Componente | Frecuencia / Gatillo | Entrada | Salida / Impacto | Rol Principal |
 | :--- | :--- | :--- | :--- | :--- |
 | **`main.py`** | Al arrancar la aplicación | Ninguna | Inicializa FastAPI y crea la tarea del Worker en background | Punto de entrada del Hub. Registra todos los routers del sistema. |
-| **`app/api/routers/schmitz.py`** | Evento PUSH del proveedor | Payload JSON de Schmitz | Escribe en Logs de Auditoría y guarda el evento normalizado en `schmitz_{env}.db` | Webhook receptor de Schmitz. Realiza la autenticación, auditoría y encolamiento inicial. |
-| **`app/providers/schmitz/mapper.py`** | Llamado por `schmitz.py` | JSON crudo de Schmitz | Modelo de datos `RCCanonicalModel` (Pydantic) | Adapta, parsea a UTC 0 y normaliza la telemetría (ej. limpia coordenadas y fuerza velocidad nula a `0.0`). |
+| **`app/api/routers/schmitz.py`** | Evento PUSH del proveedor | Payload JSON de Schmitz | Escribe en Logs de Auditoría y guarda el evento normalizado en `schmitz_{env}.db` | Webhook receptor estático de Schmitz. Realiza la autenticación, auditoría y encolamiento inicial. |
+| **`app/api/routers/dynamic_webhook.py`** | Evento PUSH genérico | Payload JSON | Evento normalizado según Diccionario | Webhook iPaaS universal que admite mapeos sin código para cualquier integrador. |
+| **`app/worker/pull_engine.py`** | Cron interno (Ej. cada 30s) | Configuraciones PULL y Diccionario | Eventos capturados hacia base de datos del proveedor | Motor PULL asíncrono para consumir APIs externas (como Protrack) sin bloquear el Worker. |
+| **`app/core/dynamic_mapper.py`** | Llamado por PULL/PUSH dinámicos | JSON crudo y Reglas iPaaS | Modelo de datos `RCCanonicalModel` | Traductor universal JSON Path. Inyecta identificadores desde el Diccionario y parsea Fechas Unix numéricas dinámicamente. |
 | **`app/core/auditor.py`** | Llamado por routers de webhooks | Payload JSON original | Archivos diarios `.jsonl` bajo `audit/{provider}_{env}/` | Caja negra. Asegura el resguardo permanente de la información cruda antes de cualquier transformación. |
 | **`app/worker/processor.py`** | En ejecución 24/7 (Loop asíncrono) | Parámetros de `system_config_global.db` | Consume eventos de las DBs de proveedores, los envía a RC y escribe estadísticas de éxito/falla | Core del despacho. Actúa como **Director** orquestando sub-workers dinámicos auto-escalables en paralelo, procesamiento Batch y purga. |
 | **`app/core/queue_factory.py`** | Al invocar un worker | String provider_name, env | Instancia el motor abstracto (`SQLiteQueue` o `RedisQueue`) | Factoría que resuelve en tiempo de ejecución qué motor usar según la configuración del proveedor (Modelo Híbrido). |

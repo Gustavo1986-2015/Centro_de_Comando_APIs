@@ -12,6 +12,7 @@ El sistema ha sido diseñado para escalar a más de 15 proveedores simultáneos 
 - **Modelo Canónico (Pydantic):** Validación estricta. Todo lo que ingresa de un externo se transforma a un formato estándar de Assistcargo antes de viajar a Recurso Confiable.
 - **Seguridad Perimetral (Toggle Switch):** Los Webhooks receptores cuentan con validación de "API Keys" mediante cabeceras HTTP, las cuales pueden activarse/desactivarse en caliente desde el archivo `.env` para facilitar pruebas.
 - **Auditoría Dinámica y Recuperación Ante Desastres:** Cada payload crudo recibido se guarda instantáneamente en un `.jsonl` rotativo por proveedor. Adicionalmente, ante apagones de servidor bruscos, el Hub recupera automáticamente eventos "atascados" devolviéndolos a la cola principal.
+- **Motor PULL Dinámico (Cron-Driven):** Además de la ingesta PUSH (Webhooks), el Hub incorpora un motor PULL inteligente impulsado por `httpx` asíncrono. Permite orquestar consumos periódicos (ej. cada 30 segundos) hacia APIs externas (como Protrack). Extrae automáticamente la lista de activos a consumir desde un Diccionario de Configuración en caliente (`provider_dictionary`) e inyecta propiedades dinámicas al vuelo, incluyendo el parseo matemático avanzado de fechas crudas (Unix Timestamps).
 
 ### 🛠️ Tecnologías Clave Utilizadas
 - **Python 3.12+** / **FastAPI**: Backend de altísimo rendimiento asíncrono.
@@ -32,6 +33,13 @@ El servidor incluye una interfaz web interactiva (Vanilla JS, CSS Premium, sin f
 - **Configuración Global por API:** Panel visual para activar/desactivar el procesamiento de cada proveedor, establecer credenciales de RC, configurar el Motor de Colas (`sqlite` vs `redis`), y ajustar los intervalos de purga.
 - **Visor de Bases de Datos (DB Viewer):** Herramienta administrativa para consultar, sin salir de la web, la estructura y los datos en vivo de cualquier tabla en cualquiera de las bases de datos dinámicas (`.db`) del ecosistema.
 - **Simulador de Webhooks Blindado:** Herramienta interna para inyectar payloads de prueba, que desvía sus operaciones hacia un entorno `test_unit` para nunca corromper los datos reales del cliente en el visor.
+
+## 🔌 Integration Studio (iPaaS)
+La plataforma ha evolucionado para convertirse en un *Integration Platform as a Service*. Ahora es posible conectar nuevas empresas de rastreo GPS sin necesidad de programar líneas de código.
+
+- **API Inspector (Postman Integrado):** Herramienta embebida con modos PULL (para extraer datos vía GET/POST saltando restricciones de navegador) y PUSH (genera una URL temporal de webhook para atrapar datos enviados por el proveedor en tiempo real).
+- **Mapeador Visual (No-Code Mapper):** Una interfaz gráfica donde puedes vincular campos de un Payload JSON entrante (usando rutas `JSON Path` y soporte para fallbacks `||`) directamente hacia nuestro Modelo Canónico.
+- **Webhook Dinámico Universal:** Un único Endpoint maestro (`POST /webhook/dynamic/{proveedor}`) capaz de recibir cualquier estructura de datos del mundo y traducirla automáticamente basándose en las reglas dibujadas en el Studio. Todo con compatibilidad nativa para bases de datos **PostgreSQL**.
 
 ## 💻 Ejecución en Desarrollo (Local)
 1. Instalar dependencias:
