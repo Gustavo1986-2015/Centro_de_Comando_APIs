@@ -277,6 +277,27 @@
             font-size: 0.95rem;
         }
 
+        /* --- Semántica visual por estado de fila --- */
+        tr.row-failed {
+            border-left: 3px solid var(--color-red);
+            background: rgba(239, 68, 68, 0.04);
+        }
+        tr.row-retrying {
+            border-left: 3px solid var(--color-orange);
+            background: rgba(249, 115, 22, 0.04);
+        }
+        tr.row-pending {
+            border-left: 3px solid var(--color-yellow);
+            background: rgba(251, 191, 36, 0.03);
+        }
+        tr.row-sent {
+            border-left: 3px solid transparent;
+        }
+        tr.row-failed td:first-child,
+        tr.row-retrying td:first-child {
+            padding-left: calc(0.8rem - 3px);
+        }
+
         .badge {
             padding: 0.25rem 0.75rem;
             border-radius: 20px;
@@ -1587,6 +1608,12 @@
 
             filtered.forEach((ev, i) => {
                 const tr = document.createElement('tr');
+                
+                const isRetrying = ev.status === 'pending' && ev.retry_count > 0;
+                if (ev.status === 'failed')       tr.classList.add('row-failed');
+                else if (isRetrying)              tr.classList.add('row-retrying');
+                else if (ev.status === 'pending') tr.classList.add('row-pending');
+                else if (ev.status === 'sent')    tr.classList.add('row-sent');
                 
                 let statusClass = 'pending';
                 let statusText = 'En Cola';
