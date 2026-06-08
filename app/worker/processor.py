@@ -239,6 +239,10 @@ async def process_provider_events(provider: str, env: str):
             await queue.mark_batch_as_failed(provider, env, all_updates_to_fail)
         if all_updates_to_sent:
             await queue.mark_batch_as_sent(provider, env, all_updates_to_sent)
+            
+        if total_sent > 0 or total_failed > 0:
+            # Incremento atómico del histórico
+            asyncio.create_task(asyncio.to_thread(increment_daily_stats, provider, env, total_sent, total_failed))
         
         soap_avg_ms = (soap_ms_total / len(batches)) if len(batches) > 0 else 0
         
@@ -283,16 +287,8 @@ def update_daily_stats(provider: str, env: str):
             func.coalesce(NormalizedRCEvent.retry_count, 0) == 0
         ).first()
 
-        # Conteos totales (SÍ incluyen los reintentados y fallidos)
-        sent_count = db_prov.query(func.count(NormalizedRCEvent.id)).filter(
-            NormalizedRCEvent.status == "sent",
-            NormalizedRCEvent.created_at >= today_start
-        ).scalar() or 0
-        
-        failed_count = db_prov.query(func.count(NormalizedRCEvent.id)).filter(
-            NormalizedRCEvent.status == "failed",
-            NormalizedRCEvent.created_at >= today_start
-        ).scalar() or 0
+        # Conteos totales (Ya NO se recalculan aquí para evitar pérdida de datos si la cola se purga)
+        # sent_count y failed_count se incrementarán atómicamente en el process_pending_events
         
         avg_hub = success_stats.avg_hub if success_stats else None
         avg_transmission = success_stats.avg_transmission if success_stats else None
@@ -318,23 +314,55 @@ def update_daily_stats(provider: str, env: str):
                 date=today_date,
                 provider=provider,
                 env=env,
-                sent_count=sent_count,
-                failed_count=failed_count,
+                sent_count=0,
+                failed_count=0,
                 avg_transmission_latency_sec=avg_transmission,
                 avg_hub_latency_sec=avg_hub,
                 avg_rc_latency_sec=avg_rc
             )
             db_global.add(stat)
         else:
-            stat.sent_count = sent_count
-            stat.failed_count = failed_count
-            stat.avg_transmission_latency_sec = avg_transmission
-            stat.avg_hub_latency_sec = avg_hub
-            stat.avg_rc_latency_sec = avg_rc
+            if avg_transmission is not None: stat.avg_transmission_latency_sec = avg_transmission
+            if avg_hub is not None: stat.avg_hub_latency_sec = avg_hub
+            if avg_rc is not None: stat.avg_rc_latency_sec = avg_rc
             
         db_global.commit()
     except Exception as e:
         logger.error(f"Error al guardar DailyStat en system_config para {provider}_{env}: {e}")
+        db_global.rollback()
+    finally:
+        db_global.close()
+
+def increment_daily_stats(provider: str, env: str, sent_added: int, failed_added: int):
+    """Incrementa atómicamente los contadores de estadísticas del día."""
+    if sent_added == 0 and failed_added == 0:
+        return
+    from datetime import datetime
+    db_global = get_session("system_config", "global")
+    try:
+        today_date = datetime.now().date()
+        stat = db_global.query(DailyStat).filter(
+            DailyStat.date == today_date,
+            DailyStat.provider == provider,
+            DailyStat.env == env
+        ).first()
+        
+        if not stat:
+            stat = DailyStat(
+                date=today_date,
+                provider=provider,
+                env=env,
+                sent_count=sent_added,
+                failed_count=failed_added
+            )
+            db_global.add(stat)
+        else:
+            stat.sent_count += sent_added
+            stat.failed_count += failed_added
+            
+        db_global.commit()
+    except Exception as e:
+        logger.error(f"Error incrementando DailyStat para {provider}_{env}: {e}")
         db_global.rollback()
     finally:
         db_global.close()

@@ -58,8 +58,10 @@ class SQLiteQueue(MessageQueueInterface):
         return await asyncio.to_thread(self._get_pending_batch_sync, provider, env, limit)
 
     def _mark_batch_as_sent_sync(self, provider: str, env: str, updates: List[dict]) -> None:
+        from datetime import timezone
         with session_context(provider, env) as db:
             if updates:
+                now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
                 mappings = [{
                     "id": u['event_id'],
                     "status": "sent",
@@ -68,7 +70,7 @@ class SQLiteQueue(MessageQueueInterface):
                     "rc_latency_sec": u['elapsed_sec'],
                     "retry_count": 0,
                     "next_retry_at": None,
-                    "updated_at": datetime.now()
+                    "updated_at": now_utc
                 } for u in updates]
                 db.bulk_update_mappings(NormalizedRCEvent, mappings)
 
@@ -76,15 +78,17 @@ class SQLiteQueue(MessageQueueInterface):
         await asyncio.to_thread(self._mark_batch_as_sent_sync, provider, env, updates)
 
     def _mark_batch_as_failed_sync(self, provider: str, env: str, updates: List[dict]) -> None:
+        from datetime import timezone
         with session_context(provider, env) as db:
             if updates:
+                now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
                 mappings = [{
                     "id": u['event_id'],
                     "status": "failed",
                     "rc_response": u['rc_response'],
                     "job_id": u['job_id'],
                     "rc_latency_sec": u['elapsed_sec'],
-                    "updated_at": datetime.now()
+                    "updated_at": now_utc
                 } for u in updates]
                 db.bulk_update_mappings(NormalizedRCEvent, mappings)
 
@@ -92,8 +96,10 @@ class SQLiteQueue(MessageQueueInterface):
         await asyncio.to_thread(self._mark_batch_as_failed_sync, provider, env, updates)
 
     def _schedule_batch_retry_sync(self, provider: str, env: str, updates: List[dict]) -> None:
+        from datetime import timezone
         with session_context(provider, env) as db:
             if updates:
+                now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
                 mappings = [{
                     "id": u['event_id'],
                     "status": "pending",
@@ -102,7 +108,7 @@ class SQLiteQueue(MessageQueueInterface):
                     "rc_latency_sec": u['elapsed_sec'],
                     "retry_count": u['retry_count'],
                     "next_retry_at": u['next_retry_at'],
-                    "updated_at": datetime.now()
+                    "updated_at": now_utc
                 } for u in updates]
                 db.bulk_update_mappings(NormalizedRCEvent, mappings)
 
