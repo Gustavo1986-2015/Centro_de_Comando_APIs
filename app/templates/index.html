@@ -794,10 +794,48 @@
             0%   { background-position:  200% 0; }
             100% { background-position: -200% 0; }
         }
+
+        .disconnect-banner {
+            position: fixed;
+            top: 0; left: 0; right: 0;
+            z-index: 9999;
+            background: rgba(239, 68, 68, 0.92);
+            backdrop-filter: blur(4px);
+            color: white;
+            padding: 0.6rem 2rem;
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            font-size: 0.9rem;
+            font-weight: 500;
+            animation: slideDown 0.3s ease;
+        }
+        @keyframes slideDown {
+            from { transform: translateY(-100%); }
+            to   { transform: translateY(0); }
+        }
+        .disconnect-icon      { font-size: 1.1rem; }
+        .disconnect-countdown { color: rgba(255,255,255,0.75); font-size: 0.82rem; }
+        .reconnect-btn {
+            margin-left: auto;
+            background: rgba(255,255,255,0.2);
+            border: 1px solid rgba(255,255,255,0.4);
+            color: white; padding: 3px 12px;
+            border-radius: 6px; cursor: pointer;
+            font-size: 0.82rem; transition: background 0.2s;
+        }
+        .reconnect-btn:hover { background: rgba(255,255,255,0.35); }
     
     </style>
 </head>
 <body>
+
+    <div id="disconnect-banner" class="disconnect-banner" style="display:none;">
+        <span class="disconnect-icon">⚠</span>
+        <span id="disconnect-message">Conexión perdida con el servidor</span>
+        <span id="disconnect-countdown" class="disconnect-countdown"></span>
+        <button onclick="manualReconnect()" class="reconnect-btn">Reconectar ahora</button>
+    </div>
 
     <!-- Sidebar & Overlay -->
     <div class="overlay" id="overlay" onclick="toggleMenu()"></div>
@@ -1383,6 +1421,56 @@
             ).join('');
         }
 
+        let _reconnectTimer    = null;
+        let _reconnectDelay    = 5;
+        let _countdownInterval = null;
+
+        function showDisconnectBanner(message = 'Conexión perdida con el servidor') {
+            const banner = document.getElementById('disconnect-banner');
+            const msg    = document.getElementById('disconnect-message');
+            const cdEl   = document.getElementById('disconnect-countdown');
+            if (!banner) return;
+            msg.textContent    = message;
+            banner.style.display = 'flex';
+
+            let remaining = _reconnectDelay;
+            clearInterval(_countdownInterval);
+            cdEl.textContent = `— reintentando en ${remaining}s`;
+            _countdownInterval = setInterval(() => {
+                remaining--;
+                cdEl.textContent = remaining > 0
+                    ? `— reintentando en ${remaining}s` : '— conectando...';
+                if (remaining <= 0) clearInterval(_countdownInterval);
+            }, 1000);
+
+            clearTimeout(_reconnectTimer);
+            _reconnectTimer = setTimeout(manualReconnect, _reconnectDelay * 1000);
+            _reconnectDelay = Math.min(_reconnectDelay * 2, 60);
+        }
+
+        function hideDisconnectBanner() {
+            const banner = document.getElementById('disconnect-banner');
+            if (banner) banner.style.display = 'none';
+            clearTimeout(_reconnectTimer);
+            clearInterval(_countdownInterval);
+            _reconnectDelay = 5;
+        }
+
+        function manualReconnect() {
+            clearTimeout(_reconnectTimer);
+            clearInterval(_countdownInterval);
+            if (window.evtSource) {
+                window.evtSource.close();
+            }
+            window.evtSource = new EventSource('/api/stats/stream');
+            window.evtSource.onmessage = e => renderStats(JSON.parse(e.data));
+            window.evtSource.onerror = () => {
+                document.getElementById('sync-status').textContent = 'Pérdida de Conexión';
+                document.querySelector('.pulse').style.backgroundColor = '#EF4444';
+                showDisconnectBanner('Conexión SSE interrumpida — reconectando...');
+            };
+        }
+
         let currentConfigs = [];
         let statsInterval;
         
@@ -1681,12 +1769,14 @@
                 window.evtSource.onerror = () => {
                     document.getElementById('sync-status').textContent = 'Pérdida de Conexión';
                     document.querySelector('.pulse').style.backgroundColor = '#EF4444';
+                    showDisconnectBanner('Conexión SSE interrumpida — reconectando...');
                 };
             }
         }
 
         function renderStats(data) {
             try {
+                hideDisconnectBanner();
                 // If filters are active, we must compute the local counts from data.recent 
                 // OR we just use global counts. We will use global counts for simplicity 
                 // or compute from data.recent if filtered.
