@@ -1396,6 +1396,12 @@
             recentEvents.forEach(ev => {
                 if (!ev.id || _seenEventIds.has(ev.id)) return;  // ya contado, ignorar
 
+                // Silenciar eventos históricos que tienen más de 60 segundos
+                if (ev.time) {
+                    const eventTimestamp = new Date(ev.time.replace(' (UTC)', 'Z')).getTime();
+                    if (!isNaN(eventTimestamp) && now - eventTimestamp > RATE_WINDOW_MS) return;
+                }
+
                 // Agregar al Set con límite de tamaño (evita memory leak en sesiones largas)
                 _seenEventIds.add(ev.id);
                 if (_seenEventIds.size > SEEN_IDS_MAX) {
