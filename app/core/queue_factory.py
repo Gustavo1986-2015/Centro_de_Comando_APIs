@@ -31,6 +31,7 @@ class QueueFactory:
                 backend = os.getenv("QUEUE_BACKEND", "sqlite").lower()
 
             if backend == "redis":
+                logger.critical(f"[QueueFactory] ¡ALERTA! RedisQueue está instanciado para {key} pero NO ESTÁ IMPLEMENTADO.")
                 logger.info(f"[QueueFactory] Inicializando REDIS para {key}")
                 cls._instances[key] = RedisQueue()
             else:

@@ -76,38 +76,28 @@ class RedisQueue(MessageQueueInterface):
         return 0
 
     async def get_pending_batch(self, provider: str, env: str, limit: int = 150) -> List[Any]:
-        """
-        PSEUDOCÓDIGO STREAMS:
-        client.xreadgroup(
-            groupname="workers", 
-            consumername=f"worker_{os.getpid()}",
-            streams={f"gps:{provider}:{env}:events": ">"},
-            count=limit
+        raise NotImplementedError(
+            "[RedisQueue] get_pending_batch no está implementado. "
+            "Usar queue_backend='sqlite' hasta completar la migración a Redis Streams."
         )
-        """
-        return []
 
     async def mark_batch_as_sent(self, provider: str, env: str, updates: List[dict]) -> None:
-        """
-        PSEUDOCÓDIGO STREAMS:
-        client.xack(f"gps:{provider}:{env}:events", "workers", *[u['event_id'] for u in updates])
-        """
-        pass
+        raise NotImplementedError(
+            "[RedisQueue] mark_batch_as_sent no está implementado. "
+            "Usar queue_backend='sqlite' hasta completar la migración a Redis Streams."
+        )
 
     async def mark_batch_as_failed(self, provider: str, env: str, updates: List[dict]) -> None:
-        """
-        PSEUDOCÓDIGO STREAMS: DLQ (Dead Letter Queue)
-        Movemos los fallidos definitivos a otra cola o los borramos del grupo para que no vuelvan a procesarse.
-        """
-        pass
+        raise NotImplementedError(
+            "[RedisQueue] mark_batch_as_failed no está implementado. "
+            "Usar queue_backend='sqlite' hasta completar la migración a Redis Streams."
+        )
 
     async def schedule_batch_retry(self, provider: str, env: str, updates: List[dict]) -> None:
-        """
-        PSEUDOCÓDIGO STREAMS: 
-        1. XACK (confirmar del stream principal para no bloquear)
-        2. ZADD gps:{provider}:{env}:retry_queue {u['next_retry_at'].timestamp()} {u['event_id']}
-        """
-        pass
+        raise NotImplementedError(
+            "[RedisQueue] schedule_batch_retry no está implementado. "
+            "Usar queue_backend='sqlite' hasta completar la migración a Redis Streams."
+        )
 
     # Mantener retrocompatibilidad con métodos únicos heredados de la interfaz base si aplica
     async def mark_as_sent(self, provider: str, env: str, event_id: int, elapsed_sec: float, rc_response: str, job_id: str) -> None:

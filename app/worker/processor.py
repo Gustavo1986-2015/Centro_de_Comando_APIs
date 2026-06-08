@@ -7,14 +7,12 @@ from datetime import datetime, timezone, timedelta, date
 from app.database import get_session
 from app.models.db_models import NormalizedRCEvent
 from app.schemas.canonical import RCCanonicalModel
-from app.services.rc_soap import rc_client
+from app.services.rc_soap import get_rc_client
 
 from app.models.config_models import ProviderConfig, DailyStat
 
 logger = logging.getLogger(__name__)
 
-# Caché en memoria para rastrear reintentos por eventos fallidos debido a errores de autenticación o red
-RETRIES_CACHE = {}
 
 # Registro global de eventos para despertar a los workers de forma instantánea
 WORKER_TRIGGERS = {}
@@ -28,7 +26,7 @@ def trigger_worker(provider: str, env: str):
         except Exception:
             pass
 
-async def send_batch_and_measure(canonical_events):
+async def send_batch_and_measure(canonical_events, rc_client):
     start_time = time.time()
     results = await rc_client.send_events_batch(canonical_events)
     elapsed = time.time() - start_time
@@ -73,6 +71,14 @@ async def process_provider_events(provider: str, env: str):
         # Contadores compartidos (se acumulan al final)
         batch_metrics = []
         
+        # Leer credenciales desde config
+        db_conf = get_session("system_config", "global")
+        conf = db_conf.query(ProviderConfig).filter_by(provider_name=provider, env=env).first()
+        rc_u = conf.rc_user if conf else None
+        rc_p = conf.rc_password if conf else None
+        db_conf.close()
+        rc_client = get_rc_client(rc_u, rc_p)
+        
         async def process_single_batch(batch, batch_idx):
             """Tarea auto-contenida: SOAP + escritura en BD inmediata para un solo sub-lote."""
             metrics = {"sent": 0, "failed": 0, "retry": 0, "soap_ms": 0}
@@ -103,7 +109,7 @@ async def process_provider_events(provider: str, env: str):
             
             # Disparar SOAP y medir
             try:
-                results, elapsed_sec = await send_batch_and_measure(canonical_events)
+                results, elapsed_sec = await send_batch_and_measure(canonical_events, rc_client)
                 metrics["soap_ms"] = elapsed_sec * 1000
                 batch_outcome = (results, elapsed_sec)
             except Exception as e:
@@ -416,9 +422,7 @@ async def api_worker_loop(provider: str, env: str):
         async with semaphore:
             return await process_provider_events(provider, env)
     
-    # Conjunto para mantener referencias a las tareas en background y evitar que el garbage collector las elimine
-    background_tasks = set()
-    
+
     while True:
         run_interval = 5
         try:
@@ -432,7 +436,7 @@ async def api_worker_loop(provider: str, env: str):
                     # El worker simplemente procesa un lote de hasta 2000 eventos.
                     # Internamente `process_provider_events` particiona en sub-lotes de 50 
                     # y los envía en paralelo.
-                    has_more = await process_provider_events(provider, env)
+                    has_more = await process_with_semaphore()
                     
                     # Si aún quedan eventos, hacemos que el loop vuelva a ejecutarse casi de inmediato.
                     if has_more:
@@ -522,182 +526,33 @@ async def worker_loop():
     finally:
         db.close()
         
-    tasks = []
-    for provider, env in providers:
-        task = asyncio.create_task(api_worker_loop(provider, env))
-        tasks.append(task)
-        # Lanzar loop de polling PULL para Protrack
-        if provider == "protrack":
-            poll_task = asyncio.create_task(protrack_poll_loop(provider, env))
-            tasks.append(poll_task)
-        
-    logger.info(f"Registrados {len(tasks)} sub-workers independientes en ejecución paralela.")
-    await asyncio.gather(*tasks)
-
-
-# ============================================================
-# PROTRACK — Loop de Polling PULL
-# ============================================================
-
-async def poll_protrack(provider: str, env: str):
-    """
-    Consulta la API Protrack365 (PULL):
-      1. Lista dispositivos -> obtiene IMEIs y metadata
-      2. Consulta posición actual (/api/track)
-      3. Mapea al modelo canónico
-      4. Inserta en BD como eventos 'pending'
-      5. Despierta el worker de envío a RC
-    """
-    from app.providers.protrack.client import get_protrack_client
-    from app.providers.protrack.mapper import map_protrack_track
-    import json
-    from app.core.auditor import audit_event
-    import threading
-
-    try:
-        client = get_protrack_client(env)
-    except RuntimeError as e:
-        # Credenciales no configuradas: no es un error crítico, simplemente no hay nada que hacer.
-        # El loop esperará 5 minutos antes de reintentar (evita spam en logs).
-        logger.warning(f"[Protrack] env='{env}' sin credenciales configuradas. Polling omitido: {e}")
-        raise  # Re-lanzar para que protrack_poll_loop gestione el backoff
-
-    try:
-        # 1. Obtener lista de dispositivos (IMEI + metadata)
-        devices = await client.get_devices()
-        if not devices:
-            logger.debug(f"[Protrack] Sin dispositivos para env='{env}'.")
-            return
-
-        device_index = {d.get("imei"): d for d in devices if d.get("imei")}
-        imeis = list(device_index.keys())
-
-        # 2. Posición actual
-        tracks = await client.get_track(imeis)
-        if not tracks:
-            logger.debug(f"[Protrack] Sin datos de posición para env='{env}'.")
-            return
-
-        # 3. Mapear y persistir
-        db = get_session(provider, env)
+    logger.info(f"Escuchando nuevas integraciones (Worker Watchdog)...")
+    
+    running_providers = set()
+    active_tasks = []
+    
+    while True:
+        db = get_session("system_config", "global")
         try:
-            events_to_add = []
-            for track in tracks:
-                imei_key = str(track.get("imei", "")).strip()
-                dev_info = device_index.get(imei_key, {})
-
-                try:
-                    canonical = map_protrack_track(track, dev_info)
-                except Exception as map_err:
-                    logger.warning(f"[Protrack] Error de mapping para IMEI {imei_key}: {map_err}")
-                    continue
-
-                # Auditoría fire-and-forget
-                threading.Thread(
-                    target=audit_event,
-                    args=(f"protrack_{env}", track),
-                    daemon=True
-                ).start()
-
-                from app.models.db_models import NormalizedRCEvent
-                events_to_add.append(NormalizedRCEvent(
-                    provider=provider,
-                    status="pending",
-                    raw_data=json.dumps(track, ensure_ascii=False),
-                    chassis_number=canonical.chassis_number,
-                    latitude=canonical.latitude,
-                    longitude=canonical.longitude,
-                    speed=canonical.speed,
-                    code=canonical.code,
-                    date=canonical.date,
-                    altitude=canonical.altitude,
-                    battery=canonical.battery,
-                    course=canonical.course,
-                    humidity=canonical.humidity,
-                    ignition=canonical.ignition,
-                    odometer=canonical.odometer,
-                    temperature=canonical.temperature,
-                    serial_number=canonical.serial_number,
-                    shipment=canonical.shipment,
-                    vehicle_type=canonical.vehicle_type,
-                    vehicle_brand=canonical.vehicle_brand,
-                    vehicle_model=canonical.vehicle_model,
-                ))
-
-            if events_to_add:
-                db.add_all(events_to_add)
-                db.commit()
-                logger.info(
-                    f"[Protrack] {len(events_to_add)} eventos insertados en BD "
-                    f"(provider={provider}, env={env})."
-                )
-                # Despertar el worker de procesamiento (envío a RC)
-                trigger_worker(provider, env)
-
-        except Exception as db_err:
-            logger.error(f"[Protrack] Error al persistir eventos para env='{env}': {db_err}")
+            configs = db.query(ProviderConfig).all()
+            for c in configs:
+                prov_tuple = (c.provider_name, c.env)
+                if prov_tuple not in running_providers:
+                    logger.info(f"Lanzando workers para nuevo proveedor detectado: {c.provider_name.upper()} ({c.env.upper()})")
+                    running_providers.add(prov_tuple)
+                    
+                    active_tasks.append(asyncio.create_task(api_worker_loop(c.provider_name, c.env)))
+                    
+                    from app.worker.pull_engine import dictionary_sync_loop, telemetry_poll_loop
+                    active_tasks.append(asyncio.create_task(dictionary_sync_loop(c.provider_name, c.env)))
+                    active_tasks.append(asyncio.create_task(telemetry_poll_loop(c.provider_name, c.env)))
+        except Exception as e:
+            logger.error(f"Error en el watchdog de workers: {e}")
         finally:
             db.close()
+            
+        await asyncio.sleep(15)
 
-    except Exception as e:
-        logger.error(f"[Protrack] Error en poll_protrack env='{env}': {e}")
 
 
-async def protrack_poll_loop(provider: str, env: str):
-    """
-    Loop de polling PULL para Protrack.
-    Comportamiento ante errores:
-      - Credenciales no configuradas → warning + espera 5 min (no spam)
-      - Error de permisos API (10007) → warning + espera 5 min (requiere acción externa)
-      - Errores transitorios (red, timeout) → espera el intervalo normal
-    """
-    import os
-    default_interval = int(os.getenv("PROTRACK_POLL_INTERVAL_SEC", "30"))
-    LONG_BACKOFF_SEC = 300  # 5 minutos para errores que requieren acción externa
-    logger.info(f"[Protrack] Iniciando poll_loop para env='{env}' (intervalo default: {default_interval}s).")
-
-    while True:
-        interval = default_interval
-        try:
-            config = await asyncio.to_thread(get_provider_config, provider, env)
-            if config:
-                if not config["is_active"]:
-                    # Proveedor desactivado: dormir y volver a verificar (no loguear nada)
-                    await asyncio.sleep(30)
-                    continue
-                # Usar run_interval_sec de la config como intervalo de polling
-                interval = config["run_interval_sec"] if config["run_interval_sec"] else default_interval
-
-            await poll_protrack(provider, env)
-
-        except RuntimeError as cred_err:
-            # Credenciales no configuradas o cuenta sin permisos API → backoff largo, sin spam
-            err_str = str(cred_err)
-            if "Credenciales no configuradas" in err_str:
-                logger.warning(
-                    f"[Protrack] env='{env}' sin credenciales en .env. "
-                    f"Próximo intento en {LONG_BACKOFF_SEC // 60} min."
-                )
-            elif "10007" in err_str or "permission denied" in err_str.lower():
-                logger.warning(
-                    f"[Protrack] env='{env}' cuenta sin permisos de API Open (code=10007). "
-                    f"Contactar a Protrack para habilitarla. Próximo intento en {LONG_BACKOFF_SEC // 60} min."
-                )
-            else:
-                logger.error(f"[Protrack] Error de configuración en poll_loop env='{env}': {cred_err}")
-            interval = LONG_BACKOFF_SEC
-
-        except Exception as e:
-            err_str = str(e)
-            # Errores conocidos que requieren acción externa → backoff largo
-            if "10007" in err_str or "permission denied" in err_str.lower():
-                logger.warning(
-                    f"[Protrack] env='{env}' cuenta sin permisos API (code=10007). "
-                    f"Próximo intento en {LONG_BACKOFF_SEC // 60} min."
-                )
-                interval = LONG_BACKOFF_SEC
-            else:
-                logger.error(f"[Protrack] Error inesperado en protrack_poll_loop env='{env}': {e}")
-
-        await asyncio.sleep(interval)
 
