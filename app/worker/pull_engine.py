@@ -77,7 +77,7 @@ async def execute_fetch(fetch_config: dict) -> dict | list:
                     token = auth_data["record"]["access_token"]
                     params["access_token"] = token
                 else:
-                    logger.error(f"Fallo auth Protrack: {auth_data}")
+                    logger.error(f"Fallo auth Protrack. URL: {base_url}/api/authorization | Params: time={unix_time}, account={user}, signature={signature} | Respuesta: {auth_data}")
         except Exception as e:
             logger.error(f"Error obteniendo token Protrack: {e}")
         
