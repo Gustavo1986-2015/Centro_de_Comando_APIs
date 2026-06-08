@@ -738,6 +738,42 @@
         #spark-sent     polyline { stroke: var(--color-green-vibrant); }
         #spark-failed   polyline { stroke: var(--color-red); }
         #spark-retries  polyline { stroke: var(--color-orange); }
+        .provider-bar {
+            background: var(--level-0);
+            border-bottom: 1px solid var(--card-border);
+            padding: 0.5rem 2rem;
+            display: flex;
+            gap: 1rem;
+            flex-wrap: wrap;
+            align-items: center;
+            min-height: 40px;
+        }
+        .provider-pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            background: var(--level-2);
+            border: 1px solid var(--card-border);
+            border-radius: 20px;
+            padding: 3px 10px 3px 6px;
+            font-size: 0.78rem;
+            font-weight: 600;
+            color: var(--color-gray-label);
+            letter-spacing: 0.5px;
+            transition: border-color 0.3s;
+        }
+        .provider-pill.active    { border-color: var(--color-green-vibrant); color: var(--color-white); }
+        .provider-pill.has-failed { border-color: var(--color-red); color: var(--color-white); }
+        .provider-pill.inactive  { opacity: 0.45; }
+        .pill-dot {
+            width: 8px; height: 8px;
+            border-radius: 50%;
+            background: var(--color-gray);
+            flex-shrink: 0;
+        }
+        .provider-pill.active    .pill-dot { background: var(--color-green-bright); animation: pulsing 2s infinite; }
+        .provider-pill.has-failed .pill-dot { background: var(--color-red); }
+        .pill-rate { color: var(--color-gray-label); font-weight: 400; font-size: 0.7rem; }
     
     </style>
 </head>
@@ -765,6 +801,8 @@
             <div class="pulse"></div>
         </div>
     </header>
+
+    <div id="provider-status-bar" class="provider-bar"></div>
 
     <!-- VISTA DASHBOARD -->
     <main id="view-dashboard">
@@ -1274,6 +1312,49 @@
             }
             poly.setAttribute('points', pts);
         }
+
+        const _providerEventCounts = {};
+        const RATE_WINDOW_MS = 60_000;
+
+        function updateProviderBar(recentEvents) {
+            const now = Date.now();
+            recentEvents.forEach(ev => {
+                const key = ev.provider.toLowerCase();
+                if (!_providerEventCounts[key]) _providerEventCounts[key] = [];
+                _providerEventCounts[key].push(now);
+            });
+            Object.keys(_providerEventCounts).forEach(key => {
+                _providerEventCounts[key] = _providerEventCounts[key]
+                    .filter(t => now - t < RATE_WINDOW_MS);
+            });
+
+            const bar = document.getElementById('provider-status-bar');
+            if (!bar) return;
+
+            const allProviders = Object.keys(_providerEventCounts);
+            if (allProviders.length === 0) {
+                bar.innerHTML = '<span style="color:var(--color-gray-label);font-size:0.78rem;">Sin proveedores activos</span>';
+                return;
+            }
+
+            const failedProviders = new Set(
+                recentEvents.filter(e => e.status === 'failed').map(e => e.provider.toLowerCase())
+            );
+
+            bar.innerHTML = allProviders.map(key => {
+                const rate      = _providerEventCounts[key].length;
+                const hasFailed = failedProviders.has(key);
+                const isActive  = rate > 0;
+                const cls       = hasFailed ? 'has-failed' : (isActive ? 'active' : 'inactive');
+                const label     = isActive ? `${rate} ev/min` : 'inactivo';
+                return `<div class="provider-pill ${cls}" title="${key.toUpperCase()} — ${label}">
+                    <span class="pill-dot"></span>
+                    ${key.toUpperCase()}
+                    <span class="pill-rate">${label}</span>
+                </div>`;
+            }).join('');
+        }
+
         let currentConfigs = [];
         let statsInterval;
         
@@ -1620,6 +1701,7 @@
                 });
 
                 renderRecentTable();
+                updateProviderBar(data.recent || []);
 
                 document.getElementById('sync-status').textContent = 'Conectado y Escuchando';
                 document.querySelector('.pulse').style.backgroundColor = 'var(--color-green-bright)';
