@@ -19,6 +19,13 @@
             --color-red: #EF4444;
             --card-bg: rgba(255, 255, 255, 0.03);
             --card-border: rgba(255, 255, 255, 0.08);
+            /* --- Elevación por nivel --- */
+            --level-0: #0F1115;
+            --level-1: #1A1D24;
+            --level-2: #1E2229;
+            --level-3: #252830;
+            /* --- Gris legible WCAG AA sobre --level-1 --- */
+            --color-gray-label: #A8AFCC;
         }
 
         * {
@@ -128,11 +135,10 @@
 
         /* Tarjetas Clave */
         .card {
-            background: var(--card-bg);
+            background: var(--level-1);
             border: 1px solid var(--card-border);
             border-radius: 12px;
             padding: 1.2rem;
-            backdrop-filter: blur(10px);
             transition: transform 0.3s ease, box-shadow 0.3s ease;
             position: relative;
             overflow: hidden;
@@ -163,7 +169,7 @@
 
         .card-title {
             font-size: 0.9rem;
-            color: var(--color-gray);
+            color: var(--color-gray-label);
             text-transform: uppercase;
             letter-spacing: 1px;
             margin-bottom: 0.5rem;
@@ -217,7 +223,7 @@
 
         /* Tabla de Eventos Recientes */
         .recent-section {
-            background: var(--card-bg);
+            background: var(--level-1);
             border: 1px solid var(--card-border);
             border-radius: 12px;
             padding: 1.5rem;
@@ -242,7 +248,7 @@
         }
 
         th {
-            color: var(--color-gray);
+            color: var(--color-gray-label);
             font-weight: 600;
             font-size: 0.85rem;
             text-transform: uppercase;
@@ -260,7 +266,7 @@
         }
 
         th {
-            color: var(--color-gray);
+            color: var(--color-gray-label);
             font-weight: 600;
             font-size: 0.85rem;
             text-transform: uppercase;
