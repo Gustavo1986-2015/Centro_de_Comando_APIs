@@ -826,6 +826,14 @@
         }
         .reconnect-btn:hover { background: rgba(255,255,255,0.35); }
     
+        /* Modo Compacto */
+        body.compact-mode header { padding: 0.5rem 1rem; }
+        body.compact-mode .card { padding: 0.8rem; }
+        body.compact-mode .stats-grid { gap: 0.8rem; }
+        body.compact-mode th, body.compact-mode td { padding: 0.4rem 0.8rem; font-size: 0.85rem; }
+        body.compact-mode .recent-section { padding: 1rem; }
+        body.compact-mode .table-container { margin-top: 0.5rem; }
+        body.compact-mode .provider-pill { padding: 2px 8px 2px 5px; font-size: 0.72rem; }
     </style>
 </head>
 <body>
@@ -854,9 +862,16 @@
     <header>
         <div class="hamburger" title="Menú de Opciones" onclick="toggleMenu()">☰</div>
         <div class="title" title="Panel principal del Hub Telemático">Centro de Comando APIs | Assistcargo</div>
-        <div class="status-indicator" title="Estado del servicio de escucha en vivo">
-            <span id="sync-status">Conectado y Escuchando</span>
-            <div class="pulse"></div>
+        
+        <div style="margin-left: auto; display: flex; align-items: center; gap: 1.5rem;">
+            <label style="display: flex; align-items: center; gap: 0.4rem; cursor: pointer; font-size: 0.85rem; color: var(--color-gray-label);" title="Reducir espacios visuales">
+                <input type="checkbox" id="compact-mode-toggle" onchange="toggleCompactMode(this.checked)" style="cursor: pointer;">
+                <span>Modo Compacto</span>
+            </label>
+            <div class="status-indicator" title="Estado del servicio de escucha en vivo">
+                <span id="sync-status">Conectado y Escuchando</span>
+                <div class="pulse"></div>
+            </div>
         </div>
     </header>
 
@@ -2823,6 +2838,22 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
                 alert("Error parseando JSON: " + e.message);
             }
         }
+        function toggleCompactMode(enabled) {
+            if (enabled) {
+                document.body.classList.add('compact-mode');
+                localStorage.setItem('compactMode', 'true');
+            } else {
+                document.body.classList.remove('compact-mode');
+                localStorage.setItem('compactMode', 'false');
+            }
+        }
+
+        document.addEventListener('DOMContentLoaded', () => {
+            const isCompact = localStorage.getItem('compactMode') === 'true';
+            const toggleEl = document.getElementById('compact-mode-toggle');
+            if (toggleEl) toggleEl.checked = isCompact;
+            if (isCompact) document.body.classList.add('compact-mode');
+        });
 
     </script>
 </body>
