@@ -276,10 +276,16 @@ def update_daily_stats(provider: str, env: str):
         success_stats = db_prov.query(
             func.avg(NormalizedRCEvent.rc_latency_sec).label('avg_rc'),
             func.avg(
-                (func.julianday(NormalizedRCEvent.updated_at) - func.julianday(NormalizedRCEvent.created_at)) * 86400.0 - func.coalesce(NormalizedRCEvent.rc_latency_sec, 0)
+                func.max(
+                    0.0,
+                    (func.julianday(NormalizedRCEvent.updated_at) - func.julianday(NormalizedRCEvent.created_at)) * 86400.0 - func.coalesce(NormalizedRCEvent.rc_latency_sec, 0)
+                )
             ).label('avg_hub'),
             func.avg(
-                (func.julianday(NormalizedRCEvent.created_at) - func.julianday(NormalizedRCEvent.date)) * 86400.0
+                func.max(
+                    0.0,
+                    (func.julianday(NormalizedRCEvent.created_at) - func.julianday(NormalizedRCEvent.date)) * 86400.0
+                )
             ).label('avg_transmission')
         ).filter(
             NormalizedRCEvent.status == "sent",
