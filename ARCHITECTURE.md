@@ -1,6 +1,6 @@
 # Arquitectura Interna y Mapa de Datos del Centro de Comando APIs
 
-Este documento sirve como guía de ingeniería y mapa técnico del Hub Telemático corporativo de Assistcargo. Detalla el flujo de ejecución extremo a extremo, la interacción entre scripts, la arquitectura de bases de datos aisladas y el comportamiento de la concurrencia y los reintentos.
+Este documento sirve como guía de ingeniería y mapa técnico del Hub Telemático corporativo de Assistcargo. Detalla el flujo de ejecución extremo a extremo, la arquitectura de bases de datos, y los mecanismos de seguridad y concurrencia.
 
 ---
 
@@ -12,175 +12,99 @@ El siguiente diagrama detalla cómo viaja la información desde que el camión r
 graph TD
     %% Bloque Ingesta Webhook (PUSH)
     subgraph 1a. Ingesta y Normalización (PUSH)
-        A[Proveedor: Schmitz/Otros] -->|POST HTTP /provider/webhook?env=test| B[FastAPI: app/api/routers/schmitz.py]
+        A[Proveedor: Schmitz/Otros] -->|POST HTTP /provider/webhook| B[FastAPI Router]
         B -->|1. Resguardo Crudo| C[Auditor: app/core/auditor.py]
-        C -->|Escribe logs diarios| D[(audit/schmitz_test/schmitz_test.jsonl)]
-        B -->|2. Adaptación| E[Mapper: app/providers/schmitz/mapper.py]
+        C -->|Escribe logs diarios| D[(audit/schmitz_test.jsonl)]
+        B -->|2. Adaptación| E[Mapper: app/providers/...]
         E -->|Mapea JSON a Canonical Model| F[Validador Pydantic: app/schemas/canonical.py]
         F -->|3. Persistencia Local| G[(db/schmitz_test.db)]
-        B -->|Retorna HTTP 202 Accepted| A
     end
 
-    %% Bloque Ingesta Pull (Cron-Driven)
-    subgraph 1b. Ingesta PULL (APIs Externas)
-        A2[Pull Engine: app/worker/pull_engine.py] -->|1. Lee Config e IMEIs| I[(db/system_config_global.db)]
-        A2 -->|2. HTTP GET Asíncrono| B2[API Externa Ej. Protrack]
-        B2 -->|3. Resguardo Crudo| C2[Auditor]
-        B2 -->|4. Adaptación Dinámica| E2[DynamicMapper: app/core/dynamic_mapper.py]
-        E2 -->|Mapea y Parsea Fechas Unix| F2[Validador Pydantic]
-        F2 -->|5. Persistencia Local| G
+    %% Bloque Ingesta (PULL)
+    subgraph 1b. Ingesta Activa (PULL)
+        H[Timer Asíncrono] -->|Cron| I[Puller: app/providers/protrack/puller.py]
+        I -->|HTTP GET dinámico| J[API Externa Protrack]
+        J -->|JSON Response| E
     end
 
-    %% Bloque Worker de Despacho (Asíncrono)
-    subgraph 2. Procesamiento y Despacho Asíncrono (Worker)
-        H[Worker Core: app/worker/processor.py] -->|1. Consulta APIs Activas y Motor Colas| I[(db/system_config_global.db)]
-        H -->|2. El Director define Auto-Escalado (Max 5x)| D1[asyncio.gather(Múltiples Workers)]
-        D1 -->|3. Lock Atómico y Batch Read| G
-        D1 -->|4. Filtra Backoff Nativos| G
-        H -->|4. Agrupa en sub-lotes de 50| K{soap_tasks}
-        K -->|5. Gather paralelo| L[Client SOAP: app/services/rc_soap.py]
-        L -->|Caché Token| M[(db/rc_token_cache.json)]
-        L -->|Llamada SOAP: send_events_batch| N[Web Service de Recurso Confiable]
-        N -->|Retorna JobID / CGI:UNKNOWN_TOKEN| L
-        L -->|Retorna Éxito / Error| H
-        H -->|6. Actualiza status y job_id| G
-        H -->|7. Consolida totales del día| O[update_daily_stats]
-        O -->|Escribe DailyStat| I
+    %% Bloque Despacho (WORKER)
+    subgraph 2. Procesamiento y Despacho Asíncrono
+        G -->|Lee pendientes (limit 200)| K[Worker: app/worker/processor.py]
+        K -->|Lote de N eventos| L[ThreadPoolExecutor]
+        L -->|Zeep SOAP Client| M[Recurso Confiable WSDL]
+        M -->|OK (200)| N[Actualiza estado a 'sent']
+        M -->|Fail/Timeout| O[Actualiza a 'failed' e incrementa retry_count]
+        N --> G
+        O --> G
     end
 
-    %% Bloque Dashboard (Visualización)
-    subgraph 3. Visualización y Control (Dashboard)
-        P[API Dashboard: app/api/routers/dashboard.py] -->|Lee Config y DailyStats| I
-        P -->|Lee últimos 200 eventos globales| G
-        P -->|Calcula latencias de red y transmisión| P
-        P -->|Resuelve Medianoche Local| P
-        P -->|Server-Sent Events (SSE) Stream| Q[Frontend UI: app/templates/index.html]
+    %% Bloque Consumo Front (UI)
+    subgraph 3. Dashboard Tiempo Real
+        G -->|Consulta SQL periódica| P[Dashboard Router / SSE]
+        P -->|Empuja JSON Top 200| Q[Browser UI]
     end
 ```
 
 ---
 
-## 2. Mapa detallado de Scripts y Dependencias (Qué impacta en qué)
+## 2. Bases de Datos: Sharding por Integración
 
-A continuación se detalla la matriz de impacto y el rol de cada script en el sistema:
+El sistema requiere ingestar miles de eventos simultáneos. Si todas las peticiones escribieran sobre un único archivo SQLite (`main.db`), el sistema sufriría el error `database is locked`. Para resolver esto, el Hub implementa un esquema de **Sharding Dinámico**.
 
-| Script / Componente | Frecuencia / Gatillo | Entrada | Salida / Impacto | Rol Principal |
-| :--- | :--- | :--- | :--- | :--- |
-| **`main.py`** | Al arrancar la aplicación | Ninguna | Inicializa FastAPI y crea la tarea del Worker en background | Punto de entrada del Hub. Registra todos los routers del sistema. |
-| **`app/api/routers/schmitz.py`** | Evento PUSH del proveedor | Payload JSON de Schmitz | Escribe en Logs de Auditoría y guarda el evento normalizado en `schmitz_{env}.db` | Webhook receptor estático de Schmitz. Realiza la autenticación, auditoría y encolamiento inicial. |
-| **`app/api/routers/dynamic_webhook.py`** | Evento PUSH genérico | Payload JSON | Evento normalizado según Diccionario | Webhook iPaaS universal que admite mapeos sin código para cualquier integrador. |
-| **`app/worker/pull_engine.py`** | Cron interno (Ej. cada 30s) | Configuraciones PULL y Diccionario | Eventos capturados hacia base de datos del proveedor | Motor PULL asíncrono para consumir APIs externas (como Protrack) sin bloquear el Worker. |
-| **`app/core/dynamic_mapper.py`** | Llamado por PULL/PUSH dinámicos | JSON crudo y Reglas iPaaS | Modelo de datos `RCCanonicalModel` | Traductor universal JSON Path. Inyecta identificadores desde el Diccionario y parsea Fechas Unix numéricas dinámicamente. |
-| **`app/core/auditor.py`** | Llamado por routers de webhooks | Payload JSON original | Archivos diarios `.jsonl` bajo `audit/{provider}_{env}/` | Caja negra. Asegura el resguardo permanente de la información cruda antes de cualquier transformación. |
-| **`app/worker/processor.py`** | En ejecución 24/7 (Loop asíncrono) | Parámetros de `system_config_global.db` | Consume eventos de las DBs de proveedores, los envía a RC y escribe estadísticas de éxito/falla | Core del despacho. Actúa como **Director** orquestando sub-workers dinámicos auto-escalables en paralelo, procesamiento Batch y purga. |
-| **`app/core/queue_factory.py`** | Al invocar un worker | String provider_name, env | Instancia el motor abstracto (`SQLiteQueue` o `RedisQueue`) | Factoría que resuelve en tiempo de ejecución qué motor usar según la configuración del proveedor (Modelo Híbrido). |
-| **`app/services/rc_soap.py`** | Llamado por el Worker | Objetos de datos `RCCanonicalModel` | Construye el XML SOAP, interactúa con el WSDL de RC y gestiona la caché de tokens | Integrador SOAP. Controla la autenticación persistente y re-autenticación automática si expira el token. |
-| **`app/api/routers/dashboard.py`** | Streaming SSE ininterrumpido | Datos de bases de datos globales e individuales | Payload JSON transmitido en vivo (Server-Sent Events) | API de control. consolida estadísticas, calcula desfase satelital y empuja métricas al cliente. |
-| **`app/templates/index.html`** | Cargado en navegador por operador | Stream de Server-Sent Events (SSE) | Renderiza grillas en caliente, Sparklines, temporizadores y modo compacto | Consola de visualización. Provee filtros interactivos, Skeleton Screens y el simulador de webhooks. |
+- La función `get_session(provider, env)` crea o devuelve una conexión SQLAlchemy enrutada físicamente a `./db/{provider}_{env}.db`.
+- **Beneficio:** Las transacciones ocurren en paralelo a nivel sistema operativo. La saturación de un proveedor jamás degrada el throughput de escritura de otro.
+- **Configuración Global:** La base de datos `system_config.db` (aislada) se utiliza exclusivamente para almacenar tokens persistentes, diccionarios dinámicos y el historial de estadísticas diarias consolidadas (`daily_stats`).
 
 ---
 
-## 3. Arquitectura de Base de Datos y Aislamiento (`.db`)
+## 3. Concurrencia y el Worker Asíncrono
 
-El sistema implementa el **Paradigma de Bases de Datos Aisladas** para prevenir cuellos de botella en SQLite, optimizar bloqueos de escritura y garantizar aislamiento físico total entre entornos (`TEST` y `PROD`).
+El cerebro de despacho (`app/worker/processor.py`) corre en un hilo de fondo atado al ciclo de vida (`lifespan`) de FastAPI.
 
-### Estructura de Archivos en la carpeta `db/`
-```text
-db/
-├── system_config_global.db   <-- Base de datos Maestra del Sistema
-├── schmitz_prod.db           <-- Eventos productivos de Schmitz
-├── schmitz_test.db           <-- Eventos de prueba del simulador de Schmitz
-└── rc_token_cache.json       <-- Caché del token SOAP (archivo JSON persistente)
-```
+### Despertador Thread-Safe (`asyncio.Event`)
+En lugar de un clásico bucle `while True: sleep(5)` ciego, el Worker duerme hasta que ocurra uno de dos eventos:
+1. Pasa el `WORKER_INTERVAL_SEC` (Fallback natural).
+2. El endpoint de inyección (Webhook) ejecuta `trigger_worker()`, que activa la bandera del evento de asyncio. El worker despierta **en milisegundos** tras el ingreso de un payload.
 
-### 1. La Base de Datos Maestra (`system_config_global.db`)
-Contiene los esquemas globales y la parametrización de comportamiento de las APIs:
-* **Tabla `provider_configs` (Modelo `ProviderConfig`):**
-  * `provider_name` (Ej. 'schmitz'): Identifica la API.
-  * `env` (test/prod): Entorno de ejecución.
-  * `is_active` (boolean): Toggle switch para detener/iniciar el sub-worker en caliente desde el UI.
-  * `rc_user` / `rc_password`: Credenciales SOAP específicas de este canal.
-  * `run_interval_sec`: Intervalo del ciclo del worker (ej. cada 5 segundos).
-  * `purge_interval_min`: Intervalo de purga automática (ej. borrar procesados de más de 3 horas).
-* **Tabla `daily_stats` (Modelo `DailyStat`):**
-  * `date` (date): Día calendario.
-  * `provider` (string): Nombre de la API.
-  * `env` (string): Entorno.
-  * `sent_count` / `failed_count` (integers): Histórico permanente diario.
-  * `avg_transmission_latency_sec` (float): Promedio de latencia de transmisión (satelital/red del AVL a nuestro Hub) del día.
-  * `avg_hub_latency_sec` (float): Promedio de latencia de procesamiento interno y cola del Hub de Assistcargo del día.
-  * `avg_rc_latency_sec` (float): Promedio de latencia de red SOAP (tiempo de respuesta de Recurso Confiable) del día.
-
-### 2. Bases de Datos de Proveedores (Ej. `schmitz_prod.db`, `schmitz_test.db`)
-Contienen una única tabla central optimizada para indexación y consumo rápido:
-* **Tabla `normalized_rc_events` (Modelo `NormalizedRCEvent`):**
-  * `id` (Clave primaria indexada).
-  * `status` (indexada: `pending`, `sent`, `failed`).
-  * `raw_data` (Text): Payload crudo JSON original (para trazabilidad/auditoría rápida).
-  * `rc_response` (Text): Respuesta XML o mensaje de excepción de red retornado por RC.
-  * `job_id` (indexada): Identificador único o acuse de recibo de RC.
-  * `rc_latency_sec` (Float): Tiempo exacto de red (en segundos) que demoró la llamada SOAP a Recurso Confiable para este evento.
-  * **18 Columnas Normalizadas:** Campos del modelo canónico (`chassis_number`, `latitude`, `speed`, `date`, `ignition`, etc.) validados por Pydantic.
-  * `created_at` / `updated_at` (DateTime): Auditoría de tiempos del Hub.
+### Hilos de Red
+Al despertar, lee lotes de la DB. El envío hacia el WSDL de Recurso Confiable (operación de red bloqueante) se orquesta envolviendo el cliente SOAP (`Zeep`) dentro de un `ThreadPoolExecutor` nativo de Python (`run_in_executor`). Esto impide que un timeout externo bloquee el hilo principal de ASGI/FastAPI.
 
 ---
 
-## 4. Lógica de Concurrencia de Red y Transaccionalidad de SQLite
+## 4. Política de Reintentos (Backoff Lineal)
 
-Dado que SQLite no soporta múltiples transacciones de escritura simultáneas (bloqueo por `database is locked`), la arquitectura separa de forma limpia la **ejecución de red** de la **ejecución de base de datos**:
+Para garantizar la entrega en infraestructuras inestables, los eventos fallidos quedan en estado `pending` pero su `retry_count` se incrementa.
 
-1. **Lectura y Bloqueo:** El worker obtiene hasta 2000 eventos `pending` en un único barrido de SQLite e inmediatamente los bloquea etiquetándolos como `processing` para evitar lecturas duplicadas.
-2. **Particionado Paralelo:** El lote de 2000 eventos se divide en 40 sub-lotes de 50 eventos.
-3. **Ejecución HTTP Desacoplada:** Mediante un `ThreadPoolExecutor` de 200 hilos, los 40 sub-lotes disparan las peticiones SOAP a RC en paralelo puro. Esto asegura que la latencia total del procesamiento sea gobernada únicamente por la petición más lenta, y no por la suma de los tiempos secuenciales.
-4. **Escritura Atómica Masiva (Zero Lock Contention):** A diferencia de arquitecturas tradicionales, las 40 tareas *no* escriben en la base de datos al terminar su petición HTTP. En su lugar, entregan los resultados en memoria al hilo principal, el cual ejecuta una **única transacción masiva** (`bulk_update_mappings`) para los 2000 registros de una sola vez. Esto elimina al 100% las colas de bloqueo de escritura de SQLite (`database is locked`), bajando el overhead de base de datos a < 0.1s.
+La query del Worker excluye eventos cuyo tiempo de "castigo" no se haya cumplido, bajo esta fórmula heurística:
+- Intento 1: + 10 segundos
+- Intento 2: + 45 segundos
+- Intento 3: + 120 segundos
+- Intento 4: + 300 segundos
+- Intento 5: Abandono (queda en `failed` terminal).
 
----
-
-## 5. El Motor de Reintentos Asíncronos con Backoff
-
-Para evitar la saturación de los servidores de RC y evitar bucles infinitos por credenciales desactualizadas o caídas prolongadas de red, el Hub implementa un motor inteligente en memoria:
-
-```text
-               [ Evento falla en despacho SOAP ]
-                               │
-               Verifica contador de reintentos
-              (almacenado nativamente en base de datos)
-                               │
-                     ┌─────────┴─────────┐
-                     ▼                   ▼
-                 Intentos < 4        Intentos >= 4
-                     │                   │
-      Calcula Backoff Lineal:            │
-      1°: +10s | 2°: +45s                │
-      3°: +120s | 4°: +300s              ▼
-                     │            Marca status = 'failed'
-                     ▼            (Fallo Definitivo en UI)
-       Actualiza 'next_retry_at' en DB
-       Estado queda 'pending'
-       (Badge Amarillo en UI)
-```
-* **Comportamiento en Cola:** El sub-worker de la API continúa ejecutándose normalmente cada $N$ segundos procesando paquetes de telemetría nuevos, omitiendo de forma inteligente cualquier evento en cola cuya marca de tiempo actual sea inferior a `next_retry_at`. Esto asegura que el canal de datos permanezca siempre operativo.
+Esto permite que la congestión de eventos "enfermos" no impida el rápido flujo de eventos "sanos" entrantes.
 
 ---
 
-## 6. Mecanismo de Activación Instantánea del Worker (Event-Driven)
+## 5. Diseño del Dashboard de Monitoreo
 
-Para reducir la latencia de procesamiento del Hub a prácticamente **0 segundos** y evitar el consumo innecesario de recursos (CPU y consultas repetitivas de base de datos) al escalar a múltiples APIs activas (por ejemplo, 15 o más), el sistema implementa una arquitectura orientada a eventos basada en `asyncio.Event`:
+### Server-Sent Events (SSE)
+Para la telemetría en tiempo real, el backend cuenta con un hilo asíncrono (`broadcast_loop`) que consolida las lecturas de todos los archivos `.db` en memoria y emite un flujo continuo `text/event-stream`.
+El navegador del cliente recibe pasivamente este objeto JSON y repinta el DOM.
 
-1. **Registro de Triggers (`WORKER_TRIGGERS`):** Cada sub-worker (`api_worker_loop`) registra un objeto `asyncio.Event()` único asociado a su proveedor y entorno (`f"{provider}_{env}"`).
-2. **Espera Inteligente y Timeout:** En lugar de ejecutar un bucle con un sleep fijo (lo cual obligaba a los eventos entrantes a esperar hasta 5 segundos a que el worker despertara), el sub-worker realiza una espera asíncrona:
-   ```python
-   await asyncio.wait_for(trigger.wait(), timeout=run_interval)
-   ```
-   Esto mantiene al sub-worker suspendido y liberando recursos del sistema. El sub-worker se despertará automáticamente al cumplirse el timeout (polling de resguardo) o inmediatamente si el trigger es activado.
-3. **Disparo Inmediato (Push Trigger):** Cuando un webhook del proveedor (ej. `schmitz.py` o el simulador) recibe y confirma un JSON de telemetría válido, realiza el `db.commit()` y acto seguido invoca la función `trigger_worker(provider, env)`.
-4. **Despertar Instantáneo:** El evento se activa (`trigger.set()`), lo cual despierta inmediatamente al sub-worker en una fracción de milisegundo.
-5. **Micro-Batching (Debouncer de 100ms):** Al despertar por un trigger, el sistema ejecuta de forma intencional un muy pequeño retardo: `await asyncio.sleep(0.1)`. Esta ventana de tiempo permite que el Hub "recolecte" ráfagas concurrentes sin romper la barrera de latencia de 250ms impuesta por ciertos proveedores.
-6. **Escalabilidad y ThreadPool Masivo:** Para lidiar con el cuello de botella sincrónico del cliente SOAP (`zeep`) y SQLite en Windows, la aplicación anula el límite de hilos por defecto mediante un `ThreadPoolExecutor(max_workers=200)`. Así, ante una ráfaga que despierte decenas de sub-lotes simultáneos, las peticiones HTTP y de base de datos corren en paralelo verdadero sin encolarse a nivel sistema operativo, asegurando latencias internas por debajo del medio segundo.
+### Protección Matemática (Outliers)
+Debido a la naturaleza asíncrona de los reportes GPS (ej. camión sale de zona de cobertura y envía lotes atrasados), las latencias podrían desvirtuarse. 
+El backend incorpora mitigaciones a nivel query (`func.max(0.0, diff)`) y bloquea de las medias matemáticas cualquier latencia de Hub superior a **300 segundos**, garantizando que un evento "Zombie" no arruine el KPI diario del tablero.
+
+### Intercambio Activo (Filtros)
+Al aplicar un filtro en la UI (ej. "Mostrar solo PROTRACK"), la limitación de SSE (broadcast global masivo) se vuelve un impedimento. El Frontend interrumpe la escucha SSE del grid y dispara solicitudes `GET /api/stats?provider_filter=PROTRACK` directo al backend para garantizar la extracción exacta.
 
 ---
 
-## 7. Precisión Matemática de Latencias (Métricas O(log N))
+## 6. Seguridad y Anti-SSRF
 
-Para evitar latencias fantasma causadas por reintentos históricos, el Dashboard excluye de la ecuación matemática a todos los eventos con `retry_count > 0` al promediar los tiempos del día.
-Para lograr esta filtración sin degradar el rendimiento SQL sobre tablas de +100,000 registros, la estructura emplea un índice compuesto vital (`idx_retry_status`), permitiendo un O(log N) perfecto en el cálculo de latencias netas sin hacer Full Table Scans.
+Toda interfaz orientada al operador (Dashboard y visualizador DB) está blindada bajo **HTTP Basic Auth** (`verify_dashboard_auth`). 
+Adicionalmente, el proyecto incorpora la herramienta `/inspector`, un proxy inverso (Mini-Postman) para facilitar el debug desde el propio servidor. Para prevenir vulnerabilidades de Server-Side Request Forgery (SSRF) introducidas por esta herramienta de proxy, toda URL objetivo pasa por el helper `_is_safe_url()`, el cual resuelve DNS y bloquea cualquier resolución a los rangos IP:
+- Loopback (`127.0.0.0/8`)
+- Redes Privadas (`10.x.x.x`, `192.168.x.x`, `172.16.x.x/12`)
+- AWS/GCP Meta-data (`169.254.169.254`)

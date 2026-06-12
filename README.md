@@ -1,78 +1,95 @@
 # Centro de Comando APIs | Assistcargo
 
-Hub Telemático corporativo para recibir, parsear y encolar eventos GPS provenientes de APIs de terceros (Push), transformándolos en un Modelo Canónico y enviándolos asíncronamente a Recurso Confiable.
+Hub Telemático corporativo centralizado para la recepción, transformación y orquestación de eventos GPS provenientes de APIs de terceros (Push y Pull). El sistema procesa los datos hacia un Modelo Canónico estandarizado y los despacha de manera asíncrona hacia Recurso Confiable (RC), ofreciendo paralelamente un **Dashboard de monitoreo táctico en tiempo real**.
 
-## 🚀 Arquitectura del Sistema
-El sistema ha sido diseñado para escalar a más de 15 proveedores simultáneos con cero pérdida de rendimiento, empleando un diseño moderno y seguro.
+---
 
-- **Colas Híbridas (Per-Provider):** Cada proveedor puede configurar de manera granular su motor de colas. La `QueueFactory` ruteará los eventos de alto tráfico hacia **Redis** (in-memory) y los de tráfico estable hacia **SQLite** (`schmitz_prod.db`), maximizando el rendimiento sin perder flexibilidad.
-- **Auto-Escalado Dinámico y Despertador Thread-Safe:** El Worker actúa como un despachador inteligente. Un mecanismo interno (`asyncio.Event`) lo despierta instantáneamente en milisegundos apenas ingresa un webhook. Si detecta ráfagas masivas (Burst Mode), despliega hilos paralelos soportados por un `ThreadPoolExecutor` ampliado (max_workers=200) para derretir las colas SQLite y evitar inanición HTTP, bajando la latencia interna a < 0.25s.
-- **Guardado Atómico en Lote (Batch Save):** Para evitar los cuellos de botella de disco, el router agrupa los eventos asíncronamente (esperando no más de 0.5s) y realiza una única escritura masiva a la base de datos por lote usando hilos independientes.
-- **Reintentos Asíncronos con Backoff Lineal:** Cuando un envío falla por problemas temporales de red o autenticación, el evento permanece en base de datos como `pending`. Se encola con tiempos de espera progresivos (1° intento: +10s, 2° intento: +45s, 3° intento: +120s, 4° intento: +300s, máx 4 intentos). El worker omite de forma inteligente estos eventos hasta cumplir su backoff, dejando que el resto del tráfico fluya de inmediato.
-- **Modelo Canónico (Pydantic):** Validación estricta. Todo lo que ingresa de un externo se transforma a un formato estándar de Assistcargo antes de viajar a Recurso Confiable.
-- **Seguridad Perimetral (Toggle Switch):** Los Webhooks receptores cuentan con validación de "API Keys" mediante cabeceras HTTP, las cuales pueden activarse/desactivarse en caliente desde el archivo `.env` para facilitar pruebas.
-- **Auditoría Dinámica y Recuperación Ante Desastres:** Cada payload crudo recibido se guarda instantáneamente en un `.jsonl` rotativo por proveedor. Adicionalmente, ante apagones de servidor bruscos, el Hub recupera automáticamente eventos "atascados" devolviéndolos a la cola principal.
-- **Motor PULL Dinámico (Cron-Driven):** Además de la ingesta PUSH (Webhooks), el Hub incorpora un motor PULL inteligente impulsado por `httpx` asíncrono. Permite orquestar consumos periódicos (ej. cada 30 segundos) hacia APIs externas (como Protrack). Extrae automáticamente la lista de activos a consumir desde un Diccionario de Configuración en caliente (`provider_dictionary`) e inyecta propiedades dinámicas al vuelo, incluyendo el parseo matemático avanzado de fechas crudas (Unix Timestamps).
+## 🚀 Arquitectura y Capacidades Clave
 
-### 🛠️ Tecnologías Clave Utilizadas
-- **Python 3.12+** / **FastAPI**: Backend de altísimo rendimiento asíncrono.
-- **Zeep**: Cliente SOAP industrial para integración con Recurso Confiable con validación estricta de WSDL.
-- **SQLAlchemy (SQLite Múltiple)**: Gestión concurrente de bases de datos locales sin cuellos de botella.
-- **Uvicorn**: Servidor ASGI en producción.
-- **HTML5/Vanilla CSS/JS**: Frontend puro sin frameworks pesados, con diseño "Dark Glassmorphism".
+El sistema ha sido diseñado desde cero para soportar un alto throughput (miles de eventos por segundo) sin pérdida de rendimiento ni interbloqueos, empleando un diseño moderno, asíncrono y seguro.
 
-## 🎛️ Dashboard y Panel de Administración
-El servidor incluye una interfaz web interactiva (Vanilla JS, CSS Premium, sin frameworks pesados) para la gestión visual del Hub.
+### 1. Ingesta Híbrida y Procesamiento Asíncrono
+- **Motores PUSH (Webhooks):** Recepción pasiva de eventos. Validaciones de esquema estricto y encolado en milisegundos.
+- **Motores PULL (Cron-Driven):** Tareas en segundo plano (vía `httpx` asíncrono) para orquestar consumos periódicos desde APIs externas (ej. Protrack). Extrae de forma dinámica listas de activos y maneja firmas de seguridad MD5 dinámicas al vuelo.
+- **Auto-Escalado y Despertador Thread-Safe:** El *Worker* de despacho actúa como un motor inteligente. Utiliza eventos asíncronos (`asyncio.Event`) para despertar instantáneamente apenas ingresa tráfico. Ante ráfagas masivas (Burst Mode), despliega *ThreadPools* ampliados para derretir las colas locales bajando la latencia a menos de 0.25s.
 
-- **Dashboard Principal (SSE):** Métricas de flujo en vivo alimentadas por **Server-Sent Events (SSE)** optimizados para no saturar el cliente, y streaming de la última actividad global.
-- **Sparklines Integrados:** Gráficos SVG en vivo y ultra-ligeros incrustados en las tarjetas de estadísticas para visualizar la tendencia matemática de los eventos en tiempo real.
-- **Doble Capa de Visibilidad de Latencia:** 
-  - *Latencia de Transmisión:* Muestra en la columna Localización el retraso satelital/celular externo desde que el GPS del camión reportó el dato hasta que ingresó a Assistcargo.
-  - *Latencia del Hub (Hub: Xs):* Muestra de forma destacada en verde brillante cuánto tiempo exacto demoró el Hub de Assistcargo en procesar y despachar el dato a RC una vez recibido en nuestra API.
-- **Filtros Interactivos y Experiencia de Usuario:** Filtrado dinámico instantáneo en el DOM. Incorpora **Skeleton Screens** (carga asíncrona visual) y un **Modo Compacto** CSS-only (con memoria en localStorage) para maximizar la densidad de datos en monitores de NOC.
-- **Historial Diario Inteligente:** Pestaña dedicada con un registro histórico consolidado persistente (`daily_stats`) de procesados, enviados y fallidos. El sistema calcula matemáticamente la medianoche local para realizar un barrido perfecto "Hoy" sin importar la zona horaria UTC del servidor.
-- **Configuración Global por API:** Panel visual para activar/desactivar el procesamiento de cada proveedor, establecer credenciales de RC, configurar el Motor de Colas (`sqlite` vs `redis`), y ajustar los intervalos de purga.
-- **Visor de Bases de Datos (DB Viewer):** Herramienta administrativa para consultar, sin salir de la web, la estructura y los datos en vivo de cualquier tabla en cualquiera de las bases de datos dinámicas (`.db`) del ecosistema.
-- **Simulador de Webhooks Blindado:** Herramienta interna para inyectar payloads de prueba, que desvía sus operaciones hacia un entorno `test_unit` para nunca corromper los datos reales del cliente en el visor.
+### 2. Base de Datos Fragmentada (Sharding)
+Para evitar el "Database Locked" característico de SQLite bajo estrés, se implementa **Sharding por Proveedor y Entorno**. Cada integración escribe exclusivamente en su propio archivo físico (ej. `protrack_prod.db`, `schmitz_test.db`). Esto garantiza que picos de tráfico en un proveedor no afecten el rendimiento ni la latencia de otros proveedores.
 
-## 🔌 Integration Studio (iPaaS)
-La plataforma ha evolucionado para convertirse en un *Integration Platform as a Service*. Ahora es posible conectar nuevas empresas de rastreo GPS sin necesidad de programar líneas de código.
+### 3. Modelo Canónico y Resiliencia
+- **Validación Estricta:** Todo dato entrante se filtra mediante `Pydantic` hacia el **Modelo Canónico** de Assistcargo.
+- **Reintentos Inteligentes (Backoff Lineal):** Si un envío a RC falla (timeout, error 500), el evento queda retenido y se reintenta progresivamente (Ej. +10s, +45s, +120s, +300s). El Worker aísla los eventos fallidos para que el tráfico nuevo (el "happy path") siga fluyendo inmediatamente.
+- **Resguardo Crudo (Auditor):** Cada payload JSON original que ingresa se guarda en logs `.jsonl` rotativos antes del procesamiento, permitiendo auditoría y recuperación ante desastres sin pérdida de datos.
 
-- **API Inspector (Postman Integrado):** Herramienta embebida con modos PULL (para extraer datos vía GET/POST saltando restricciones de navegador) y PUSH (genera una URL temporal de webhook para atrapar datos enviados por el proveedor en tiempo real).
-- **Mapeador Visual (No-Code Mapper):** Una interfaz gráfica donde puedes vincular campos de un Payload JSON entrante (usando rutas `JSON Path` y soporte para fallbacks `||`) directamente hacia nuestro Modelo Canónico.
-- **Webhook Dinámico Universal:** Un único Endpoint maestro (`POST /webhook/dynamic/{proveedor}`) capaz de recibir cualquier estructura de datos del mundo y traducirla automáticamente basándose en las reglas dibujadas en el Studio. Todo con compatibilidad nativa para bases de datos **PostgreSQL**.
+### 4. Monitoreo Táctico y Dashboard en Tiempo Real
+- **Frontend SSE:** Un Dashboard moderno, estéticamente enriquecido, impulsado por *Server-Sent Events*. Provee telemetría en vivo y trazabilidad sin saturar el servidor mediante técnicas de "Long Polling".
+- **Filtros contra Outliers:** Matemática defensiva integrada. Si un evento se desconecta de la red y entra como "zombie" días después, su latencia queda aislada del cálculo promedio global mediante un umbral seguro de **300 segundos**, garantizando que los KPIs operativos no se contaminen.
 
-## 💻 Ejecución en Desarrollo (Local)
-1. Instalar dependencias:
+### 5. Seguridad End-to-End
+- Todo el entorno de monitoreo web y APIs visualizadoras están protegidas por **HTTP Basic Authentication**.
+- Incorpora un **Inspector de APIs** interno para pruebas técnicas (Postman-like) con un riguroso escudo **Anti-SSRF**, el cual bloquea categóricamente las consultas a redes locales, loopbacks o infraestructuras cloud.
+
+---
+
+## 🛠️ Stack Tecnológico
+- **Lenguaje:** Python 3.10+
+- **Framework Web:** FastAPI / Uvicorn (ASGI)
+- **Base de Datos:** SQLite3 (Sharded) + SQLAlchemy ORM
+- **Validación:** Pydantic
+- **Integración SOAP:** Zeep (validación de WSDL industrial)
+- **Frontend:** HTML5, CSS3 Vanilla, JavaScript (SSE, Fetch API)
+
+---
+
+## ⚙️ Puesta en Marcha (Quick Start)
+
+1. **Clonar el repositorio y preparar el entorno:**
    ```bash
-   pip install fastapi uvicorn sqlalchemy pydantic zeep
+   git clone <repo-url>
+   cd Centro_de_Comando_APIs
+   python -m venv venv
+   # Activar entorno virtual (Windows)
+   venv\Scripts\activate
    ```
-2. Configurar entorno seguro:
-   Copia el archivo `.env.example` y renómbralo a `.env`. Coloca allí tus credenciales reales (este archivo es ignorado por git por seguridad).
-4. Ejecutar el servidor web:
+
+2. **Instalar Dependencias Curadas:**
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+3. **Configurar el entorno (`.env`):**
+   Crea un archivo `.env` en la raíz copiando la estructura de `.env.example`:
+   ```env
+   # Credenciales Dashboard
+   DASHBOARD_USER=admin
+   DASHBOARD_PASS=tu_password_seguro
+
+   # Configuración General
+   WORKER_INTERVAL_SEC=1.0
+   ```
+
+4. **Levantar el Servidor:**
    ```bash
    python main.py
    ```
-5. Abrir el panel de control: [http://localhost:8000/dashboard](http://localhost:8000/dashboard)
-
-## 🌐 Despliegue en Producción (Servidor Windows / AWS)
-*Esta sección detalla cómo mantener el sistema vivo 24/7 sin consolas abiertas.*
-
-Dado que la aplicación web necesita que el motor de Python esté siempre encendido, se recomienda utilizar **NSSM (Non-Sucking Service Manager)** para encapsular el comando de inicio dentro de un Servicio Nativo de Windows.
-
-1. Descarga NSSM (http://nssm.cc/).
-2. En la terminal del servidor AWS ejecuta:
-   ```cmd
-   nssm install CentroComandoAPIs
-   ```
-3. En la ventana que aparece:
-   - **Path:** Ruta al ejecutable de Python (ej. `C:\Python310\python.exe`)
-   - **Arguments:** `-m uvicorn main:app --host 0.0.0.0 --port 8000`
-   - **Directory:** Ruta a este proyecto (ej. `C:\Users\Administrador\Desktop\Centro_de_Comando_APIs`)
-4. Inicia el servicio desde el Administrador de Servicios de Windows (services.msc) o con `nssm start CentroComandoAPIs`.
-
-A partir de ese momento, el Hub Telemático arrancará automáticamente con Windows de manera invisible y silenciosa.
+   El dashboard estará disponible en: `http://localhost:8000/dashboard`
 
 ---
-**Desarrollado por el Área de Integraciones GPS Assistcargo**
-*Gustavo Gómez & Roberto Herrera ®*
+
+## 📁 Estructura del Proyecto
+
+```text
+/app
+ ├── /api
+ │    └── /routers       # Endpoints HTTP: webhooks (schmitz, protrack), dashboard, inspector
+ ├── /core               # Configuración global, logger, auditoría, base de datos
+ ├── /providers          # Lógica específica de cada proveedor (Mappers, Pullers)
+ ├── /schemas            # Pydantic (Modelo Canónico)
+ ├── /services           # SOAP Client (Zeep) hacia RC
+ ├── /templates          # HTML/CSS del Dashboard
+ └── /worker             # Background task dispatcher (processor.py)
+/db                      # (Auto-generado) Bases de datos SQLite fragmentadas
+/audit                   # (Auto-generado) Logs en bruto JSONL
+main.py                  # Entrypoint de Uvicorn/FastAPI
+requirements.txt         # Dependencias Python
+```
