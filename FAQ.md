@@ -1,56 +1,69 @@
-# Centro de Comando APIs - Preguntas Frecuentes (FAQ)
+# Centro de Comando APIs - Documentación Integral (FAQ)
 
-Bienvenido a la documentación del **Centro de Comando APIs de Assistcargo**. Este documento abarca tanto la perspectiva operativa (para usuarios de monitoreo) como la técnica (para ingenieros y analistas de sistemas).
-
----
-
-## 1. Visión General y Operativa (Nivel Usuario)
-
-### ¿Qué es el Centro de Comando APIs?
-Es una plataforma de monitoreo en tiempo real que consolida y visualiza todo el tráfico de datos (telemetría GPS, sensores, alarmas) que ingresa desde las integraciones de los proveedores de hardware (ej. Protrack, Schmitz) hacia nuestro sistema central de procesamiento (Radio Comando).
-
-### ¿Qué significan los estados de los eventos?
-- **En Cola (Pendientes):** Eventos recién recibidos, actualmente procesándose en la memoria de nuestro Hub.
-- **Enviados (Hoy):** Eventos despachados exitosamente al destino final (HTTP 200 Ok).
-- **Fallidos (Hoy):** Eventos descartados luego de agotar la política de reintentos.
-- **En Reintento:** Eventos que fallaron inicialmente por un timeout temporal y están en cola de retransmisión.
-
-### ¿Cómo se calculan y qué miden las latencias?
-- **Latencia Hub AC (Assistcargo):** El tiempo "interno" de procesamiento. Desde el milisegundo en que recibimos el webhook del proveedor hasta el milisegundo en que iniciamos el envío a destino. Un valor óptimo es ~1.0s (por lógica de Micro-Batching).
-- **Latencia RC (Radio Comando):** El tiempo externo de respuesta. Cuánto tarda el servidor destino en devolver un código 200 tras recibir nuestro payload.
+Este documento es la referencia principal para comprender el contexto operativo, la arquitectura de procesamiento y la lógica funcional del **Centro de Comando APIs de Assistcargo**. Está diseñado para responder en detalle cómo opera el sistema de extremo a extremo, siendo de utilidad tanto para usuarios operativos como para ingenieros de sistemas.
 
 ---
 
-## 2. Arquitectura y Stack Tecnológico (Nivel Ingeniería)
+## 1. Propósito y Arquitectura Central
 
-### ¿Cuál es el Stack Tecnológico Principal?
-- **Backend:** Python 3.10+, FastAPI, Uvicorn (ASGI).
-- **Base de Datos:** SQLite3 con SQLAlchemy ORM.
-- **Frontend:** Vanilla JavaScript, HTML5, CSS3 puro, Server-Sent Events (SSE).
-- **Entorno:** Despliegue en Windows Server / Linux vía entornos virtuales aislados.
+### ¿Cuál es la verdadera misión del Centro de Comando?
+En el ecosistema logístico, existen múltiples proveedores de GPS (ej. Protrack, Schmitz) que emiten datos en formatos completamente distintos, a diferentes velocidades, y con distintas mecánicas (algunos empujan datos, otros requieren ser consultados).
+El Centro de Comando actúa como un **Hub Telemático Inteligente**. Su misión es atrapar este caos, transformarlo a un "Modelo Canónico" unificado (el formato estándar que requiere Assistcargo), encolarlo de manera segura, y despacharlo de forma asíncrona y ordenada hacia el servidor central (Recurso Confiable).
 
-### ¿Cómo funciona la actualización en Tiempo Real sin saturar el servidor?
-El sistema utiliza un patrón de **Server-Sent Events (SSE)**. 
-Un único hilo global (`broadcast_loop`) consulta la base de datos cada 2 segundos, empaqueta las métricas calculadas y el top 200 de los últimos eventos, y empuja (PUSH) este payload JSON unificado a todos los clientes web conectados. Esto evita que cada cliente golpee la base de datos de manera independiente (lo que ocurriría con *long-polling*).
-
-### ¿Por qué se usa SQLite y por qué hay múltiples archivos `.db`?
-Para evitar cuellos de botella por concurrencia y bloqueos (*locks*) propios de las bases de datos monolíticas o del SQLite de un solo archivo, se aplica una arquitectura de **Sharding por Proveedor**. 
-Cada integración escribe exclusivamente en su propio archivo físico (ej. `protrack_prod.db`, `schmitz_test.db`). Esto permite escalar la recepción a miles de eventos por segundo (EPS) en paralelo sin que un proveedor sature o frene al resto.
+### ¿Cómo evita el sistema colapsar si llegan miles de eventos por segundo?
+El sistema evita el tradicional error `database is locked` implementando un patrón de **Sharding Dinámico**. En lugar de guardar todos los eventos en un solo archivo físico gigante, el Hub asigna una base de datos local independiente (`.db` SQLite) para cada proveedor y entorno (ej. `protrack_prod.db`, `schmitz_test.db`). Esto permite transacciones de escritura paralelas reales a nivel de sistema operativo, escalando el throughput horizontalmente.
 
 ---
 
-## 3. Lógica de Métricas y Seguridad (Nivel Analista de Sistemas)
+## 2. Ingesta de Datos (Push vs Pull)
 
-### ¿Cómo se tratan las anomalías de tiempo (Outliers)?
-Al integrar proveedores de todo el mundo, a menudo las estampas de tiempo (`timestamp` original del GPS) llegan con desfases de zona horaria o de sincronización de satélite.
-- **Valores Negativos:** El sistema aplica filtros `MAX(0.0, timestamp_dif)` a nivel de query SQL para impedir que latencias negativas rompan el promedio.
-- **Eventos Zombie (Outliers):** Si un evento quedó encolado por una desconexión y se envía horas más tarde, un filtro algorítmico excluye cualquier evento cuya latencia de Hub sea mayor a **300 segundos** de los promedios matemáticos, evitando la contaminación del indicador de performance real.
+### ¿Cómo atrapa el Hub los datos de los proveedores?
+El Centro de Comando cuenta con dos motores de ingesta híbridos:
+1. **Motores PUSH (Webhooks):** Son endpoints de recepción pasiva (ej. la ruta de Schmitz). Están constantemente abiertos y escuchando. Cuando el proveedor tiene un dato nuevo, lo "empuja" al Hub e ingresa en milisegundos a la cola.
+2. **Motores PULL (Cron-Driven):** Hay proveedores que no envían datos, sino que exigen que el Hub vaya a buscarlos (ej. Protrack). Para ellos, el sistema tiene un "Puller" dinámico. Mediante un temporizador asíncrono, el Hub genera firmas de seguridad dinámicas (hashes MD5 basados en la fecha actual), solicita el estado de cientos de patentes a la vez, y empuja las respuestas a la cola interna, emulando un comportamiento en tiempo real.
 
-### ¿Cómo está estructurada la Seguridad Perimetral e Interna?
-1. **Autenticación (Dashboard):** Protegido por HTTP Basic Auth inyectado vía dependencias de FastAPI (leyendo de `.env` para evitar credenciales hardcodeadas).
-2. **Endpoints Internos (`/api/*`):** Funciones analíticas y visualizadores de bases de datos (`db-viewer`) heredan el guard de Basic Auth, evitando fugas de información.
-3. **Inspector Anti-SSRF:** La herramienta embebida tipo *Postman* (`/inspector/*`) incluye un control riguroso de IP Address. Antes de despachar un request en nombre del servidor, resuelve el DNS y bloquea cualquier intento de alcance a IPs privadas (`10.0.0.0/8`, `192.168.0.0/16`), Loopbacks o Metadata Cloud (`169.254.169.254`).
+---
 
-### ¿Qué sucede con el almacenamiento a largo plazo?
-El diseño del sistema prioriza la latencia táctica sobre el almacenamiento masivo ("Data Lake").
-Los datos granulares (webhooks crudos) se depuran continuamente mediante una tarea de purga automática basada en antigüedad y volumen. Sin embargo, antes de purgarse, los KPIs agregados (volumetría total y promedios) son consolidados diariamente en una base de datos central (`system_config.db` -> tabla `daily_stats`) para alimentar la pestaña de *Historial y Gráficos*.
+## 3. Procesamiento, Despacho y Resiliencia
+
+### ¿Cómo se despachan los eventos a Recurso Confiable (RC)?
+No se despachan inmediatamente en el hilo web (lo cual bloquearía la recepción de nuevos datos). Todo lo que ingresa se guarda como estado `pending`.
+En el fondo del servidor corre un **Worker Asíncrono**. No utiliza un bucle ineficiente que consulta la base cada "N" segundos; está conectado a un *Despertador Thread-Safe*. En el mismo milisegundo en que ingresa un payload, el Webhook dispara una alerta que "despierta" al Worker, toma un lote de la base de datos, y despacha a RC utilizando un pool de hilos (`ThreadPoolExecutor`) para no bloquear el sistema principal.
+
+### ¿Qué ocurre si Recurso Confiable o la red se caen?
+El Centro de Comando está diseñado para nunca perder un dato. Si un envío falla (por un error 500 o un Timeout temporal de RC), el evento no se descarta. Su estado se mantiene como `pending` y se incrementa un contador de reintentos.
+Se aplica un **Backoff Lineal de Castigo**:
+- 1° fallo: Se espera 10 segundos para reintentar.
+- 2° fallo: Se espera 45 segundos.
+- 3° fallo: Se espera 120 segundos.
+- 4° fallo: Se espera 300 segundos.
+- 5° fallo: Se declara como fallo definitivo (`failed`).
+Este mecanismo aísla los eventos "problemáticos" (el tráfico enfermo), permitiendo que la cola siga procesando a toda velocidad los eventos entrantes frescos (el tráfico sano).
+
+---
+
+## 4. El Dashboard de Monitoreo
+
+### ¿Cómo actualiza la pantalla sin que se caiga el servidor?
+Si 10 pantallas abrieran el dashboard y consultaran a la vez la base de datos, saturarían el servidor. Para evitar esto, se utiliza **Server-Sent Events (SSE)**. El backend consolida los datos y métricas una vez cada 2 segundos, y los *empuja* a todas las pantallas conectadas simultáneamente. El navegador solo pinta el resultado, con un coste de red bajísimo.
+
+### ¿Qué miden exactamente las latencias?
+- **Latencia de Transmisión:** El tiempo exacto entre la hora que marcó el reloj interno del GPS (en el camión) y la hora en que el proveedor nos lo entregó.
+- **Latencia Hub AC (Assistcargo):** El tiempo que demoramos nosotros. Desde que lo guardamos en la cola local hasta que el *Worker* lo toma para despacharlo. Se mantiene alrededor de 1.0s gracias a la lógica de procesamiento en pequeños lotes (Micro-Batching).
+- **Latencia RC:** El tiempo que demoró el servidor de Recurso Confiable en confirmar y devolver el `HTTP 200 Ok` tras nuestra petición SOAP.
+
+### ¿Por qué a veces un evento demoraba días y arruinaba el promedio?
+Existen dos tipos de distorsiones matemáticas que el Hub mitiga proactivamente:
+1. **Desfasaje de Timestamps:** A veces los satélites envían horas locales y el servidor compara en UTC, arrojando valores negativos. El sistema aplica un clamp a nivel base de datos (`MAX(0.0)`) para asegurar tiempos reales.
+2. **Eventos Zombie (Outliers):** Si un dispositivo pierde señal celular durante un viaje y envía 500 datos de golpe 3 días después, su latencia de transmisión será inmensa. Para evitar que la métrica táctica del día se contamine y muestre "Promedio Hub: 8.000 segundos", el Hub aplica un **Filtro de Outliers** y excluye de los promedios aritméticos cualquier evento que demore más de 300 segundos en nuestro servidor, garantizando que el Dashboard solo grafique la salud operativa actual.
+
+---
+
+## 5. Herramientas de Auditoría y Seguridad
+
+### Si falla el paso de un dato a Pydantic (Modelo Canónico), ¿Se pierde?
+No. Antes siquiera de intentar mapear, validar o guardar en SQLite, la capa HTTP más superficial del sistema invoca al `auditor.py`. Este componente crea logs físicos diarios (ej. `audit/schmitz_test.jsonl`) volcando el payload JSON original crudo e intacto en el disco duro. Si hubiese una caída masiva de base de datos, se podrían inyectar los logs de auditoría nuevamente al sistema.
+
+### ¿Qué es el Inspector de APIs del Dashboard?
+Es un módulo interno que emula a Postman. Permite a los analistas probar conexiones salientes directamente desde los servidores de Assistcargo en la nube, saltándose problemas locales de VPN corporativas o bloqueos del navegador (CORS).
+Por diseño de seguridad, este inspector cuenta con un **Escudo Anti-SSRF**, que intercepta y bloquea llamadas maliciosas (ej. un usuario intentando que el servidor se consulte a sí mismo en `127.0.0.1` o escanee redes privadas).
