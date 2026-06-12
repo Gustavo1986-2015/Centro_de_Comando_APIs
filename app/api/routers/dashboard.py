@@ -180,8 +180,8 @@ async def get_stats_data(
         latency_sec = None
         if ev.status in ('sent', 'failed') and time_sent_dt and ev.created_at:
             latency_sec = max(0.0, (time_sent_dt - ev.created_at).total_seconds())
-            # Promediar solo si no hubo reintentos (happy path real)
-            if getattr(ev, 'retry_count', 0) == 0:
+            # Promediar solo si no hubo reintentos (happy path real) y no es un outlier (> 5 min)
+            if getattr(ev, 'retry_count', 0) == 0 and latency_sec <= 300.0:
                 total_latency_seconds += latency_sec
                 latency_samples += 1
             
