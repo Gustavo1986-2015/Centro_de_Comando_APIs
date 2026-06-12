@@ -271,20 +271,31 @@ def update_daily_stats(provider: str, env: str):
     today_start = today_start_local.astimezone(timezone.utc).replace(tzinfo=None)
     
     db_prov = get_session(provider, env)
+    # Umbral máximo de latencia aceptable para el promedio (5 minutos)
+    HUB_LATENCY_MAX_SEC = 300.0
+    hub_latency_expr = (
+        func.julianday(NormalizedRCEvent.updated_at) - func.julianday(NormalizedRCEvent.created_at)
+    ) * 86400.0 - func.coalesce(NormalizedRCEvent.rc_latency_sec, 0)
+
     try:
         # Calcular promedios excluyendo eventos con reintentos para tener la latencia real (happy path)
         success_stats = db_prov.query(
             func.avg(NormalizedRCEvent.rc_latency_sec).label('avg_rc'),
             func.avg(
-                (func.julianday(NormalizedRCEvent.updated_at) - func.julianday(NormalizedRCEvent.created_at)) * 86400.0 - func.coalesce(NormalizedRCEvent.rc_latency_sec, 0)
+                func.max(0.0, hub_latency_expr)
             ).label('avg_hub'),
             func.avg(
-                (func.julianday(NormalizedRCEvent.created_at) - func.julianday(NormalizedRCEvent.date)) * 86400.0
+                func.max(
+                    0.0,
+                    (func.julianday(NormalizedRCEvent.created_at) - func.julianday(NormalizedRCEvent.date)) * 86400.0
+                )
             ).label('avg_transmission')
         ).filter(
             NormalizedRCEvent.status == "sent",
             NormalizedRCEvent.created_at >= today_start,
-            func.coalesce(NormalizedRCEvent.retry_count, 0) == 0
+            func.coalesce(NormalizedRCEvent.retry_count, 0) == 0,
+            # Excluir outliers: eventos con latencia Hub > 5 minutos
+            hub_latency_expr <= HUB_LATENCY_MAX_SEC
         ).first()
 
         # Conteos totales (Ya NO se recalculan aquí para evitar pérdida de datos si la cola se purga)
