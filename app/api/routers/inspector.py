@@ -1,16 +1,32 @@
-from fastapi import APIRouter, Request, Body, HTTPException
+from fastapi import APIRouter, Request, Body, HTTPException, Depends
+from app.api.routers.dashboard import verify_dashboard_auth
 from typing import Dict, Any, Optional
 from datetime import datetime, timezone
 import requests
 import uuid
+import ipaddress
+import socket
+import urllib.parse
 
 router = APIRouter(prefix="/inspector", tags=["API Inspector"])
 
 # Caché en memoria para los payloads recibidos (útil para la sesión actual del usuario)
 CACHED_PAYLOADS: Dict[str, Any] = {}
 
+
+def _is_safe_url(url: str) -> bool:
+    """Bloquea URLs que apunten a IPs privadas, loopback o metadata de cloud (anti-SSRF)."""
+    try:
+        host = urllib.parse.urlparse(url).hostname
+        if not host:
+            return False
+        ip = ipaddress.ip_address(socket.gethostbyname(host))
+        return not (ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved)
+    except Exception:
+        return False
+
 @router.post("/catch/{session_id}")
-async def catch_webhook(session_id: str, request: Request):
+async def catch_webhook(session_id: str, request: Request, _: None = Depends(verify_dashboard_auth)):
     """
     Modo PUSH (Webhooks):
     Atrapa cualquier payload enviado a esta URL temporal y lo guarda en memoria.
@@ -32,7 +48,7 @@ async def catch_webhook(session_id: str, request: Request):
     return {"status": "ok", "message": "Payload atrapado exitosamente", "session_id": session_id}
 
 @router.get("/catch/{session_id}/latest")
-async def get_latest_catch(session_id: str):
+async def get_latest_catch(session_id: str, _: None = Depends(verify_dashboard_auth)):
     """
     Permite al UI consultar (sondear) si ya llegó el payload a la URL temporal.
     """
@@ -41,7 +57,7 @@ async def get_latest_catch(session_id: str):
     return {"has_data": False}
 
 @router.post("/fetch")
-async def fetch_api(request_data: dict = Body(...)):
+async def fetch_api(request_data: dict = Body(...), _: None = Depends(verify_dashboard_auth)):
     """
     Modo PULL (Mini-Postman):
     Realiza una solicitud HTTP a nombre del cliente para evitar problemas de CORS del navegador.
@@ -87,6 +103,9 @@ async def fetch_api(request_data: dict = Body(...)):
     
     if not url:
         raise HTTPException(status_code=400, detail="La URL es requerida")
+
+    if not _is_safe_url(url):
+        raise HTTPException(status_code=400, detail="URL no permitida: apunta a un host interno o reservado.")
         
     try:
         start = time.perf_counter()
@@ -122,7 +141,7 @@ async def fetch_api(request_data: dict = Body(...)):
 
 
 @router.post("/fetch-token")
-async def fetch_token(request_data: dict = Body(...)):
+async def fetch_token(request_data: dict = Body(...), _: None = Depends(verify_dashboard_auth)):
     """
     Obtiene un Bearer Token de un endpoint OAuth / API Key.
     Soporta flujos: client_credentials, password grant, o API Key simple.
@@ -138,6 +157,9 @@ async def fetch_token(request_data: dict = Body(...)):
     
     if not token_url:
         raise HTTPException(status_code=400, detail="La URL del token es requerida")
+
+    if not _is_safe_url(token_url):
+        raise HTTPException(status_code=400, detail="URL no permitida: apunta a un host interno o reservado.")
     
     auth_tuple = None
     if auth_user and auth_pass:
