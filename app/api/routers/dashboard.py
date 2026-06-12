@@ -55,7 +55,6 @@ async def get_dashboard(request: Request, _: None = Depends(verify_dashboard_aut
     response.headers["Expires"] = "0"
     return response
 
-@router.get("/api/stats")
 async def get_stats_data(
     status_filter: str = None,
     provider_filter: str = None
@@ -578,7 +577,7 @@ async def get_databases(_: None = Depends(verify_dashboard_auth)):
     return [{"name": os.path.basename(f)} for f in files]
 
 @router.get("/api/db-viewer/tables")
-async def get_tables(db_name: str = Query(...)):
+async def get_tables(db_name: str = Query(...), _: None = Depends(verify_dashboard_auth)):
     """Lista las tablas de una base de datos específica."""
     import sqlite3
     # Prevención básica de path traversal
@@ -600,7 +599,7 @@ async def get_tables(db_name: str = Query(...)):
             conn.close()
 
 @router.get("/api/db-viewer/query")
-async def execute_query(db_name: str = Query(...), table: str = Query(...), limit: int = 50, offset: int = 0):
+async def execute_query(db_name: str = Query(...), table: str = Query(...), limit: int = 50, offset: int = 0, _: None = Depends(verify_dashboard_auth)):
     """Retorna los datos y las columnas de una tabla seleccionada."""
     import sqlite3
     safe_db_name = os.path.basename(db_name)
