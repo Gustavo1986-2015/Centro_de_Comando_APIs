@@ -1,54 +1,55 @@
 # Centro de Comando APIs - Preguntas Frecuentes (FAQ)
 
-Este documento centraliza las dudas más comunes sobre la arquitectura, funcionamiento, métricas y seguridad del Centro de Comando.
+Bienvenido a las Preguntas Frecuentes del **Centro de Comando APIs de Assistcargo**. Este documento está diseñado para ayudar a los operadores y usuarios del dashboard a entender cómo funciona el monitoreo de telemetría de punta a punta.
 
-## 1. Arquitectura y Tiempo Real
+## 1. Conceptos Generales
 
-### ¿Cómo funciona la actualización en tiempo real del Dashboard?
-El Dashboard utiliza **Server-Sent Events (SSE)**. El backend mantiene un *broadcast loop* global que envía un payload con el top 200 de los últimos eventos y métricas pre-calculadas a todos los clientes web conectados cada 2 segundos.
-*Nota: SSE envía información desde el servidor al cliente en una sola dirección, lo que lo hace mucho más ligero que WebSockets para este caso de uso.*
+### ¿Qué es el Centro de Comando APIs?
+Es una plataforma de monitoreo en tiempo real que consolida y visualiza todo el tráfico de datos (telemetría GPS, sensores, alarmas) que viaja desde las integraciones de los proveedores (ej. Protrack, Schmitz) hacia nuestro sistema central de procesamiento (Radio Comando).
 
-### Si hago clic en el filtro "EN COLA" o filtro por Proveedor, ¿qué pasa?
-Al aplicar un filtro específico (por estado o proveedor), la grilla web deja de consumir el stream global SSE (ya que este solo manda el top 200 general) y hace un **fetch REST tradicional** (`GET /api/stats?status_filter=...`) directo a las bases de datos. Esto garantiza que veas todos los eventos, incluso si quedaron empujados fuera del "Top 200 global" por una ráfaga masiva reciente.
+### ¿Qué información se muestra en el Dashboard?
+El dashboard te permite ver el estado global de la salud de las integraciones mediante:
+- Indicadores de estado de conexión de cada proveedor.
+- Contadores diarios de eventos procesados.
+- Promedios de latencia (tiempos de demora) en vivo.
+- Una grilla detallada con la trazabilidad exacta de los últimos eventos recibidos.
 
-## 2. Métricas y Latencias
+## 2. Indicadores y Estados
 
-### ¿Qué significan las distintas latencias en el sistema?
-Existen 3 latencias clave monitoreadas:
-- **Latencia de Transmisión (`avg_transmission_latency`):** Tiempo desde que el GPS del dispositivo tomó el dato físico hasta que llegó a nuestro webhook.
-- **Latencia Hub AC (`avg_hub_latency`):** Tiempo que el evento pasó "esperando o procesándose" dentro del Hub de Assistcargo antes de ser enviado a su destino final. Lo ideal es mantenerlo cerca de 1.0s (por el micro-batching).
-- **Latencia SOAP RC (`avg_rc_latency`):** Tiempo de respuesta neto (ida y vuelta) del servidor externo (ej. Radio Comando) al confirmar la recepción.
+### ¿Qué significan las tarjetas superiores (En Cola, Enviados, Fallidos, En Reintento)?
+- **En Cola (Pendientes):** Eventos que acabamos de recibir del proveedor y que actualmente están siendo procesados por nuestro Hub antes de ser despachados.
+- **Enviados (Hoy):** Total de eventos que fueron procesados y entregados con éxito a Radio Comando durante el día en curso.
+- **Fallidos (Hoy):** Eventos que, tras agotar todos los intentos posibles, no pudieron ser entregados al destino.
+- **En Reintento:** Eventos que fallaron en su primer intento (por ejemplo, por una micro-caída de red) y el sistema está intentando retransmitirlos automáticamente.
 
-### ¿Por qué a veces la latencia de transmisión daba negativo en el historial?
-El campo `date` del dispositivo (hora del GPS) puede venir en zona horaria local o desfasada. Si el evento se marca como recibido en UTC, la diferencia podía dar negativa. Esto se solucionó aplicando un filtro `MAX(0.0, ...)` a nivel base de datos para sanear los cálculos.
+### ¿Qué diferencia hay entre "Latencia Hub AC" y "Latencia RC"?
+- **Latencia Hub AC (Assistcargo):** Es el tiempo que el evento pasa "adentro" de nuestra plataforma. Desde que entra por el webhook hasta que sale hacia su destino. Lo normal es que se mantenga cerca de 1.0 segundo, ya que el sistema agrupa eventos (Micro-Batching) para mayor eficiencia.
+- **Latencia RC (Radio Comando):** Es el tiempo neto que tarda el sistema destino en respondernos "Recibido Ok". Si este número sube, indica lentitud en los servidores externos.
 
-### Si un evento queda trabado 3 días, ¿arruina el promedio de latencia de ese día?
-No. El sistema implementa un esquema de **Protección contra Outliers**. Cualquier evento que demore más de **300 segundos (5 minutos)** en el Hub es excluido matemáticamente del cálculo del promedio para no distorsionar el 99% de las métricas que fluyen en milisegundos.
+## 3. Uso de la Grilla de Trazabilidad
 
-## 3. Seguridad y Accesos
+### ¿Cómo leo la información de un evento en la grilla?
+Cada fila representa un reporte de GPS y muestra:
+1. **Vehículo:** Patente/Activo, IMEI y el botón para ver el "JSON Origen" (el dato crudo que mandó el proveedor).
+2. **Ubicación:** Fecha y hora exacta de la coordenada GPS.
+3. **Sensores Clave:** Resumen de velocidad, estado del motor (Ignición), batería, etc.
+4. **Trazabilidad:** Una línea de tiempo exacta (con milisegundos) que muestra cuándo fue enviado por el proveedor, cuándo lo recibimos, y en qué milisegundo Radio Comando nos dio el OK.
 
-### ¿Cómo modifico los usuarios y contraseñas del Dashboard?
-Toda la seguridad base (Basic Auth) se lee desde las variables de entorno (`.env`):
-```env
-DASHBOARD_USER=admin
-DASHBOARD_PASS=changeme
-```
+### ¿Para qué sirve el botón "Descargar Excel"?
+Permite exportar una instantánea de los eventos que estás visualizando actualmente en la grilla para auditoría, análisis externo o armado de reportes operativos.
 
-### ¿Por qué el Endpoint `/api/stats` da un error "Not authenticated" si intento leerlo manual?
-El endpoint `/api/stats` y todo el visualizador de base de datos (`/api/db-viewer/*`) requieren estrictamente autenticación básica con las credenciales del dashboard para evitar exposición de métricas sensibles o credenciales en tránsito.
+### ¿Qué pasa si aplico filtros de Proveedor o Estado?
+La grilla se actualizará para mostrarte exclusivamente el tráfico de ese proveedor (ej. solo Protrack) o solo los eventos en un estado particular (ej. solo los "Fallidos" para investigar por qué no están llegando).
 
-### ¿Qué es el Inspector de APIs (`/inspector/*`)?
-Es una mini-herramienta embebida (estilo Postman) diseñada para que la interfaz pueda probar llamadas HTTP sin sufrir bloqueos CORS del navegador. Permite capturar webhooks, ejecutar requests cURL o traer Tokens.
-**Seguridad:** Está protegido con la autenticación del Dashboard y cuenta con un guard **anti-SSRF**, el cual bloquea categóricamente cualquier intento de consultar direcciones IP privadas, loopbacks o IPs de metadatos cloud (como `169.254.169.254`).
+## 4. Herramientas de Diagnóstico
 
-## 4. Bases de Datos (SQLite)
+### ¿Para qué sirve el menú "Inspector de APIs"?
+Es una herramienta avanzada incorporada en el sistema que permite a los operadores técnicos y al equipo de soporte simular envíos de datos o probar conectividad hacia endpoints externos directamente desde nuestros servidores, garantizando que los bloqueos de red locales no afecten las pruebas.
 
-### ¿Por qué hay un archivo SQLite distinto por cada proveedor y entorno?
-Para maximizar el throughput y evitar cuellos de botella por locks (bloqueos) de SQLite, el sistema implementa **sharding**.
-- `protrack_prod.db`
-- `schmitz_test.db`
-- `system_config.db` (Ajustes y métricas globales)
-Esto permite que, si un proveedor bombardea la API con 1.000 eventos por segundo, solo bloquee su propio archivo, sin afectar la recepción del resto.
+## 5. Historial y Retención
 
-### ¿Se borrarán los datos viejos y saturarán el disco?
-El sistema tiene un **Proceso de Purga** automático que limpia eventos antiguos (configurable desde el menú de Configuración Global) manteniendo la base de datos veloz. Además, las métricas globales diarias (`sent_count`, promedios de latencia) se archivan permanentemente en la tabla `daily_stats` dentro de `system_config.db`.
+### ¿Por cuánto tiempo puedo ver los eventos en la grilla?
+El dashboard en tiempo real está diseñado para monitoreo táctico y muestra los flujos más recientes de información. Para garantizar el máximo rendimiento y velocidad (mostrando latencias sub-segundo), los eventos individuales crudos se depuran automáticamente del monitor en vivo luego de unas horas.
+
+### ¿Dónde consulto la información de días anteriores?
+En el menú superior puedes acceder a la sección de **Historial (Gráficos)**. Allí, el sistema guarda de forma permanente el recuento total de envíos, fallos y los promedios de latencia de días anteriores, lo cual es ideal para analizar tendencias a largo plazo.
