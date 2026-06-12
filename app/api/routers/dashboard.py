@@ -46,15 +46,14 @@ class ConfigUpdate(BaseModel):
 @router.get("/dashboard", response_class=HTMLResponse)
 async def get_dashboard(request: Request, _: None = Depends(verify_dashboard_auth)):
     """Renderiza el Centro de Comando en Vivo."""
-    return templates.TemplateResponse(
+    response = templates.TemplateResponse(
         request=request, 
-        name="index.html",
-        headers={
-            "Cache-Control": "no-cache, no-store, must-revalidate",
-            "Pragma": "no-cache",
-            "Expires": "0"
-        }
+        name="index.html"
     )
+    response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate, max-age=0"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+    return response
 
 @router.get("/api/stats")
 async def get_stats_data(
@@ -312,8 +311,9 @@ async def broadcast_loop():
             payload = f"data: {json.dumps(data)}\n\n"
             for q in _sse_clients:
                 await q.put(payload)
-        except Exception:
-            pass
+        except Exception as e:
+            import traceback
+            logger.error(f"Error in broadcast_loop: {e}\n{traceback.format_exc()}")
 
 @router.get("/api/stats/stream")
 async def stats_stream(request: Request, _=Depends(verify_dashboard_auth)):
@@ -561,8 +561,8 @@ async def get_daily_history(_: None = Depends(verify_dashboard_auth)):
             "env": s.env.upper(),
             "sent_count": s.sent_count,
             "failed_count": s.failed_count,
-            "avg_transmission_latency_sec": round(s.avg_transmission_latency_sec, 2) if s.avg_transmission_latency_sec is not None else None,
-            "avg_hub_latency_sec": round(s.avg_hub_latency_sec, 2) if s.avg_hub_latency_sec is not None else None,
+            "avg_transmission_latency_sec": round(max(0.0, s.avg_transmission_latency_sec), 2) if s.avg_transmission_latency_sec is not None and s.avg_transmission_latency_sec >= 0 else None,
+            "avg_hub_latency_sec": round(max(0.0, s.avg_hub_latency_sec), 2) if s.avg_hub_latency_sec is not None and s.avg_hub_latency_sec >= 0 else None,
             "avg_rc_latency_sec": round(s.avg_rc_latency_sec, 2) if s.avg_rc_latency_sec is not None else None
         } for s in stats]
     finally:
