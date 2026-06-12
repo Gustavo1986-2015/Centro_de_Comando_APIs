@@ -55,7 +55,6 @@ async def get_dashboard(request: Request, _: None = Depends(verify_dashboard_aut
     response.headers["Expires"] = "0"
     return response
 
-@router.get("/api/stats")
 async def get_stats_data(
     status_filter: str = None,
     provider_filter: str = None
