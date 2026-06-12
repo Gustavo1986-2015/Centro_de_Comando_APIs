@@ -1495,7 +1495,14 @@
             if (window.evtSource) {
                 window.evtSource.close();
             }
-            window.evtSource = new EventSource('/api/stats/stream');
+            
+            const timestamp = Date.now();
+            if (currentProviderFilter === 'all' && currentStatusFilter === 'all') {
+                window.evtSource = new EventSource('/api/stats/stream?t=' + timestamp);
+            } else {
+                window.evtSource = new EventSource(`/api/stats/stream?provider=${currentProviderFilter}&status=${currentStatusFilter}&t=${timestamp}`);
+            }
+
             window.evtSource.onmessage = e => renderStats(JSON.parse(e.data));
             window.evtSource.onerror = () => {
                 document.getElementById('sync-status').textContent = 'Pérdida de Conexión';
@@ -1513,14 +1520,35 @@
         let allRecentEvents = [];
         let expandedRows = new Set();
         
+        // Carga eventos filtrados desde el backend cuando hay filtros activos
+        async function fetchFilteredEvents() {
+            const hasFilter = currentStatusFilter !== 'all' || currentProviderFilter !== 'all';
+            if (!hasFilter) {
+                // Sin filtros: la grilla se alimenta del SSE normalmente
+                renderRecentTable();
+                return;
+            }
+            try {
+                const params = new URLSearchParams();
+                if (currentStatusFilter !== 'all') params.set('status_filter', currentStatusFilter);
+                if (currentProviderFilter !== 'all') params.set('provider_filter', currentProviderFilter);
+                const res = await fetch(`/api/stats?${params.toString()}`, { cache: 'no-store' });
+                const data = await res.json();
+                allRecentEvents = data.recent || [];
+                renderRecentTable();
+            } catch(e) {
+                console.error('Error al cargar eventos filtrados:', e);
+            }
+        }
+
         function setFilterStatus(status) {
             currentStatusFilter = status;
-            renderRecentTable();
+            fetchFilteredEvents();
         }
         
         function setFilterProvider(provider) {
             currentProviderFilter = provider.toLowerCase();
-            renderRecentTable();
+            fetchFilteredEvents();
         }
 
         function setFilterLatency(latency) {
@@ -1532,6 +1560,8 @@
             currentStatusFilter = 'all';
             currentProviderFilter = 'all';
             currentLatencyFilter = 'all';
+            const statusDropdown = document.getElementById('filter-status');
+            if(statusDropdown) statusDropdown.value = 'all';
             document.getElementById('filter-provider').value = 'all';
             document.getElementById('filter-latency').value = 'all';
             renderRecentTable();
@@ -1699,7 +1729,7 @@
         // Monitor Interno
         async function loadMonitor() {
             try {
-                const res = await fetch('/api/stats');
+                const res = await fetch('/api/stats', { cache: 'no-store' });
                 const data = await res.json();
                 document.getElementById('monitor-stats').value = JSON.stringify(data, null, 2);
                 
@@ -1724,7 +1754,7 @@
                 }
                 
                 // Fetch health
-                const healthRes = await fetch('/health');
+                const healthRes = await fetch('/health', { cache: 'no-store' });
                 if (healthRes.ok) {
                     const healthData = await healthRes.json();
                     document.getElementById('monitor-health').value = JSON.stringify(healthData, null, 2);
@@ -1740,7 +1770,7 @@
 
         async function loadHistory() {
             try {
-                const response = await fetch('/api/history');
+                const response = await fetch('/api/history', { cache: 'no-store' });
                 const data = await response.json();
                 const tbody = document.getElementById('history-table-body');
                 tbody.innerHTML = '';
@@ -1808,6 +1838,7 @@
 
         function renderStats(data) {
             try {
+                console.log("RENDER STATS RECEIVED:", data);
                 hideDisconnectBanner();
                 // If filters are active, we must compute the local counts from data.recent 
                 // OR we just use global counts. We will use global counts for simplicity 
@@ -1858,7 +1889,8 @@
                 document.getElementById('sync-status').textContent = 'Conectado y Escuchando';
                 document.querySelector('.pulse').style.backgroundColor = 'var(--color-green-bright)';
             } catch (error) {
-                console.error('Error parsing stats:', error);
+                console.error("Error procesando data SSE:", error);
+                alert("JS Error en renderStats: " + error.message);
             }
         }
 
@@ -1882,10 +1914,18 @@
             const targetNum = parseFloat(newValue);
             const suffix    = String(newValue).replace(/^[\d.]+/, '');
             const startNum  = _metricState[elementId] !== undefined
-                              ? _metricState[elementId] : targetNum;
+                              ? _metricState[elementId] : (parseFloat(el.textContent) || 0);
             _metricState[elementId] = targetNum;
 
-            if (startNum === targetNum) return;
+            if (startNum === targetNum) {
+                // Ensure the DOM actually shows the targetNum even if it didn't "change" according to state
+                const isFloat = suffix !== '' || String(newValue).includes('.');
+                const formatted = isFloat ? targetNum.toFixed(2) + suffix : Math.round(targetNum) + suffix;
+                if (el.textContent !== formatted) {
+                    el.textContent = formatted;
+                }
+                return;
+            }
 
             const isFloat   = suffix !== '' || String(newValue).includes('.');
             const duration  = 400;
