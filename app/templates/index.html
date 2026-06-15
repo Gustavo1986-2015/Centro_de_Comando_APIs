@@ -1354,6 +1354,17 @@
     </footer>
 
     <script>
+        function formatLatency(totalSeconds, decimals = 1) {
+            if (totalSeconds === null || totalSeconds === undefined) return 'N/A';
+            const val = parseFloat(totalSeconds);
+            if (val < 60) return `${val.toFixed(decimals)}s`;
+            const h = Math.floor(val / 3600);
+            const m = Math.floor((val % 3600) / 60);
+            const s = Math.round(val % 60);
+            if (h > 0) return `${h}h ${m}m ${s}s`;
+            return `${m}m ${s}s`;
+        }
+
         const _metricState = {};
         const SPARK_HISTORY = {
             'spark-pending':  new Array(60).fill(0),
@@ -1612,13 +1623,13 @@
                 let transSec = ev.transmission_latency_sec;
                 let displayTrans = 'N/A';
                 if (transSec !== null && transSec !== undefined) {
-                    displayTrans = transSec >= 60 ? `${Math.floor(transSec / 60)}m ${Math.round(transSec % 60)}s` : `${transSec.toFixed(1)}s`;
+                    displayTrans = formatLatency(transSec, 1);
                 }
                 
                 let lat = ev.latency_sec;
                 let displayHub = 'N/A';
                 if (lat !== null && lat !== undefined) {
-                    displayHub = lat >= 60 ? `${Math.floor(lat / 60)}m ${Math.round(lat % 60)}s` : `${lat.toFixed(2)}s`;
+                    displayHub = formatLatency(lat, 2);
                 }
 
                 let rcLat = ev.rc_latency_sec;
@@ -1787,19 +1798,19 @@
                     let transText = 'N/A';
                     if (row.avg_transmission_latency_sec !== null && row.avg_transmission_latency_sec !== undefined) {
                         let t = row.avg_transmission_latency_sec;
-                        transText = t >= 60 ? `${Math.floor(t / 60)}m ${Math.round(t % 60)}s` : `${t.toFixed(1)}s`;
+                        transText = formatLatency(t, 1);
                     }
                     
                     let hubText = 'N/A';
                     if (row.avg_hub_latency_sec !== null && row.avg_hub_latency_sec !== undefined) {
                         let h = row.avg_hub_latency_sec;
-                        hubText = h >= 60 ? `${Math.floor(h / 60)}m ${Math.round(h % 60)}s` : `${h.toFixed(1)}s`;
+                        hubText = formatLatency(h, 1);
                     }
 
                     let rcText = 'N/A';
                     if (row.avg_rc_latency_sec !== null && row.avg_rc_latency_sec !== undefined) {
                         let rc = row.avg_rc_latency_sec;
-                        rcText = rc >= 60 ? `${Math.floor(rc / 60)}m ${Math.round(rc % 60)}s` : `${rc.toFixed(1)}s`;
+                        rcText = formatLatency(rc, 1);
                     }
 
                     tr.innerHTML = `
@@ -2012,7 +2023,7 @@
                 let transmissionHtml = '';
                 if (ev.transmission_latency_sec !== null && ev.transmission_latency_sec !== undefined) {
                     let transSec = ev.transmission_latency_sec;
-                    let displayTime = transSec >= 60 ? `${Math.floor(transSec / 60)}m ${Math.round(transSec % 60)}s` : `${transSec.toFixed(1)}s`;
+                    let displayTime = formatLatency(transSec, 1);
                     transmissionHtml = `<span style="background:rgba(251,191,36,0.1); color:var(--color-yellow); border:1px solid rgba(251,191,36,0.3); padding:2px 5px; border-radius:4px; font-size:0.7rem; margin-left:5px;" title="Tiempo de viaje desde el dispositivo hasta el Hub">📡 ${displayTime}</span>`;
                 }
 
@@ -2052,7 +2063,7 @@
                 let displayLat = '';
                 if (ev.status === 'sent' && ev.latency_sec !== null && ev.latency_sec !== undefined) {
                     let lat = ev.latency_sec;
-                    displayLat = lat >= 60 ? `${Math.floor(lat / 60)}m ${Math.round(lat % 60)}s` : `${lat.toFixed(3)}s`;
+                    displayLat = formatLatency(lat, 3);
                     internalLatencyHtml = ` <span style="color:var(--color-green-bright); font-size:0.75rem; font-weight:bold;">(Hub: ${displayLat})</span>`;
                 }
                 rcHtml += `<div>Enviado RC: <span style="color:var(--color-white)">${ev.time_sent || 'N/A'}</span>${internalLatencyHtml}</div>`;
