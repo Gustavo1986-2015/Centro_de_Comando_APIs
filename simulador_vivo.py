@@ -16,7 +16,7 @@ if MODO_ESTRES:
     PLACAS = [f"TEST-{str(i).zfill(3)}" for i in range(1, 40)]
     SEGUNDOS_ESPERA = 5
 else:
-    PLACAS = ["RHR5776", "GDG8486", "JMC1236"]
+    PLACAS = ["RHR5776", "GDG8486", "JMC1236","AB1234"]
     SEGUNDOS_ESPERA = 2
 
 WEBHOOK_URL = "http://127.0.0.1:8000/schmitz/webhook?env=test"

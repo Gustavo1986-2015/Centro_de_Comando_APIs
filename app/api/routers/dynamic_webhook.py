@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Request, Depends, HTTPException, Query
+from fastapi.concurrency import run_in_threadpool
 from sqlalchemy.orm import Session
 from datetime import datetime, timezone
 import json
@@ -51,7 +52,10 @@ async def dynamic_webhook_receive(
 
     # 3. Transformación Dinámica al Modelo Canónico (RC)
     try:
-        canonical_event = DynamicMapper.map_payload(payload, mapping_schema, provider_name, env)
+        canonical_events = await run_in_threadpool(
+            DynamicMapper.map_payload_multi, 
+            payload, mapping_schema, provider_name, env
+        )
     except Exception as e:
         logger.error(f"Error en DynamicMapper para {provider_name}: {e}")
         raise HTTPException(status_code=422, detail=f"Fallo al mapear los datos: {e}")
@@ -59,49 +63,41 @@ async def dynamic_webhook_receive(
     # 4. Guardar en Base de Datos Específica / Cola (Patrón Repository)
     db_provider = get_session(provider_name, env)
     try:
-        new_event = NormalizedRCEvent(
-            chassis_number=canonical_event.chassis_number,
-            status="pending",
-            
-            # Metadata
-            created_at=datetime.now(timezone.utc),
-            updated_at=datetime.now(timezone.utc),
-            raw_json=json.dumps(payload),
-            provider=provider_name,
-            
-            # Datos de Mapeo Dinámico
-            latitude=canonical_event.latitude,
-            longitude=canonical_event.longitude,
-            speed=canonical_event.speed,
-            code=canonical_event.code,
-            date=canonical_event.date,
-            
-            # Extras opcionales
-            altitude=canonical_event.altitude,
-            battery=canonical_event.battery,
-            course=canonical_event.course,
-            humidity=canonical_event.humidity,
-            ignition=canonical_event.ignition,
-            odometer=canonical_event.odometer,
-            temperature=canonical_event.temperature,
-            
-            serial_number=canonical_event.serial_number,
-            shipment=canonical_event.shipment,
-            vehicle_type=canonical_event.vehicle_type,
-            vehicle_brand=canonical_event.vehicle_brand,
-            vehicle_model=canonical_event.vehicle_model,
-            
-            retry_count=0,
-            next_retry_at=None
-        )
-        
-        db_provider.add(new_event)
+        new_events = []
+        for canonical_event in canonical_events:
+            new_events.append(NormalizedRCEvent(
+                chassis_number=canonical_event.chassis_number,
+                status="pending",
+                created_at=datetime.now(timezone.utc),
+                updated_at=datetime.now(timezone.utc),
+                raw_data=json.dumps(payload),
+                provider=provider_name,
+                latitude=canonical_event.latitude,
+                longitude=canonical_event.longitude,
+                speed=canonical_event.speed,
+                code=canonical_event.code,
+                date=canonical_event.date,
+                altitude=canonical_event.altitude,
+                battery=canonical_event.battery,
+                course=canonical_event.course,
+                humidity=canonical_event.humidity,
+                ignition=canonical_event.ignition,
+                odometer=canonical_event.odometer,
+                temperature=canonical_event.temperature,
+                serial_number=canonical_event.serial_number,
+                shipment=canonical_event.shipment,
+                vehicle_type=canonical_event.vehicle_type,
+                vehicle_brand=canonical_event.vehicle_brand,
+                vehicle_model=canonical_event.vehicle_model,
+                retry_count=0,
+                next_retry_at=None
+            ))
+        db_provider.add_all(new_events)
         db_provider.commit()
-        
     except Exception as e:
         db_provider.rollback()
-        logger.error(f"Error DB guardando evento de {provider_name}: {e}")
-        raise HTTPException(status_code=500, detail="Error interno al guardar evento.")
+        logger.error(f"Error DB guardando eventos de {provider_name}: {e}")
+        raise HTTPException(status_code=500, detail="Error interno al guardar eventos.")
     finally:
         db_provider.close()
 
@@ -109,4 +105,8 @@ async def dynamic_webhook_receive(
     from app.worker.processor import trigger_worker
     trigger_worker(provider_name, env)
 
-    return {"status": "ok", "message": "Evento dinámico encolado exitosamente."}
+    return {
+        "status": "ok",
+        "message": f"{len(canonical_events)} evento(s) encolado(s) exitosamente.",
+        "events_count": len(canonical_events)
+    }
