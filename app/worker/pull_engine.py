@@ -244,42 +244,47 @@ async def process_and_enqueue(provider_name: str, env: str, data: dict|list, map
             wrapped_item = item 
             
             try:
-                canonical = DynamicMapper.map_payload(wrapped_item, mapping_schema, provider_name, env)
+                canonical_list = DynamicMapper.map_payload_multi(wrapped_item, mapping_schema, provider_name, env)
                 
-                # --- Deduplicación en memoria para PULL ---
-                cache_key = f"{provider_name}_{env}_{canonical.chassis_number}"
-                date_str = canonical.date
-                # Si el timestamp es idéntico al último que procesamos, lo ignoramos para no saturar
+                if not canonical_list:
+                    continue
+                
+                # Deduplicación basada en el primer evento (posición base)
+                base_canonical = canonical_list[0]
+                cache_key = f"{provider_name}_{env}_{base_canonical.chassis_number}"
+                date_str = base_canonical.date
                 if date_str and LAST_SEEN_TELEMETRY.get(cache_key) == date_str:
                     continue
                 LAST_SEEN_TELEMETRY[cache_key] = date_str
-                
+
             except Exception:
                 continue
 
-            events_to_add.append(NormalizedRCEvent(
-                provider=provider_name,
-                status="pending",
-                raw_data=json.dumps(item, ensure_ascii=False),
-                chassis_number=canonical.chassis_number,
-                latitude=canonical.latitude,
-                longitude=canonical.longitude,
-                speed=canonical.speed,
-                code=canonical.code,
-                date=canonical.date,
-                altitude=canonical.altitude,
-                battery=canonical.battery,
-                course=canonical.course,
-                humidity=canonical.humidity,
-                ignition=canonical.ignition,
-                odometer=canonical.odometer,
-                temperature=canonical.temperature,
-                serial_number=canonical.serial_number,
-                shipment=canonical.shipment,
-                vehicle_type=canonical.vehicle_type,
-                vehicle_brand=canonical.vehicle_brand,
-                vehicle_model=canonical.vehicle_model,
-            ))
+            # Agregar todos los eventos generados por este item
+            for canonical in canonical_list:
+                events_to_add.append(NormalizedRCEvent(
+                    provider=provider_name,
+                    status="pending",
+                    raw_data=json.dumps(item, ensure_ascii=False),
+                    chassis_number=canonical.chassis_number,
+                    latitude=canonical.latitude,
+                    longitude=canonical.longitude,
+                    speed=canonical.speed,
+                    code=canonical.code,
+                    date=canonical.date,
+                    altitude=canonical.altitude,
+                    battery=canonical.battery,
+                    course=canonical.course,
+                    humidity=canonical.humidity,
+                    ignition=canonical.ignition,
+                    odometer=canonical.odometer,
+                    temperature=canonical.temperature,
+                    serial_number=canonical.serial_number,
+                    shipment=canonical.shipment,
+                    vehicle_type=canonical.vehicle_type,
+                    vehicle_brand=canonical.vehicle_brand,
+                    vehicle_model=canonical.vehicle_model,
+                ))
             
         if events_to_add:
             db_provider.add_all(events_to_add)

@@ -834,6 +834,108 @@
         body.compact-mode .recent-section { padding: 1rem; }
         body.compact-mode .table-container { margin-top: 0.5rem; }
         body.compact-mode .provider-pill { padding: 2px 8px 2px 5px; font-size: 0.72rem; }
+        /* === INTEGRATION STUDIO TABS === */
+        .studio-tabs {
+            display: flex;
+            gap: 0.25rem;
+            border-bottom: 2px solid var(--card-border);
+            margin-bottom: 1.5rem;
+            flex-wrap: wrap;
+        }
+        .studio-tab {
+            padding: 0.6rem 1.2rem;
+            font-size: 0.85rem;
+            font-weight: 600;
+            color: var(--color-gray-label);
+            background: transparent;
+            border: none;
+            border-bottom: 2px solid transparent;
+            margin-bottom: -2px;
+            cursor: pointer;
+            transition: all 0.2s;
+            white-space: nowrap;
+        }
+        .studio-tab:hover { color: var(--color-white); }
+        .studio-tab.active {
+            color: var(--color-green-vibrant);
+            border-bottom-color: var(--color-green-vibrant);
+        }
+        .studio-panel { display: none; }
+        .studio-panel.active { display: block; }
+
+        /* Reglas de disparo */
+        .rule-row {
+            display: grid;
+            grid-template-columns: 1fr 120px 1fr 1.5fr 1fr auto;
+            gap: 0.5rem;
+            align-items: center;
+            padding: 0.6rem;
+            background: var(--level-2);
+            border-radius: 8px;
+            margin-bottom: 0.5rem;
+            border: 1px solid var(--card-border);
+        }
+        .rule-row.disabled { opacity: 0.45; }
+        .rule-label-pill {
+            display: inline-block;
+            padding: 2px 10px;
+            border-radius: 12px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            background: rgba(16, 185, 129, 0.15);
+            color: var(--color-green-vibrant);
+            margin-bottom: 0.75rem;
+        }
+        .btn-add-rule {
+            background: transparent;
+            border: 1px dashed var(--color-green-vibrant);
+            color: var(--color-green-vibrant);
+            padding: 0.5rem 1rem;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 0.85rem;
+            font-weight: 600;
+            width: 100%;
+            margin-top: 0.75rem;
+            transition: all 0.2s;
+        }
+        .btn-add-rule:hover { background: rgba(16,185,129,0.1); }
+        .btn-delete-rule {
+            background: transparent;
+            border: 1px solid var(--color-red);
+            color: var(--color-red);
+            padding: 0.25rem 0.6rem;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.8rem;
+            transition: all 0.2s;
+        }
+        .btn-delete-rule:hover { background: rgba(239,68,68,0.1); }
+        .push-pull-switch {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            background: var(--level-2);
+            border-radius: 8px;
+            padding: 0.4rem;
+            border: 1px solid var(--card-border);
+            width: fit-content;
+        }
+        .push-pull-btn {
+            padding: 0.4rem 1rem;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.82rem;
+            font-weight: 600;
+            background: transparent;
+            color: var(--color-gray-label);
+            transition: all 0.2s;
+        }
+        .push-pull-btn.active {
+            background: var(--color-green-vibrant);
+            color: var(--color-black);
+        }
     </style>
 </head>
 <body>
@@ -1139,213 +1241,258 @@
         </div>
     </main>
 
-    <!-- VISTA IPAAS STUDIO -->
-    <main id="view-integrations" style="display: none; padding: 2rem; flex-direction: column; gap: 2rem; max-width: 98%; margin: 0 auto; width: 100%;">
-        <div style="display: grid; grid-template-columns: 350px 1fr; gap: 2rem; width: 100%;">
+    <main id="view-integrations" style="display: none; padding: 2rem; flex-direction: column; gap: 0; max-width: 98%; margin: 0 auto; width: 100%;">
 
-            <!-- Columna Izquierda: Controles e Inspector -->
-            <div style="display: flex; flex-direction: column; gap: 2rem;">
-
-                <div class="panel">
-                    <div class="panel-title">1. Seleccionar Proveedor</div>
-                    <label>Proveedor (API Objetivo)</label>
-                    <div style="display:flex; gap:0.5rem;">
-                        <select id="providerSelect" style="flex:1;">
-                            <option value="">Cargando...</option>
-                        </select>
-                        <button onclick="createNewProvider()" class="btn-success" style="height: 38px; padding: 0 1rem; white-space: nowrap;">+ Nuevo</button>
-                    </div>
-                </div>
-
-                <div class="panel">
-                    <div class="panel-title">2. API Inspector (Postman)</div>
-                    <p style="font-size: 0.75rem; color: var(--color-gray); margin-bottom:1rem;">Atrapa un dato de prueba para facilitar el mapeo.</p>
-
-                    <div style="display: flex; gap: 0.5rem; margin-bottom: 1rem;">
-                        <button class="ipaas-tab active" onclick="switchInspectorTab('push')" id="itab-push" style="padding: 0.5rem 1rem; background: var(--color-green-vibrant); color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 0.85rem;">Push (Recibir)</button>
-                        <button class="ipaas-tab" onclick="switchInspectorTab('manual')" id="itab-manual" style="padding: 0.5rem 1rem; background: transparent; color: var(--color-gray); border: 1px solid var(--card-border); border-radius: 6px; cursor: pointer; font-size: 0.85rem;">Pegar JSON (Manual)</button>
-                    </div>
-
-                    <!-- Tab PUSH -->
-                    <div id="inspector-tab-push">
-                        <p style="font-size: 0.75rem; color: var(--color-gray);">Pídele al proveedor que envíe un JSON de prueba a esta URL temporal:</p>
-                        <div id="webhookUrl" style="background: rgba(74, 110, 224, 0.1); color: #a5b4fc; padding: 0.5rem; border-radius: 4px; font-size: 0.8rem; word-break: break-all; margin: 0.5rem 0 1rem 0; border: 1px dashed #4a6ee0;">Generando...</div>
-                        <button onclick="startListening()" id="btnListen" style="width:100%; background: transparent; border: 1px solid var(--card-border); color: var(--color-white); padding: 0.6rem; border-radius: 6px; cursor: pointer;">Comenzar a Escuchar (Polling)</button>
-                        <div id="listenStatus" style="margin-top:0.5rem; text-align:center; color: var(--color-yellow); font-size: 0.75rem;"></div>
-                    </div>
-
-                    <!-- Tab MANUAL -->
-                    <div id="inspector-tab-manual" style="display: none;">
-                        <p style="font-size: 0.75rem; color: var(--color-gray); margin-bottom: 0.5rem;">Copia el JSON de ejemplo desde la documentación o Postman y pégalo aquí:</p>
-                        <textarea id="manualJsonInput" class="form-control" rows="8" placeholder='{"position": {"latitude": -34.6037, "longitude": -58.3816}}' style="font-family: monospace; font-size: 0.8rem; background: rgba(0,0,0,0.3); border: 1px solid var(--card-border);"></textarea>
-                        <button onclick="loadManualJson()" style="width:100%; background: var(--color-green-vibrant); color: white; border: none; padding: 0.7rem; border-radius: 6px; cursor: pointer; font-weight: 700; font-size: 0.9rem; margin-top: 0.5rem;">🚀 Cargar JSON al Editor</button>
-                    </div>
-
-                    <div id="payloadResult" style="display:none; margin-top:1rem;">
-                        <label style="color: var(--color-white); font-size: 0.85rem; font-weight: 600;">Payload Cargado (Formato JSON):</label>
-                        <p style="font-size: 0.75rem; color: var(--color-yellow); margin-top:0.25rem;">💡 <b>Haz clic en un campo a la derecha</b>, y luego <b>haz clic en el valor aquí abajo</b> para mapearlo automáticamente.</p>
-                        <div id="jsonTreeContainer" class="json-tree-container"></div>
-                    </div>
-                </div>
+        <!-- Selector de proveedor (siempre visible) -->
+        <div style="display: flex; align-items: center; gap: 1rem; margin-bottom: 1.5rem; flex-wrap: wrap;">
+            <div style="display:flex; gap:0.5rem; align-items: center;">
+                <select id="providerSelect" style="background: var(--level-2); color: white; border: 1px solid var(--card-border); border-radius: 6px; padding: 6px 10px; font-size: 0.9rem; min-width: 180px;">
+                    <option value="">Cargando...</option>
+                </select>
+                <button onclick="createNewProvider()" style="background: var(--color-green-vibrant); color: var(--color-black); border: none; padding: 6px 14px; border-radius: 6px; font-weight: 700; cursor: pointer; white-space: nowrap;">+ Nuevo</button>
             </div>
+            <div id="studio-provider-badge" style="color: var(--color-gray-label); font-size: 0.82rem;"></div>
+        </div>
 
-            <!-- Columna Derecha: Editor Visual de Mapeo -->
-            <div class="panel" style="flex: 1;">
-                <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--card-border); padding-bottom: 0.75rem; margin-bottom: 1.5rem;">
-                    <div style="font-size: 1.1rem; font-weight: 600;">3. Motor de Mapeo (Rutas JSON → SOAP RC)</div>
-                    <button onclick="saveMapping(event)" style="background: var(--color-green-vibrant); color: var(--color-black); border: none; padding: 0.6rem 1.2rem; border-radius: 6px; font-weight: 700; cursor: pointer; transition: all 0.3s;">💾 Guardar Reglas</button>
+        <!-- Tabs del Studio -->
+        <div class="studio-tabs">
+            <button class="studio-tab active" onclick="switchStudioTab('origen')"    id="stab-origen">📡 1. Origen</button>
+            <button class="studio-tab"        onclick="switchStudioTab('reglas')"    id="stab-reglas">⚡ 2. Reglas de Disparo</button>
+            <button class="studio-tab"        onclick="switchStudioTab('mapeo')"     id="stab-mapeo">🗺 3. Inspector y Mapeo</button>
+            <button class="studio-tab"        onclick="switchStudioTab('diccionario')" id="stab-diccionario">📖 4. Diccionario</button>
+        </div>
+
+        <!-- ===== TAB 1: ORIGEN ===== -->
+        <div class="studio-panel active" id="spanel-origen">
+            <div class="panel">
+                <div class="panel-title">Modo de Ingesta</div>
+                <p style="font-size:0.8rem; color: var(--color-gray-label); margin-bottom: 1rem;">Define si este proveedor ENVÍA datos al Hub (PUSH) o si el Hub debe IR A BUSCARLO periódicamente (PULL).</p>
+
+                <div class="push-pull-switch" style="margin-bottom: 1.5rem;">
+                    <button class="push-pull-btn active" id="mode-push-btn" onclick="setIntakeMode('push')">⬇ Webhook (PUSH)</button>
+                    <button class="push-pull-btn"        id="mode-pull-btn" onclick="setIntakeMode('pull')">🔄 Extracción (PULL)</button>
                 </div>
 
-                <p style="font-size: 0.75rem; color: var(--color-gray); margin-bottom:1.5rem;">Usa sintaxis de punto (ej. <code>position.latitude</code>). Usa <code>||</code> para alternativas (ej. <code>plate || chassis_number</code>). Los campos opcionales vacíos se envían como <code>null</code> o <code>0</code> a Recurso Confiable.</p>
-
-                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem;">
-                    <!-- Columna Izquierda: Campos Requeridos -->
-                    <div>
-                        <h4 style="margin-bottom: 1rem; color: var(--color-green-vibrant);">Campos Requeridos RC (SOAP)</h4>
-                        <div class="mapping-row"><div class="dest-field">Patente/Chasis</div><input type="text" id="map_chassis_number" placeholder="Ej: Plate" class="form-control"></div>
-                        <div class="mapping-row"><div class="dest-field">Latitud</div><input type="text" id="map_latitude" placeholder="Ej: StatusData.0.Position.Latitude" class="form-control"></div>
-                        <div class="mapping-row"><div class="dest-field">Longitud</div><input type="text" id="map_longitude" placeholder="Ej: StatusData.0.Position.Longitude" class="form-control"></div>
-                        <div class="mapping-row"><div class="dest-field">Velocidad (km/h)</div><input type="text" id="map_speed" placeholder="Ej: StatusData.0.EBS.Velocity" class="form-control"></div>
-                        <div class="mapping-row"><div class="dest-field">Fecha (UTC)</div><input type="text" id="map_date" placeholder="Ej: DeviceTime" class="form-control"></div>
-                        <div class="mapping-row"><div class="dest-field">Código Motivo</div><input type="text" id="map_code" placeholder="Ej: Reason.ItemElementName" class="form-control"></div>
-                    </div>
-
-                    <!-- Columna Derecha: Campos Opcionales -->
-                    <div>
-                        <h4 style="margin-bottom: 1rem; color: var(--color-gray);">Campos Opcionales (fallback → null/0)</h4>
-                        <div class="mapping-row"><div class="dest-field">Ignición (Motor)</div><input type="text" id="map_ignition" placeholder="Ej: SensorStatus.IsIgnitionOn" class="form-control"></div>
-                        <div class="mapping-row"><div class="dest-field">Temperatura (°C)</div><input type="text" id="map_temperature" placeholder="Ej: DoorTemp" class="form-control"></div>
-                        <div class="mapping-row"><div class="dest-field">Odómetro (km)</div><input type="text" id="map_odometer" placeholder="Ej: EBS.Milage" class="form-control"></div>
-                        <div class="mapping-row"><div class="dest-field">Batería (V)</div><input type="text" id="map_battery" placeholder="Ruta JSON..." class="form-control"></div>
-                        <div class="mapping-row"><div class="dest-field">Altitud (m)</div><input type="text" id="map_altitude" placeholder="Ruta JSON..." class="form-control"></div>
-                        <div class="mapping-row"><div class="dest-field">Rumbo / Course (°)</div><input type="text" id="map_course" placeholder="Ruta JSON..." class="form-control"></div>
-                        <div class="mapping-row"><div class="dest-field">Humedad (%)</div><input type="text" id="map_humidity" placeholder="Ruta JSON..." class="form-control"></div>
-                        <div class="mapping-row"><div class="dest-field">N° Serie GPS</div><input type="text" id="map_serial_number" placeholder="Ruta JSON..." class="form-control"></div>
-                        <div class="mapping-row"><div class="dest-field">ID Envío (Trip)</div><input type="text" id="map_shipment" placeholder="Ruta JSON..." class="form-control"></div>
-                        <div class="mapping-row"><div class="dest-field">Tipo Vehículo</div><input type="text" id="map_vehicle_type" placeholder="Ruta JSON..." class="form-control"></div>
-                        <div class="mapping-row"><div class="dest-field">Marca Vehículo</div><input type="text" id="map_vehicle_brand" placeholder="Ruta JSON..." class="form-control"></div>
-                        <div class="mapping-row"><div class="dest-field">Modelo Vehículo</div><input type="text" id="map_vehicle_model" placeholder="Ruta JSON..." class="form-control"></div>
+                <!-- Sección PUSH -->
+                <div id="intake-push-section">
+                    <label style="font-size:0.85rem; color: var(--color-gray-label);">URL del Webhook (para entregar al proveedor):</label>
+                    <div id="webhookUrl" style="background: rgba(74,110,224,0.1); color: #a5b4fc; padding: 0.6rem; border-radius: 6px; font-size: 0.82rem; word-break: break-all; margin-top: 0.4rem; border: 1px dashed #4a6ee0;">
+                        Seleccioná un proveedor para ver la URL
                     </div>
                 </div>
 
-                <div id="saveToast" style="display:none; margin-top: 1rem; text-align: center; padding: 0.5rem; border-radius: 6px; background: rgba(16, 185, 129, 0.15); color: var(--color-green-vibrant); font-weight: 600; font-size: 0.85rem;">¡Mapeo Guardado Exitosamente!</div>
-            </div>
-            
-            <!-- Panel Intermedio: Telemetría PULL -->
-            <div class="panel" style="flex: 1; margin-top: 2rem;">
-                <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--card-border); padding-bottom: 0.75rem; margin-bottom: 1.5rem;">
-                    <div style="font-size: 1.1rem; font-weight: 600;">3.5 Extracción Activa (PULL Telemetría)</div>
-                </div>
-                <p style="font-size: 0.8rem; color: var(--color-gray); margin-bottom: 1.5rem;">Configura esto SI EL PROVEEDOR NO ENVÍA DATOS POR WEBHOOK y debemos ir a buscarlos periódicamente (Ej. Protrack <code>/api/track</code>). Se ejecutará cada X segundos según la configuración global.</p>
-                
-                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem;">
-                    <div>
-                        <div class="form-group">
-                            <label class="form-label">URL de Extracción (Endpoint de Posiciones)</label>
-                            <input type="text" id="pullUrl" class="form-control" placeholder="Ej: http://api.protrack365.com/api/track">
-                        </div>
-                        <div class="form-group">
-                            <label class="form-label">Método HTTP</label>
-                            <select id="pullMethod" class="form-control">
-                                <option value="GET">GET</option>
-                                <option value="POST">POST</option>
-                            </select>
-                        </div>
-                    </div>
-                    <div>
-                        <div class="form-group">
-                            <label class="form-label">Autenticación (API de Origen)</label>
-                            <select id="authType" class="form-control" onchange="document.getElementById('pullAuthFields').style.display = this.value === 'none' ? 'none' : 'block';">
-                                <option value="none">Sin Autenticación Pública</option>
-                                <option value="protrack">Protrack (Doble Paso: MD5 → Token)</option>
-                                <option value="md5_dynamic">Firma MD5 Dinámica Estándar</option>
-                                <option value="bearer">Bearer Token Fijo</option>
-                            </select>
-                        </div>
-                        <div class="form-group" id="pullAuthFields" style="display:none; padding: 10px; background: rgba(0,0,0,0.2); border-radius: 4px; border: 1px dashed var(--border);">
-                            <input type="text" id="pullAuthUser" class="form-control" placeholder="Cuenta / Usuario" style="margin-bottom:0.5rem;">
-                            <input type="password" id="pullAuthPass" class="form-control" placeholder="Contraseña" style="margin-bottom:0.5rem;">
-                            <input type="text" id="bearerTokenValue" class="form-control" placeholder="Token Bearer (si aplica)">
-                        </div>
-                        <div class="form-group" style="display:none;">
-                            <input type="hidden" id="pullHeaders" value="{}">
-                            <input type="hidden" id="pullBody" value="{}">
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Panel 4: Diccionario de Metadatos y Ajustes Globales -->
-            <div class="panel" style="flex: 1; margin-top: 2rem;">
-                <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--card-border); padding-bottom: 0.75rem; margin-bottom: 1.5rem;">
-                    <div style="font-size: 1.1rem; font-weight: 600;">4. Enriquecimiento (Diccionario) y Ajustes Globales</div>
-                    <div style="display:flex; align-items:center; gap: 1.5rem;">
-                        <label class="switch" style="display:flex; align-items:center; gap:10px; cursor:pointer;">
-                            <input type="checkbox" id="enableEnrichment" onchange="toggleEnrichment()" style="width:18px; height:18px; accent-color: var(--color-green-vibrant);">
-                            <span style="font-weight:600; color:var(--color-gray);">Activar Diccionario</span>
-                        </label>
-                        <button onclick="saveEnrichment(event)" style="background: var(--color-green-vibrant); color: var(--color-black); border: none; padding: 0.5rem 1rem; border-radius: 6px; font-weight: 700; cursor: pointer; transition: all 0.3s;">💾 Guardar Ajustes (Panel 4)</button>
-                    </div>
-                </div>
-                
-                <div style="margin-bottom: 1.5rem; display: flex; align-items: center; gap: 1rem;">
-                    <label style="color: var(--color-gray); font-size: 0.9rem; font-weight: bold;">🌍 Zona Horaria del Proveedor (UTC Offset):</label>
-                    <input type="number" id="timezoneOffset" class="form-control" style="width: 100px; text-align: center;" placeholder="Ej: -6" value="0">
-                    <span style="font-size: 0.75rem; color: var(--color-gray);">Este valor se usa para mostrar la hora correcta en el Dashboard. RC siempre recibe UTC 0.</span>
-                </div>
-                
-                <hr style="border: 0; border-top: 1px solid var(--card-border); margin-bottom: 1.5rem;">
-                
-                <div id="enrichmentPanel" style="display: none;">
-                    <p style="font-size: 0.8rem; color: var(--color-gray); margin-bottom: 1.5rem;">Esta sección permite realizar un PULL automático (ej. 1 vez al día) a un endpoint de metadatos (como <code>/api/device/list</code>) para construir una caché local de IMEI a Patente/Placa. Luego, durante la telemetría, el Motor buscará el IMEI e inyectará la Placa al vuelo.</p>
-                    
+                <!-- Sección PULL (oculta por defecto) -->
+                <div id="intake-pull-section" style="display: none;">
+                    <p style="font-size:0.8rem; color: var(--color-gray-label); margin-bottom: 1rem;">Configurá cómo el Hub extrae telemetría del proveedor periódicamente.</p>
                     <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem;">
-                        <!-- Conf Conexión -->
                         <div>
                             <div class="form-group">
-                                <label class="form-label">URL de Sincronización de Metadatos</label>
-                                <input type="text" id="dictUrl" class="form-control" placeholder="Ej: http://api.protrack365.com/api/device/list">
+                                <label class="form-label">URL de Extracción</label>
+                                <input type="text" id="pullUrl" class="form-control" placeholder="Ej: http://api.ejemplo.com/api/track">
                             </div>
                             <div class="form-group">
                                 <label class="form-label">Método HTTP</label>
-                                <select id="dictMethod" class="form-control">
+                                <select id="pullMethod" class="form-control">
                                     <option value="GET">GET</option>
                                     <option value="POST">POST</option>
                                 </select>
                             </div>
-                            <div class="form-group">
-                                <label class="form-label">Autenticación (API de Origen)</label>
-                                <select id="dictAuthType" class="form-control" onchange="document.getElementById('dictAuthFields').style.display = this.value === 'none' ? 'none' : 'block';">
-                                    <option value="none">Sin Autenticación Pública</option>
-                                    <option value="protrack">Protrack (Doble Paso: MD5 → Token)</option>
-                                    <option value="md5_dynamic">Firma MD5 Dinámica Estándar</option>
-                                </select>
-                            </div>
-                            <div class="form-group" id="dictAuthFields" style="display:none; padding: 10px; background: rgba(0,0,0,0.2); border-radius: 4px; border: 1px dashed var(--border);">
-                                <input type="text" id="dictAuthUser" class="form-control" placeholder="Cuenta / Usuario" style="margin-bottom:0.5rem;">
-                                <input type="password" id="dictAuthPass" class="form-control" placeholder="Contraseña">
-                            </div>
-                            <div class="form-group">
-                                <label class="form-label">Frecuencia de Sincronización (Horas)</label>
-                                <input type="number" id="dictFrequency" class="form-control" placeholder="Ej: 24 (1 vez al día)" value="24">
-                            </div>
                         </div>
-                        
-                        <!-- Conf Mapeo del Diccionario -->
                         <div>
                             <div class="form-group">
-                                <label class="form-label">JSON Path de la LLAVE (Ej. IMEI)</label>
-                                <input type="text" id="dictKeyPath" class="form-control" placeholder="Ej: record.0.imei">
+                                <label class="form-label">Tipo de Autenticación</label>
+                                <select id="authType" class="form-control" onchange="document.getElementById('pullAuthFields').style.display = this.value === 'none' ? 'none' : 'block';">
+                                    <option value="none">Sin Autenticación</option>
+                                    <option value="protrack">Doble Paso MD5 → Token</option>
+                                    <option value="md5_dynamic">Firma MD5 Dinámica</option>
+                                    <option value="bearer">Bearer Token Fijo</option>
+                                </select>
                             </div>
+                            <div id="pullAuthFields" style="display:none; background: var(--level-2); padding: 0.75rem; border-radius: 8px; border: 1px dashed var(--card-border);">
+                                <input type="text"     id="pullAuthUser"     class="form-control" placeholder="Usuario / Cuenta" style="margin-bottom:0.5rem;">
+                                <input type="password" id="pullAuthPass"     class="form-control" placeholder="Contraseña" style="margin-bottom:0.5rem;">
+                                <input type="text"     id="bearerTokenValue" class="form-control" placeholder="Bearer Token (si aplica)">
+                            </div>
+                            <div style="display:none;">
+                                <input type="hidden" id="pullHeaders" value="{}">
+                                <input type="hidden" id="pullBody"    value="{}">
+                            </div>
+                        </div>
+                    </div>
+                    <button onclick="savePullConfig(event)" style="background: var(--color-green-vibrant); color: var(--color-black); border: none; padding: 0.6rem 1.2rem; border-radius: 6px; font-weight: 700; cursor: pointer; margin-top: 1rem;">💾 Guardar Configuración PULL</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- ===== TAB 2: REGLAS DE DISPARO ===== -->
+        <div class="studio-panel" id="spanel-reglas">
+            <div class="panel">
+                <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--card-border); padding-bottom: 0.75rem; margin-bottom: 1.5rem;">
+                    <div class="panel-title" style="margin:0;">2. Reglas de Disparo Múltiple</div>
+                    <button onclick="saveTriggerRules(event)" style="background: var(--color-green-vibrant); color: var(--color-black); border: none; padding: 0.6rem 1.2rem; border-radius: 6px; font-weight: 700; cursor: pointer;">💾 Guardar Reglas</button>
+                </div>
+
+                <p style="font-size: 0.82rem; color: var(--color-gray-label); margin-bottom: 1.5rem;">
+                    El Hub siempre envía un <strong>evento de posición base</strong> a RC. Las Reglas de Disparo te permiten <strong>clonar</strong> ese evento y enviarlo con un <strong>Código RC distinto</strong> según el estado de un sensor (ej: Motor, Puerta, Pánico).<br><br>
+                    <strong>Ejemplo:</strong> Podés crear una regla que envíe el código 33 si <code>doorstatus == 1</code> (Abierta), y otra regla distinta que envíe el código 34 si <code>doorstatus == 0</code> (Cerrada). Si la regla hace match, el evento se clona y se envía.
+                </p>
+
+                <!-- Regla Base (siempre activa) -->
+                <div style="background: rgba(16,185,129,0.07); border: 1px solid rgba(16,185,129,0.25); border-radius: 8px; padding: 1rem; margin-bottom: 1.5rem;">
+                    <span class="rule-label-pill">Regla Base (siempre)</span>
+                    <div style="display: flex; align-items: center; gap: 1rem; flex-wrap: wrap;">
+                        <span style="color: var(--color-gray-label); font-size: 0.85rem;">Código RC para el reporte de posición GPS:</span>
+                        <input type="text" id="default_rc_code" value="1" class="form-control" style="width: 120px;" placeholder="Ej: 1">
+                        <span style="color: var(--color-gray-label); font-size: 0.82rem;">Descripción:</span>
+                        <input type="text" id="default_rc_label" value="Reporte GPS" class="form-control" style="width: 180px;" placeholder="Ej: Reporte GPS">
+                    </div>
+                </div>
+
+                <!-- Lista de Trigger Rules -->
+                <div style="font-size: 0.75rem; color: var(--color-gray-label); display: grid; grid-template-columns: 1fr 120px 1fr 1.5fr 1fr auto; gap: 0.5rem; padding: 0 0.6rem; margin-bottom: 0.4rem;">
+                    <span>Campo del Payload</span>
+                    <span>Operador</span>
+                    <span>Valor de Activación</span>
+                    <span>Descripción del Evento</span>
+                    <span>Código RC</span>
+                    <span></span>
+                </div>
+
+                <div id="trigger-rules-list">
+                    <!-- Populado por JS -->
+                </div>
+
+                <button class="btn-add-rule" onclick="addTriggerRule()">+ Agregar Regla de Disparo</button>
+
+                <div id="rulesSaveToast" style="display:none; margin-top: 1rem; text-align:center; padding: 0.5rem; border-radius: 6px; background: rgba(16,185,129,0.15); color: var(--color-green-vibrant); font-weight: 600; font-size: 0.85rem;">¡Reglas Guardadas!</div>
+            </div>
+        </div>
+
+        <!-- ===== TAB 3: INSPECTOR JSON Y MAPEO CANÓNICO ===== -->
+        <div class="studio-panel" id="spanel-mapeo">
+            <div class="panel">
+                <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--card-border); padding-bottom: 0.75rem; margin-bottom: 1.5rem;">
+                    <div class="panel-title" style="margin:0;">3. Inspector JSON y Mapeo Canónico</div>
+                    <button onclick="saveMapping(event)" style="background: var(--color-green-vibrant); color: var(--color-black); border: none; padding: 0.6rem 1.2rem; border-radius: 6px; font-weight: 700; cursor: pointer;">💾 Guardar Mapeo</button>
+                </div>
+
+                <p style="font-size: 0.75rem; color: var(--color-gray-label); margin-bottom: 1.5rem;">
+                    <strong>Guía:</strong> Hacé clic en un campo a la derecha y luego en el valor del JSON a la izquierda para mapearlo automáticamente.<br>
+                    Los campos mapeados aquí viajan en <strong>todos</strong> los eventos que se envíen a RC. Usá notación de punto (<code>position.latitude</code>) o <code>||</code> para alternativas.
+                </p>
+
+                <div style="display: grid; grid-template-columns: 1fr 1.2fr; gap: 2rem;">
+                    <!-- COLUMNA IZQUIERDA: INSPECTOR JSON -->
+                    <div style="background: rgba(0,0,0,0.2); padding: 1rem; border-radius: 8px; border: 1px solid var(--card-border);">
+                        <h4 style="margin-bottom: 1rem; color: var(--color-yellow);">Paso A: Cargar Payload Original</h4>
+                        <div style="display: flex; gap: 0.5rem; margin-bottom: 1rem;">
+                            <button class="ipaas-tab active" onclick="switchInspectorTab('push')"   id="itab-push"   style="padding: 0.4rem 0.8rem; background: var(--color-green-vibrant); color: var(--color-black); font-weight: 600; border: none; border-radius: 6px; cursor: pointer; font-size: 0.75rem;">Push (Escuchar)</button>
+                            <button class="ipaas-tab"        onclick="switchInspectorTab('manual')" id="itab-manual" style="padding: 0.4rem 0.8rem; background: transparent; color: var(--color-gray); border: 1px solid var(--card-border); border-radius: 6px; cursor: pointer; font-size: 0.75rem;">Pegar JSON</button>
+                        </div>
+
+                        <div id="inspector-tab-push">
+                            <p style="font-size: 0.75rem; color: var(--color-gray-label);">Enviá un JSON de prueba a esta URL:</p>
+                            <div id="webhookUrlInspector" style="background: rgba(74,110,224,0.1); color: #a5b4fc; padding: 0.5rem; border-radius: 4px; font-size: 0.75rem; word-break: break-all; margin: 0.5rem 0 1rem 0; border: 1px dashed #4a6ee0;">Generando...</div>
+                            <button onclick="startListening()" id="btnListen" style="width:100%; background: transparent; border: 1px solid var(--card-border); color: var(--color-white); padding: 0.6rem; border-radius: 6px; cursor: pointer; font-size: 0.8rem;">Comenzar a Escuchar</button>
+                            <div id="listenStatus" style="margin-top:0.5rem; text-align:center; color: var(--color-yellow); font-size: 0.75rem;"></div>
+                        </div>
+
+                        <div id="inspector-tab-manual" style="display: none;">
+                            <p style="font-size: 0.75rem; color: var(--color-gray-label); margin-bottom: 0.5rem;">Pegá el JSON de ejemplo:</p>
+                            <textarea id="manualJsonInput" class="form-control" rows="6" placeholder='{"latitude": -34.60}' style="font-family: monospace; font-size: 0.75rem; background: rgba(0,0,0,0.3); border: 1px solid var(--card-border);"></textarea>
+                            <button onclick="loadManualJson()" style="width:100%; background: var(--color-green-vibrant); color: var(--color-black); border: none; padding: 0.6rem; border-radius: 6px; cursor: pointer; font-weight: 700; font-size: 0.85rem; margin-top: 0.5rem;">🚀 Mostrar en Editor</button>
+                        </div>
+
+                        <div id="payloadResult" style="display:none; margin-top:1rem; border-top: 1px solid var(--card-border); padding-top: 1rem;">
+                            <label style="color: var(--color-white); font-size: 0.85rem; font-weight: 600;">Estructura JSON (Click para Mapear):</label>
+                            <div id="jsonTreeContainer" class="json-tree-container" style="max-height: 450px; overflow-y: auto; margin-top: 0.5rem; background: #0f172a; padding: 0.5rem; border-radius: 6px; border: 1px solid var(--card-border);"></div>
+                        </div>
+                    </div>
+
+                    <!-- COLUMNA DERECHA: MAPEO -->
+                    <div style="max-height: 650px; overflow-y: auto; padding-right: 0.5rem;">
+                        <h4 style="margin-bottom: 1rem; color: var(--color-green-vibrant);">Paso B: Mapear a Campos RC</h4>
+                        
+                        <h5 style="margin-bottom: 0.5rem; color: var(--color-white); font-size: 0.85rem; border-bottom: 1px solid var(--card-border); padding-bottom: 0.3rem;">Campos Requeridos (SOAP)</h5>
+                        <div class="mapping-row"><div class="dest-field">Patente / Chasis</div><input type="text" id="map_chassis_number" placeholder="Ej: imei" class="form-control"></div>
+                        <div class="mapping-row"><div class="dest-field">Latitud</div><input type="text" id="map_latitude" placeholder="Ej: latitude" class="form-control"></div>
+                        <div class="mapping-row"><div class="dest-field">Longitud</div><input type="text" id="map_longitude" placeholder="Ej: longitude" class="form-control"></div>
+                        <div class="mapping-row"><div class="dest-field">Velocidad (km/h)</div><input type="text" id="map_speed" placeholder="Ej: speed" class="form-control"></div>
+                        <div class="mapping-row"><div class="dest-field">Fecha (UTC)</div><input type="text" id="map_date" placeholder="Ej: gpstime" class="form-control"></div>
+                        <div class="mapping-row"><div class="dest-field">Código Motivo</div><input type="text" id="map_code" placeholder="Ej: 1 (O controlado por Reglas)" class="form-control"></div>
+                        
+                        <h5 style="margin: 1.5rem 0 0.5rem 0; color: var(--color-gray-label); font-size: 0.85rem; border-bottom: 1px solid var(--card-border); padding-bottom: 0.3rem;">Campos Opcionales</h5>
+                        <div class="mapping-row"><div class="dest-field">Ignición (Motor)</div><input type="text" id="map_ignition"      placeholder="Ruta JSON..." class="form-control"></div>
+                        <div class="mapping-row"><div class="dest-field">Temperatura (°C)</div><input type="text" id="map_temperature"   placeholder="Ruta JSON..." class="form-control"></div>
+                        <div class="mapping-row"><div class="dest-field">Odómetro (km)</div><input type="text"  id="map_odometer"      placeholder="Ruta JSON..." class="form-control"></div>
+                        <div class="mapping-row"><div class="dest-field">Batería (V)</div><input type="text"    id="map_battery"       placeholder="Ruta JSON..." class="form-control"></div>
+                        <div class="mapping-row"><div class="dest-field">Altitud (m)</div><input type="text"   id="map_altitude"      placeholder="Ruta JSON..." class="form-control"></div>
+                        <div class="mapping-row"><div class="dest-field">Rumbo (°)</div><input type="text"     id="map_course"        placeholder="Ruta JSON..." class="form-control"></div>
+                        <div class="mapping-row"><div class="dest-field">Humedad (%)</div><input type="text"   id="map_humidity"      placeholder="Ruta JSON..." class="form-control"></div>
+                        <div class="mapping-row"><div class="dest-field">N° Serie GPS</div><input type="text"  id="map_serial_number" placeholder="Ruta JSON..." class="form-control"></div>
+                        <div class="mapping-row"><div class="dest-field">ID Envío</div><input type="text"      id="map_shipment"      placeholder="Ruta JSON..." class="form-control"></div>
+                        <div class="mapping-row"><div class="dest-field">Tipo Vehículo</div><input type="text" id="map_vehicle_type"  placeholder="Ruta JSON..." class="form-control"></div>
+                        <div class="mapping-row"><div class="dest-field">Marca Vehículo</div><input type="text"id="map_vehicle_brand" placeholder="Ruta JSON..." class="form-control"></div>
+                        <div class="mapping-row"><div class="dest-field">Modelo Vehículo</div><input type="text"id="map_vehicle_model"placeholder="Ruta JSON..." class="form-control"></div>
+                    </div>
+                </div>
+                <div id="saveToast" style="display:none; margin-top: 1rem; text-align: center; padding: 0.5rem; border-radius: 6px; background: rgba(16,185,129,0.15); color: var(--color-green-vibrant); font-weight: 600; font-size: 0.85rem;">¡Mapeo Guardado Exitosamente!</div>
+            </div>
+        </div>
+
+        <!-- ===== TAB 4: DICCIONARIO ===== -->
+        <div class="studio-panel" id="spanel-diccionario">
+            <div class="panel">
+                <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--card-border); padding-bottom: 0.75rem; margin-bottom: 1.5rem;">
+                    <div class="panel-title" style="margin:0;">4. Diccionario de Metadatos</div>
+                    <div style="display:flex; align-items:center; gap: 1.5rem;">
+                        <label style="display:flex; align-items:center; gap:8px; cursor:pointer; font-size:0.85rem; color:var(--color-gray-label);">
+                            <input type="checkbox" id="enableEnrichment" onchange="toggleEnrichment()" style="width:16px;height:16px;accent-color:var(--color-green-vibrant);">
+                            Activar Diccionario
+                        </label>
+                        <button onclick="saveEnrichment(event)" style="background: var(--color-green-vibrant); color: var(--color-black); border: none; padding: 0.5rem 1rem; border-radius: 6px; font-weight: 700; cursor: pointer;">💾 Guardar</button>
+                    </div>
+                </div>
+
+                <p style="font-size:0.8rem; color:var(--color-gray-label); margin-bottom:1.5rem;">
+                    <strong>¿Para qué sirve esto?</strong> Básicamente se usa cuando el proveedor nos envía posiciones identificadas con un ID de hardware (como el <code>imei</code>) pero Recurso Confiable nos exige enviar la <strong>Patente o Placa</strong> del vehículo. 
+                    <br><br>
+                    Al configurarlo, el Hub consultará periódicamente una API externa del proveedor para descargar el diccionario de asignaciones y traducirá automáticamente los IMEI a Patentes al vuelo antes de enviarlos a RC.
+                </p>
+
+                <div style="margin-bottom: 1.5rem; display: flex; align-items: center; gap: 1rem;">
+                    <label style="color: var(--color-gray-label); font-size: 0.9rem; font-weight: bold;">🌍 UTC Offset del Proveedor:</label>
+                    <input type="number" id="timezoneOffset" class="form-control" style="width: 100px; text-align: center;" placeholder="Ej: -6" value="0">
+                    <span style="font-size: 0.75rem; color: var(--color-gray-label);">Solo afecta la visualización. RC siempre recibe UTC 0.</span>
+                </div>
+
+                <div id="enrichmentPanel" style="display: none;">
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem;">
+                        <div>
+                            <div class="form-group"><label class="form-label">URL de Sincronización de Metadatos</label><input type="text" id="dictUrl" class="form-control" placeholder="Ej: http://api.ejemplo.com/api/device/list"></div>
+                            <div class="form-group"><label class="form-label">Método HTTP</label><select id="dictMethod" class="form-control"><option value="GET">GET</option><option value="POST">POST</option></select></div>
                             <div class="form-group">
-                                <label class="form-label">JSON Path del VALOR (Ej. Placa)</label>
-                                <input type="text" id="dictValuePath" class="form-control" placeholder="Ej: record.0.platenumber">
+                                <label class="form-label">Autenticación</label>
+                                <select id="dictAuthType" class="form-control" onchange="document.getElementById('dictAuthFields').style.display = this.value === 'none' ? 'none' : 'block';">
+                                    <option value="none">Sin Autenticación</option>
+                                    <option value="protrack">Doble Paso MD5 → Token</option>
+                                    <option value="md5_dynamic">Firma MD5 Dinámica</option>
+                                </select>
                             </div>
+                            <div id="dictAuthFields" style="display:none; background: var(--level-2); padding: 0.75rem; border-radius: 8px; border: 1px dashed var(--card-border);">
+                                <input type="text"     id="dictAuthUser" class="form-control" placeholder="Usuario" style="margin-bottom:0.5rem;">
+                                <input type="password" id="dictAuthPass" class="form-control" placeholder="Contraseña">
+                            </div>
+                        </div>
+                        <div>
+                            <div class="form-group"><label class="form-label">Frecuencia de Extracción (Horas)</label><input type="number" id="dictFrequency" class="form-control" placeholder="Ej: 24" value="24"></div>
+                            <div class="form-group"><label class="form-label">Ruta JSON hacia la Llave (Ej. IMEI)</label><input type="text" id="dictKeyPath" class="form-control" placeholder="Ej: data.items.imei"></div>
+                            <div class="form-group"><label class="form-label">Ruta JSON hacia el Valor (Ej. Placa)</label><input type="text" id="dictValuePath" class="form-control" placeholder="Ej: data.items.plate"></div>
+                            <div class="form-group"><label class="form-label">Ajuste de Zona Horaria (Horas)</label><input type="number" id="timezoneOffset" class="form-control" placeholder="Ej: -3" value="0"></div>
                         </div>
                     </div>
                 </div>
             </div>
-
         </div>
     </main>
 
@@ -2451,7 +2598,10 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
         let pollingInterval = null;
 
         function loadIntegrationStudio() {
-            document.getElementById('webhookUrl').innerText = window.location.origin + "/inspector/catch/" + sessionUuid;
+            const url = window.location.origin + "/inspector/catch/" + sessionUuid;
+            document.getElementById('webhookUrl').innerText = url;
+            const inspectorEl = document.getElementById('webhookUrlInspector');
+            if (inspectorEl) inspectorEl.innerText = url;
             loadProviders();
         }
 
@@ -2486,11 +2636,29 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
                 const data = await res.json();
                 document.querySelectorAll('#view-integrations .mapping-row input').forEach(inp => inp.value = '');
                 
-                const mapping = data.mapping || data;
-                for(const key in mapping) {
-                    const inp = document.getElementById('map_' + key);
-                    if(inp) inp.value = mapping[key];
+                const rawMapping = data.mapping || data;
+                let baseMapping = rawMapping;
+                
+                if (rawMapping.base_mapping) {
+                    baseMapping = rawMapping.base_mapping;
+                    _currentRules = rawMapping.trigger_rules || [];
+                    const defaultRule = rawMapping.default_rule || {};
+                    const defRc = document.getElementById('default_rc_code');
+                    const defLab = document.getElementById('default_rc_label');
+                    if(defRc) defRc.value = defaultRule.rc_code || '1';
+                    if(defLab) defLab.value = defaultRule.label || 'Reporte GPS';
+                } else {
+                    _currentRules = [];
                 }
+                renderTriggerRules(_currentRules);
+                
+                for(const key in baseMapping) {
+                    const inp = document.getElementById('map_' + key);
+                    if(inp) inp.value = baseMapping[key];
+                }
+                
+                // Actualizar estilo visual del map_code si hay reglas
+                updateMapCodeVisual();
                 
                 if (data.fetch && Object.keys(data.fetch).length > 0) {
                     const f = data.fetch;
@@ -2521,28 +2689,21 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
             }
         }
 
-        async function saveMapping(event) {
-            if(!currentIpaasProvider) {
-                alert("Selecciona un proveedor primero.");
-                return;
-            }
+        function _buildFullPayload() {
+            const defaultRcCode  = document.getElementById('default_rc_code')?.value  || '1';
+            const defaultRcLabel = document.getElementById('default_rc_label')?.value || 'Reporte GPS';
+            const baseMapping = getCurrentBaseMapping();
 
-            let btn = null;
-            let originalText = "💾 Guardar Reglas";
-            if (event && event.target) {
-                btn = event.target;
-                originalText = btn.innerText;
-                btn.innerText = "⏳ Guardando...";
-                btn.style.opacity = "0.7";
-            }
-
-            const mappingData = {};
-            document.querySelectorAll('#view-integrations .mapping-row input').forEach(inp => {
-                const key = inp.id.replace('map_', '');
-                if(inp.value.trim() !== '') {
-                    mappingData[key] = inp.value.trim();
+            const fullSchema = {
+                base_mapping:  baseMapping,
+                trigger_rules: _currentRules,
+                default_rule: {
+                    enabled:   true,
+                    rc_code:   defaultRcCode,
+                    label:     defaultRcLabel,
+                    fire_when: 'always'
                 }
-            });
+            };
             
             const elUrl = document.getElementById('pullUrl');
             const elMethod = document.getElementById('pullMethod');
@@ -2564,10 +2725,39 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
                 body: elBody ? elBody.value.trim() : ""
             };
             
-            const payload = {
-                mapping: mappingData,
+            return {
+                mapping: fullSchema,
                 fetch: fetchData
             };
+        }
+
+        async function saveMapping(event) {
+            await _saveConfigUnified(event, "💾 Guardar Mapeo", "saveToast");
+        }
+        
+        async function saveTriggerRules(event) {
+            await _saveConfigUnified(event, "💾 Guardar Reglas", "rulesSaveToast");
+        }
+        
+        async function savePullConfig(event) {
+            await _saveConfigUnified(event, "💾 Guardar Configuración PULL", null);
+        }
+
+        async function _saveConfigUnified(event, originalText, toastId) {
+            if(!currentIpaasProvider) {
+                alert("Selecciona un proveedor primero.");
+                return;
+            }
+
+            let btn = null;
+            if (event && event.target) {
+                btn = event.target;
+                originalText = btn.innerText;
+                btn.innerText = "⏳ Guardando...";
+                btn.style.opacity = "0.7";
+            }
+
+            const payload = _buildFullPayload();
             
             try {
                 const res = await fetch(`${API_BASE}/${currentIpaasProvider.name}/${currentIpaasProvider.env}/mapping`, {
@@ -2580,7 +2770,16 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
                     if (btn) {
                         btn.innerText = "✅ Guardado!";
                         btn.style.opacity = "1";
-                        btn.style.background = "#10B981"; // Un verde un poco mas oscuro
+                        btn.style.background = "#10B981";
+                        
+                        if (toastId) {
+                            const toast = document.getElementById(toastId);
+                            if (toast) {
+                                toast.style.display = 'block';
+                                setTimeout(() => toast.style.display = 'none', 3000);
+                            }
+                        }
+                        
                         setTimeout(() => {
                             btn.innerText = originalText;
                             btn.style.background = "var(--color-green-vibrant)";
@@ -2592,8 +2791,135 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
                 }
             } catch(e) {
                 if(btn) { btn.innerText = originalText; btn.style.opacity = "1"; }
-                alert("Error de red al guardar las reglas.");
+                alert("Error de red al guardar.");
             }
+        }
+        
+        // ============================================================
+        // INTEGRATION STUDIO — Sistema de Tabs y Motor de Reglas
+        // ============================================================
+
+        function switchStudioTab(tabName) {
+            document.querySelectorAll('.studio-tab').forEach(t => t.classList.remove('active'));
+            document.querySelectorAll('.studio-panel').forEach(p => p.classList.remove('active'));
+            document.getElementById(`stab-${tabName}`).classList.add('active');
+            document.getElementById(`spanel-${tabName}`).classList.add('active');
+        }
+
+        function setIntakeMode(mode) {
+            const isPull = (mode === 'pull');
+            document.getElementById('mode-push-btn').classList.toggle('active', !isPull);
+            document.getElementById('mode-pull-btn').classList.toggle('active',  isPull);
+            document.getElementById('intake-push-section').style.display = isPull ? 'none'  : 'block';
+            document.getElementById('intake-pull-section').style.display = isPull ? 'block' : 'none';
+        }
+
+        function _ruleId() {
+            return 'rule_' + Date.now().toString(36);
+        }
+
+        function updateMapCodeVisual() {
+            const mapCodeInp = document.getElementById('map_code');
+            if(!mapCodeInp) return;
+            if(_currentRules.length > 0) {
+                mapCodeInp.value = "⚡ " + _currentRules.length + " Regla(s) Controlando";
+                mapCodeInp.disabled = true;
+                mapCodeInp.style.background = "rgba(16,185,129,0.05)";
+                mapCodeInp.style.color = "var(--color-green-vibrant)";
+                mapCodeInp.style.border = "1px solid rgba(16,185,129,0.3)";
+                mapCodeInp.title = "Las reglas de disparo dinámicas están activas y sobrescribirán este código.";
+            } else {
+                if (mapCodeInp.value.startsWith("⚡")) mapCodeInp.value = "";
+                mapCodeInp.disabled = false;
+                mapCodeInp.style.background = "";
+                mapCodeInp.style.color = "";
+                mapCodeInp.style.border = "";
+                mapCodeInp.title = "";
+            }
+        }
+
+        function renderTriggerRules(rules) {
+            const container = document.getElementById('trigger-rules-list');
+            if (!rules || rules.length === 0) {
+                container.innerHTML = '<p style="color:var(--color-gray-label);font-size:0.82rem;text-align:center;padding:1rem;">Sin reglas configuradas. Agregá una con el botón de abajo.</p>';
+                updateMapCodeVisual();
+                return;
+            }
+
+            const OPERATORS = [
+                { value: 'eq',         label: '== igual a' },
+                { value: 'neq',        label: '≠ distinto' },
+                { value: 'gt',         label: '> mayor que' },
+                { value: 'lt',         label: '< menor que' },
+                { value: 'gte',        label: '>= mayor/igual' },
+                { value: 'lte',        label: '<= menor/igual' },
+                { value: 'exists',     label: '✓ existe' },
+                { value: 'not_exists', label: '✗ no existe' },
+            ];
+
+            container.innerHTML = rules.map((r, i) => {
+                const opOptions = OPERATORS.map(o =>
+                    `<option value="${o.value}" ${r.operator === o.value ? 'selected' : ''}>${o.label}</option>`
+                ).join('');
+
+                return `
+                <div class="rule-row ${r.enabled ? '' : 'disabled'}" id="rulerow-${r.id}">
+                    <input type="text"  class="form-control" style="font-size:0.8rem;" value="${r.field   || ''}" placeholder="campo del payload"  onchange="updateRule('${r.id}','field',   this.value)">
+                    <select             class="form-control" style="font-size:0.8rem;"                                                              onchange="updateRule('${r.id}','operator',this.value)">${opOptions}</select>
+                    <input type="text"  class="form-control" style="font-size:0.8rem;" value="${r.value   || '1'}" placeholder="valor (ej: 1)"    onchange="updateRule('${r.id}','value',   this.value)">
+                    <input type="text"  class="form-control" style="font-size:0.8rem;" value="${r.label   || ''}" placeholder="descripción"        onchange="updateRule('${r.id}','label',   this.value)">
+                    <input type="text"  class="form-control" style="font-size:0.8rem;" value="${r.rc_code || ''}" placeholder="código RC"          onchange="updateRule('${r.id}','rc_code', this.value)">
+                    <div style="display:flex;gap:4px;align-items:center;">
+                        <input type="checkbox" ${r.enabled ? 'checked' : ''} title="Activar/desactivar" style="width:16px;height:16px;accent-color:var(--color-green-vibrant);cursor:pointer;" onchange="updateRule('${r.id}','enabled',this.checked)">
+                        <button class="btn-delete-rule" onclick="deleteRule('${r.id}')">✕</button>
+                    </div>
+                </div>`;
+            }).join('');
+            updateMapCodeVisual();
+        }
+
+        let _currentRules = [];
+
+        function addTriggerRule() {
+            _currentRules.push({
+                id:       _ruleId(),
+                field:    '',
+                operator: 'eq',
+                value:    '1',
+                rc_code:  '',
+                label:    '',
+                enabled:  true
+            });
+            renderTriggerRules(_currentRules);
+        }
+
+        function deleteRule(ruleId) {
+            _currentRules = _currentRules.filter(r => r.id !== ruleId);
+            renderTriggerRules(_currentRules);
+        }
+
+        function updateRule(ruleId, key, value) {
+            const rule = _currentRules.find(r => r.id === ruleId);
+            if (!rule) return;
+            rule[key] = value;
+            const row = document.getElementById(`rulerow-${ruleId}`);
+            if (row) row.classList.toggle('disabled', !rule.enabled);
+        }
+
+        function getCurrentBaseMapping() {
+            const fields = ['chassis_number','latitude','longitude','speed','date','code',
+                            'ignition','temperature','odometer','battery','altitude','course',
+                            'humidity','serial_number','shipment','vehicle_type','vehicle_brand','vehicle_model'];
+            const mapping = {};
+            fields.forEach(f => {
+                const el = document.getElementById(`map_${f}`);
+                if (!el) return;
+                const val = el.value?.trim();
+                // Bloqueo de seguridad: Evitar guardar el string visual "⚡ X Reglas"
+                if (f === 'code' && val && val.startsWith('⚡')) return;
+                if (val) mapping[f] = val;
+            });
+            return mapping;
         }
 
         // --- Logica de Diccionarios (Enriquecimiento) ---
