@@ -3,25 +3,51 @@ from datetime import datetime, timezone
 import dateutil.parser
 from app.schemas.canonical import RCCanonicalModel
 
+# Cache de estados para deteccion de cambios entre payloads del mismo remolque.
+# Formato: { "chassis_number": { "IsCoupled": True, "IsDoor1Open": False, ... } }
+# Se reinicia al reiniciar el servidor. El primer payload siempre genera estados nuevos.
+_STATE_CACHE: Dict[str, Dict[str, Any]] = {}
+
+
 def parse_date_to_utc0(date_str: str) -> datetime | None:
     if not date_str:
         return None
     try:
-        # Parsear la fecha de manera flexible (soporta offsets locales de Europa)
         dt = dateutil.parser.parse(date_str)
-        # Si la fecha es naive (no incluye zona horaria), la tratamos como UTC
         if dt.tzinfo is None:
             dt = dt.replace(tzinfo=timezone.utc)
-        # Convertir y retornar en UTC 0 (huso horario +00:00)
         return dt.astimezone(timezone.utc)
     except Exception:
         return None
 
-def map_schmitz_payload(payload: Dict[str, Any]) -> RCCanonicalModel:
+
+def unwrap_ex(obj, default=None):
     """
-    Mapea un payload crudo de webhook de Schmitz al modelo canónico de RC.
+    Desenvuelve el patron Schmitz {exists: bool, Value: any}.
+    NO modifica get_safe() — se usa como wrapper explicito.
+
+    Correcto:   unwrap_ex(get_safe(position, ["GPSSpeed"]))
+    Incorrecto: modificar get_safe() internamente con auto-unwrap
+    (get_safe(pos, ["GPSSpeed", "Value"]) ya funciona sin modificar nada).
     """
-    # Función auxiliar para extracción segura
+    if isinstance(obj, dict) and 'exists' in obj and 'Value' in obj:
+        return obj['Value']
+    return obj if obj is not None else default
+
+
+def map_schmitz_payload(payload: Dict[str, Any]) -> list:
+    """
+    Mapea un payload crudo de Schmitz a UNA LISTA de RCCanonicalModel.
+    Retorna entre 1 y N eventos segun las reglas del hub:
+
+      1. Evento base (siempre): code = Reason.ItemElementName
+      2. Alarmas concurrentes de Events[] distintas al Reason
+      3. Cambios de estado de sensores (IsCoupled, IsDoor1Open, DoorLocking, AlarmWire)
+      4. Sabotaje TAPA cuando alguno de sus campos booleanos es True
+
+    El caller (_persist_batch) debe iterar la lista resultante.
+    """
+
     def get_safe(data: Dict, keys: list, default=None):
         curr = data
         for k in keys:
@@ -33,71 +59,147 @@ def map_schmitz_payload(payload: Dict[str, Any]) -> RCCanonicalModel:
                 return default
         return curr
 
-    # Asignar como identificador principal la Patente (Plate), ignorando ChassisNumber
+    # ── Extraer bloques del payload ───────────────────────────────────────────
     chassis_number = payload.get("Plate") or payload.get("ChassisNumber", "UNKNOWN")
+    status_data_0  = get_safe(payload, ["StatusData", 0], {})
+    position       = get_safe(status_data_0, ["Position"], {})
+    ebs            = get_safe(status_data_0, ["EBS"], {})
+    sensor_status  = get_safe(status_data_0, ["SensorStatus"], {})
+    tci            = get_safe(status_data_0, ["TCI"], {})
+    temp           = get_safe(status_data_0, ["Temp"], {})
+    system_config  = get_safe(payload, ["SystemConfig"], {})
+    reason         = get_safe(payload, ["Reason"], {})
+    events_array   = payload.get("Events") or []
 
-    status_data_0 = get_safe(payload, ["StatusData", 0], {})
-    position = get_safe(status_data_0, ["Position"], {})
-    ebs = get_safe(status_data_0, ["EBS"], {})
-    sensor_status = get_safe(status_data_0, ["SensorStatus"], {})
-    tci = get_safe(status_data_0, ["TCI"], {})
-    temp = get_safe(status_data_0, ["Temp"], {})
-    reefer_comp1 = get_safe(status_data_0, ["Reefer", "Compartment1"], {})
-    system_config = get_safe(payload, ["SystemConfig"], {})
-    reason = get_safe(payload, ["Reason"], {})
-
-    # Extracción de valores
-    latitude = position.get("Latitude")
+    # ── Extraer valores base ──────────────────────────────────────────────────
+    latitude  = position.get("Latitude")
     longitude = position.get("Longitude")
-    
-    speed_raw = get_safe(position, ["GPSSpeed", "Value"]) or ebs.get("Velocity")
+    altitude  = position.get("Altitude")
+    course    = position.get("GPSHeading")
+
+    # Velocidad: GPSSpeed como LongEx {exists, Value} o fallback a EBS.Velocity (string)
+    speed_raw = unwrap_ex(get_safe(position, ["GPSSpeed"])) or ebs.get("Velocity")
     try:
-        if speed_raw is None or str(speed_raw).strip().lower() in ["", "null", "none"]:
-            speed = 0.0
-        else:
-            speed = float(speed_raw)
+        speed = float(speed_raw) if speed_raw is not None and str(speed_raw).strip().lower() not in ("", "null", "none") else 0.0
     except Exception:
         speed = 0.0
-    
-    code_val = reason.get("ItemElementName") or "1"
-    code = str(code_val)
-    
-    device_time_str = payload.get("DeviceTime")
-    date_val = parse_date_to_utc0(device_time_str)
 
-    altitude = position.get("Altitude")
-    battery = get_safe(sensor_status, ["Battery", "ExternalPowerSupplyVoltage"])
-    course = position.get("GPSHeading")
-    humidity = tci.get("Humidity")
-    ignition = sensor_status.get("IsIgnitionOn")
-    
-    odometer = ebs.get("Milage") or get_safe(position, ["GPSMilage", "Value"])
-    # Priorizar lectura de temperatura de puerta ("DoorTemp")
-    temperature = temp.get("DoorTemp") or get_safe(payload, ["DoorTemp"])
-    
+    # Odometro: EBS.Milage (prioridad) o GPSMilage.Value (fallback)
+    odometer    = ebs.get("Milage") or unwrap_ex(get_safe(position, ["GPSMilage"]))
+    battery     = get_safe(sensor_status, ["Battery", "ExternalPowerSupplyVoltage"])
+
+    # Ignicion: IsIgnitionOn (bool directo del spec) o IsInMotion.Value como proxy
+    ignition    = sensor_status.get("IsIgnitionOn")
+    if ignition is None:
+        ignition = unwrap_ex(sensor_status.get("IsInMotion"))
+
+    humidity    = tci.get("Humidity")
+
+    # Temperatura: Temp1 como primera opcion, Temp2 como fallback
+    # NOTA: DoorTemp NO existe en el spec real de Schmitz — era un bug del mapper anterior
+    temperature = temp.get("Temp1") or temp.get("Temp2")
+
+    date_val      = parse_date_to_utc0(payload.get("DeviceTime"))
     serial_number = str(payload.get("CtuId")) if payload.get("CtuId") is not None else None
-    shipment = str(payload.get("ExternalOrderReference")) if payload.get("ExternalOrderReference") is not None else None
-    vehicle_type = str(system_config.get("TrailerType")) if system_config.get("TrailerType") is not None else None
-    vehicle_brand = str(system_config.get("TrailerProducer")) if system_config.get("TrailerProducer") is not None else None
-    vehicle_model = str(system_config.get("TelematicType")) if system_config.get("TelematicType") is not None else None
+    shipment      = str(payload.get("ExternalOrderReference")) if payload.get("ExternalOrderReference") else None
+    vehicle_type  = str(system_config.get("TrailerType"))     if system_config.get("TrailerType")     else None
+    vehicle_brand = str(system_config.get("TrailerProducer")) if system_config.get("TrailerProducer") else None
+    vehicle_model = str(system_config.get("TelematicType"))   if system_config.get("TelematicType")   else None
 
-    return RCCanonicalModel(
-        chassis_number=chassis_number,
-        latitude=latitude,
-        longitude=longitude,
-        speed=speed,
-        code=code,
-        date=date_val,
-        altitude=altitude,
-        battery=battery,
-        course=course,
-        humidity=humidity,
-        ignition=ignition,
-        odometer=odometer,
-        temperature=temperature,
-        serial_number=serial_number,
-        shipment=shipment,
-        vehicle_type=vehicle_type,
-        vehicle_brand=vehicle_brand,
-        vehicle_model=vehicle_model
-    )
+    # ── Constructor de evento canonico ────────────────────────────────────────
+    def build_event(code: str) -> RCCanonicalModel:
+        return RCCanonicalModel(
+            chassis_number=chassis_number,
+            latitude=latitude,
+            longitude=longitude,
+            speed=speed,
+            code=code,
+            date=date_val,
+            altitude=altitude,
+            battery=battery,
+            course=course,
+            humidity=humidity,
+            ignition=ignition,
+            odometer=odometer,
+            temperature=temperature,
+            serial_number=serial_number,
+            shipment=shipment,
+            vehicle_type=vehicle_type,
+            vehicle_brand=vehicle_brand,
+            vehicle_model=vehicle_model,
+        )
+
+    result = []
+
+    # ── 1. Evento base: siempre desde Reason ──────────────────────────────────
+    reason_code = str(reason.get("ItemElementName") or "Standard")
+    result.append(build_event(reason_code))
+
+    # ── 2. Alarmas concurrentes de Events[] ───────────────────────────────────
+    # Schmitz envia aqui TODAS las alarmas activas simultaneamente.
+    # Se omiten las que repiten el Reason para no duplicar eventos en RC.
+    for ev in events_array:
+        if not isinstance(ev, dict):
+            continue
+        ev_type = str(ev.get("Type", "")).strip()
+        if ev_type and ev_type != reason_code:
+            result.append(build_event(ev_type))
+
+    # ── 3. Estados de sensores fisicos (solo cuando cambian) ─────────────────
+    # El cache persiste en memoria entre payloads del mismo remolque.
+    # El primer payload de cada remolque siempre genera eventos (cache vacio).
+    cache = _STATE_CACHE.setdefault(chassis_number, {})
+
+    # IsCoupled: enganche/desenganche con la tractora
+    is_coupled = sensor_status.get("IsCoupled")
+    if is_coupled is not None:
+        if cache.get("IsCoupled") != is_coupled:
+            cache["IsCoupled"] = is_coupled
+            result.append(build_event(f"IsCoupled.{is_coupled}"))
+
+    # IsDoor1Open: sensor fisico de puerta de carga
+    # Cubre TODAS las aperturas, no solo las que Schmitz clasifica como alarma.
+    # DoorAlarm y Door1.Open son complementarios — no se duplican.
+    is_door1_open = sensor_status.get("IsDoor1Open")
+    if is_door1_open is None:
+        is_door1_open = sensor_status.get("IsDoorOpen")   # campo generico como fallback
+    if is_door1_open is not None:
+        if cache.get("IsDoor1Open") != is_door1_open:
+            cache["IsDoor1Open"] = is_door1_open
+            result.append(build_event("Door1.Open" if is_door1_open else "Door1.Closed"))
+
+    # DoorLocking.State: cerradura electronica de las puertas de carga
+    # Distinto de IsDoor1Open: este es el estado de la cerradura, no de la puerta fisica.
+    door_locking = get_safe(sensor_status, ["DoorLocking"], {})
+    dl_state = door_locking.get("State") if isinstance(door_locking, dict) else None
+    if dl_state is not None:
+        if cache.get("DoorLocking.State") != dl_state:
+            cache["DoorLocking.State"] = dl_state
+            result.append(build_event(f"DoorLocking.State.{dl_state}"))
+
+    # AntiTheft.AlarmWire: cable fisico de alarma
+    # AlarmWire.Open = cable cortado = posible robo en curso
+    anti_theft = get_safe(sensor_status, ["AntiTheft"], {})
+    alarm_wire = anti_theft.get("AlarmWire") if isinstance(anti_theft, dict) else None
+    if alarm_wire is not None:
+        if cache.get("AlarmWire") != alarm_wire:
+            cache["AlarmWire"] = alarm_wire
+            result.append(build_event(f"AlarmWire.{alarm_wire}"))
+
+    # ── 4. Sabotaje TAPA: solo cuando el campo es True ────────────────────────
+    # Nunca se genera evento cuando es False — ese es el estado normal y esperado.
+    sabotage = get_safe(status_data_0, ["Tapa", "SabotageDetection"], {})
+    if isinstance(sabotage, dict):
+        sabotage_map = {
+            "EbsDisconnect":                    "Sabotaje.EbsDesconectado",
+            "CisBatteryGuardCanDisconnect":     "Sabotaje.BateriaBloqueada",
+            "DoorlockingSystemLinDisconnected": "Sabotaje.CerraduraDesconectada",
+            "BcuDisconnected":                  "Sabotaje.BcuDesconectado",
+            "AlarmSystemDisconnected":           "Sabotaje.SistemaAlarmaDesconectado",
+            "CoupledSensorDisconnected":         "Sabotaje.SensorEngancheDesconectado",
+        }
+        for field, rc_code in sabotage_map.items():
+            if sabotage.get(field) is True:
+                result.append(build_event(rc_code))
+
+    return result
