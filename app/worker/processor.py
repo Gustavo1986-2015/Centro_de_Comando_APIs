@@ -22,7 +22,9 @@ def trigger_worker(provider: str, env: str):
     key = f"{provider.lower()}_{env.lower()}"
     if key in WORKER_TRIGGERS:
         try:
-            WORKER_TRIGGERS[key].set()
+            import asyncio
+            loop = asyncio.get_running_loop()
+            loop.call_soon_threadsafe(WORKER_TRIGGERS[key].set)
         except Exception:
             pass
 
