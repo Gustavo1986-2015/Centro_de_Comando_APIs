@@ -2,7 +2,7 @@ from fastapi import FastAPI
 import asyncio
 
 from app.api.routers import schmitz, dashboard, health, inspector, dynamic_webhook
-from app.api.routers.schmitz import start_webhook_batch_processor
+from app.api.routers.schmitz import start_webhook_batch_processor, router_spec as schmitz_router_spec
 from app.api.routers.dashboard import broadcast_loop
 from app.worker.processor import worker_loop
 
@@ -10,6 +10,7 @@ app = FastAPI(title="Centro de Comando en Vivo - Telemática")
 
 # Incluir routers
 app.include_router(schmitz.router)
+app.include_router(schmitz_router_spec)
 app.include_router(dashboard.router)
 app.include_router(health.router)
 app.include_router(inspector.router)
