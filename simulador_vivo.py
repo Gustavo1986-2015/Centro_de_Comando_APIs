@@ -10,7 +10,7 @@ import requests, time, random, datetime, json
 from concurrent.futures import ThreadPoolExecutor
 
 MODO_ESTRES    = False
-WEBHOOK_URL    = "http://127.0.0.1:8000/Json/Data"
+WEBHOOK_URL    = "http://127.0.0.1:8000/Json/Data?env=test"
 # WEBHOOK_URL  = "http://127.0.0.1:8000/schmitz/webhook"   # legacy para dev
 
 PLACAS_REALES  = ["RHR5776", "GDG8486", "JMC1236", "AB1234"]
