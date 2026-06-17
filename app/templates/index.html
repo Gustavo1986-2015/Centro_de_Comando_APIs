@@ -119,6 +119,7 @@
             max-width: 98%;
             margin: 0 auto;
             width: 100%;
+            padding-bottom: 3rem; /* Espacio para el footer fijo */
         }
 
         .stats-grid {
@@ -1496,7 +1497,7 @@
         </div>
     </main>
 
-    <footer style="text-align: center; padding: 1.5rem; border-top: 1px solid var(--card-border); color: var(--color-gray); font-size: 0.85rem; font-weight: 300;">
+    <footer style="position: fixed; bottom: 0; width: 100%; background: var(--color-black); text-align: center; padding: 0.6rem; border-top: 1px solid var(--card-border); color: var(--color-gray); font-size: 0.8rem; font-weight: 300; z-index: 1000;">
         Desarrollado por Area de Integraciones GPS Assistcargo | Gustavo Gómez & Roberto Herrera &reg;
     </footer>
 
@@ -2195,7 +2196,7 @@
                 if (ev.status === 'pending' && ev.retry_count && ev.retry_count > 0 && ev.next_retry_in_sec !== undefined) {
                     statusHtml += `<br><span style="font-size:0.7rem; color:var(--color-yellow); display:inline-block; margin-top:2px;">⏳ Retrying in ${ev.next_retry_in_sec}s</span>`;
                 }
-                rcHtml += `<div style="margin-bottom: 4px;">${statusHtml}</div>`;
+
 
                 let jobStyle = 'color:var(--color-white)';
                 if (ev.status === 'sent') {
@@ -2247,7 +2248,8 @@ Enviado RC: ${ev.time_sent || 'N/A'} (Hub: ${displayLat || '0.000s'})
 RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency_sec.toFixed(3) + 's' : '0.000s'}`;
                 const plainTextEncoded = encodeURIComponent(plainText);
                 
-                rcHtml += `<div style="margin-top: 8px; display: flex; gap: 5px; flex-wrap: wrap;">`;
+                rcHtml += `<div style="margin-top: 8px; display: flex; gap: 5px; flex-wrap: wrap; align-items: center;">`;
+                rcHtml += `${statusHtml}`;
                 rcHtml += `<button onclick='viewRawJson(${JSON.stringify(rcFormatFinal).replace(/'/g, "&#39;")}, "Payload Procesado (Hacia SOAP RC)")' style="background: #047857; color: white; border: none; padding: 2px 6px; border-radius: 4px; font-size: 0.7em; cursor: pointer;">
                                 🚀 JSON RC
                             </button>`;
@@ -2265,12 +2267,14 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
                     <div style="display: flex; flex-direction: column; align-items: flex-start;">
                         <span style="color:var(--color-yellow); font-weight:bold;">${ev.chassis || 'N/A'}</span>
                         ${ev.serial && ev.serial !== ev.chassis ? `<span style="color:var(--color-gray); font-size: 0.8rem;">IMEI: ${ev.serial}</span>` : ''}
-                        <div style="margin-top: 4px;">
+                        <div style="margin-top: 4px; display: flex; gap: 5px;">
                             <button onclick='viewRawJson(${JSON.stringify(ev.raw_data || "{}").replace(/'/g, "&#39;")}, "Payload Original (Crudo del Proveedor)")' style="background: #374151; color: white; border: none; padding: 2px 6px; border-radius: 4px; font-size: 0.7em; cursor: pointer;" title="Ver payload JSON original sin procesar">
                                 📄 JSON Origen
                             </button>
+                            <a href="data:text/json;charset=utf-8,${encodeURIComponent(JSON.stringify(ev.raw_data || {}))}" download="origen_${ev.provider}_${safeTime}.json" style="color: var(--color-gray-label); text-decoration: none; font-size: 0.7rem; border: 1px solid var(--color-gray-label); padding: 2px 6px; border-radius: 4px; display: inline-block;" title="Descargar JSON Original">📥 Bajar</a>
                         </div>
-                    </div>`;
+                    </div>
+                `;
 
                 tr.innerHTML = `
                     <td>
