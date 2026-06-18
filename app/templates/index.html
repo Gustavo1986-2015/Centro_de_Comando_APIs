@@ -124,13 +124,13 @@
 
         .stats-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
             gap: 1.2rem;
         }
 
         @media (min-width: 1200px) {
             .stats-grid {
-                grid-template-columns: repeat(6, 1fr);
+                grid-template-columns: repeat(7, 1fr);
             }
         }
 
@@ -1010,6 +1010,10 @@
                 <div class="sparkline-wrap">
                     <svg class="sparkline" id="spark-retries" viewBox="0 0 120 30" preserveAspectRatio="none"></svg>
                 </div>
+            </div>
+            <div class="card" style="border-top: 4px solid #14b8a6;" title="Latencia de Respuesta Push. Tiempo que demora nuestra API en devolver un código 200 OK al proveedor cuando recibimos un webhook (segundos)">
+                <div class="card-title">Latencia Push</div>
+                <div class="card-value" id="val-push-latency" style="color: #14b8a6;">0.000s</div>
             </div>
             <div class="card" style="border-top: 4px solid #8b5cf6;" title="Tiempo promedio de espera en el Hub. Por estándar empresarial y seguridad, el código implementa 1.0s de ventana fija (Micro-Batching) para agrupar ráfagas y proteger el endpoint de Recurso Confiable.">
                 <div class="card-title">Latencia Hub AC</div>
@@ -2016,6 +2020,7 @@
                 updateValue('val-sent', data.sent);
                 updateValue('val-failed', data.failed);
                 updateValue('val-retries', data.retries);
+                updateValue('val-push-latency', (data.avg_push_latency_sec || 0).toFixed(3) + 's');
                 updateValue('val-latency', (data.avg_latency_sec || 0).toFixed(2) + 's');
                 updateValue('val-rc-latency', (data.avg_rc_latency_sec || 0).toFixed(2) + 's');
 

@@ -16,6 +16,16 @@ from typing import List
 from datetime import datetime, timezone, timedelta
 from sqlalchemy import func, case
 
+# Memoria temporal para calcular Latencia de Recepción Push (HTTP)
+push_latency_store = {}
+
+def record_push_latency(provider: str, latency: float):
+    if provider not in push_latency_store:
+        push_latency_store[provider] = []
+    push_latency_store[provider].append(latency)
+    if len(push_latency_store[provider]) > 200:
+        push_latency_store[provider].pop(0)
+
 
 security = HTTPBasic()
 
@@ -267,6 +277,19 @@ async def get_stats_data(
     avg_latency = round(total_latency_seconds / latency_samples, 2) if latency_samples > 0 else 0
     avg_rc_latency = round(total_rc_latency_seconds / rc_latency_samples, 2) if rc_latency_samples > 0 else 0
 
+    # Calcular latencia de recepción push desde la memoria
+    avg_push_latency = 0.0
+    if provider_filter and provider_filter.lower() != 'all':
+        prov_latencies = push_latency_store.get(provider_filter.lower(), [])
+        if prov_latencies:
+            avg_push_latency = sum(prov_latencies) / len(prov_latencies)
+    else:
+        all_latencies = []
+        for lats in push_latency_store.values():
+            all_latencies.extend(lats)
+        if all_latencies:
+            avg_push_latency = sum(all_latencies) / len(all_latencies)
+
     return {
         "pending": total_pending,
         "sent": total_sent,
@@ -274,6 +297,7 @@ async def get_stats_data(
         "retries": total_retries,
         "avg_latency_sec": avg_latency,
         "avg_rc_latency_sec": avg_rc_latency,
+        "avg_push_latency_sec": round(avg_push_latency, 3),
         "recent": recent_list,
         "throughput": throughput_per_provider,
         "all_providers": list(set([p.provider_name for p in providers]))
