@@ -9,13 +9,28 @@ Apunta al endpoint oficial /Json/Data con header X-Data-Type: Status.
 import requests, time, random, datetime, json
 from concurrent.futures import ThreadPoolExecutor
 
-MODO_ESTRES    = False
-WEBHOOK_URL    = "http://127.0.0.1:8000/Json/Data?env=test"
-# WEBHOOK_URL  = "http://127.0.0.1:8000/schmitz/webhook"   # legacy para dev
+# ==============================================================================
+# ⚙️ CONFIGURACIÓN DEL SIMULADOR (Modificá estos parámetros rápidos)
+# ==============================================================================
 
-PLACAS_REALES  = ["RHR5776", "GDG8486", "JMC1236", "AB1234"]
-PLACAS_ESTRES  = [f"TEST-{str(i).zfill(3)}" for i in range(1, 40)]
-SEGUNDOS_ESPERA = 5 if MODO_ESTRES else 8
+# 1. MODO DE EJECUCIÓN (True = Ráfagas masivas concurrentes / False = Envío lento normal)
+MODO_ESTRES = False
+
+# 2. CONFIGURACIÓN MODO NORMAL (MODO_ESTRES = False)
+PLACAS_NORMALES          = ["RHR5776", "GDG8486", "JMC1236", "AB1234"]
+SEGUNDOS_ESPERA_NORMAL   = 30  # Tiempo que espera el simulador entre cada ciclo
+
+# 3. CONFIGURACIÓN MODO ESTRÉS (MODO_ESTRES = True)
+PLACAS_ESTRES            = [f"TEST-{str(i).zfill(3)}" for i in range(1, 41)]  # 40 eventos por ciclo
+SEGUNDOS_ESPERA_ESTRES   = 5   # Bombardeo rápido cada X segundos
+
+# 4. PUNTO DE ENLACE (URL)
+WEBHOOK_URL = "http://127.0.0.1:8000/Json/Data?env=test"
+
+# ==============================================================================
+
+SEGUNDOS_ESPERA = SEGUNDOS_ESPERA_ESTRES if MODO_ESTRES else SEGUNDOS_ESPERA_NORMAL
+PLACAS_ACTIVAS  = PLACAS_ESTRES if MODO_ESTRES else PLACAS_NORMALES
 
 REASON_CODES = [
     ("Standard",          60),
@@ -195,7 +210,7 @@ def enviar_payload(placa: str) -> tuple:
         return False, str(e), reason, extra
 
 
-placas = PLACAS_ESTRES if MODO_ESTRES else PLACAS_REALES
+placas = PLACAS_ACTIVAS
 
 print(f"{'='*60}")
 print(f"  SIMULADOR SCHMITZ v3 — YAML-Compliant")
