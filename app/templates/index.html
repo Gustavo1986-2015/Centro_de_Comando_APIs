@@ -1011,15 +1011,15 @@
                     <svg class="sparkline" id="spark-retries" viewBox="0 0 120 30" preserveAspectRatio="none"></svg>
                 </div>
             </div>
-            <div class="card" style="border-top: 4px solid #14b8a6;" title="Latencia de Respuesta Push. Tiempo que demora nuestra API en devolver un código 200 OK al proveedor cuando recibimos un webhook (segundos)">
+            <div class="card" style="border-top: 4px solid #14b8a6;" title="Latencia Push: Tiempo exacto (en milisegundos) que demora nuestra API en responder con código 200/202 OK al proveedor al recibir un evento webhook.">
                 <div class="card-title">Latencia Push</div>
                 <div class="card-value" id="val-push-latency" style="color: #14b8a6;">0.000s</div>
             </div>
-            <div class="card" style="border-top: 4px solid #8b5cf6;" title="Tiempo promedio de espera en el Hub. Por estándar empresarial y seguridad, el código implementa 1.0s de ventana fija (Micro-Batching) para agrupar ráfagas y proteger el endpoint de Recurso Confiable.">
+            <div class="card" style="border-top: 4px solid #8b5cf6;" title="Latencia Hub AC: Procesos internos. Incluye: 1) Recepción en Cola. 2) Espera por Micro-Batching (estándar seguro ~1.0s) para agrupar ráfagas. 3) Normalización y Mapeo Canónico. 4) Preparación y despacho del envío.">
                 <div class="card-title">Latencia Hub AC</div>
                 <div class="card-value" id="val-latency" style="color: #8b5cf6;">0.000s</div>
             </div>
-            <div class="card" style="border-top: 4px solid #3b82f6;" title="Tiempo de respuesta SOAP promedio de Recurso Confiable desde que hacemos el envío hasta obtener el ID de Job (segundos)">
+            <div class="card" style="border-top: 4px solid #3b82f6;" title="Latencia RC: Tiempo de respuesta puro de la red SOAP externa. Desde que nuestra API dispara el XML hasta que Recurso Confiable contesta y nos devuelve el ID de Job.">
                 <div class="card-title">Latencia RC</div>
                 <div class="card-value" id="val-rc-latency" style="color: #3b82f6;">0.000s</div>
             </div>
@@ -1787,7 +1787,7 @@
                 let rcLat = ev.rc_latency_sec;
                 let displayRc = 'N/A';
                 if (rcLat !== null && rcLat !== undefined) {
-                    displayRc = `${rcLat.toFixed(2)}s`;
+                    displayRc = `${rcLat.toFixed(3)}s`;
                 }
                 
                 let timeSentText = ev.time_sent || 'N/A';
@@ -2084,7 +2084,7 @@
             if (startNum === targetNum) {
                 // Ensure the DOM actually shows the targetNum even if it didn't "change" according to state
                 const isFloat = suffix !== '' || String(newValue).includes('.');
-                const formatted = isFloat ? targetNum.toFixed(2) + suffix : Math.round(targetNum) + suffix;
+                const formatted = isFloat ? targetNum.toFixed(3) + suffix : Math.round(targetNum) + suffix;
                 if (el.textContent !== formatted) {
                     el.textContent = formatted;
                 }
@@ -2101,7 +2101,7 @@
                 const eased    = 1 - (1 - progress) * (1 - progress);
                 const current  = startNum + (targetNum - startNum) * eased;
                 el.textContent = isFloat
-                    ? current.toFixed(2) + suffix
+                    ? current.toFixed(3) + suffix
                     : Math.round(current) + suffix;
                 if (progress < 1) requestAnimationFrame(step);
             }
