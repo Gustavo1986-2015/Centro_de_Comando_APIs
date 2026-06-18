@@ -1017,11 +1017,11 @@
             </div>
             <div class="card" style="border-top: 4px solid #8b5cf6;" title="Tiempo promedio de espera en el Hub. Por estándar empresarial y seguridad, el código implementa 1.0s de ventana fija (Micro-Batching) para agrupar ráfagas y proteger el endpoint de Recurso Confiable.">
                 <div class="card-title">Latencia Hub AC</div>
-                <div class="card-value" id="val-latency" style="color: #8b5cf6;">0.00s</div>
+                <div class="card-value" id="val-latency" style="color: #8b5cf6;">0.000s</div>
             </div>
             <div class="card" style="border-top: 4px solid #3b82f6;" title="Tiempo de respuesta SOAP promedio de Recurso Confiable desde que hacemos el envío hasta obtener el ID de Job (segundos)">
                 <div class="card-title">Latencia RC</div>
-                <div class="card-value" id="val-rc-latency" style="color: #3b82f6;">0.00s</div>
+                <div class="card-value" id="val-rc-latency" style="color: #3b82f6;">0.000s</div>
             </div>
         </div>
         
@@ -2021,8 +2021,8 @@
                 updateValue('val-failed', data.failed);
                 updateValue('val-retries', data.retries);
                 updateValue('val-push-latency', (data.avg_push_latency_sec || 0).toFixed(3) + 's');
-                updateValue('val-latency', (data.avg_latency_sec || 0).toFixed(2) + 's');
-                updateValue('val-rc-latency', (data.avg_rc_latency_sec || 0).toFixed(2) + 's');
+                updateValue('val-latency', (data.avg_latency_sec || 0).toFixed(3) + 's');
+                updateValue('val-rc-latency', (data.avg_rc_latency_sec || 0).toFixed(3) + 's');
 
                 updateSparkline('spark-pending',  'val-pending');
                 updateSparkline('spark-sent',     'val-sent');

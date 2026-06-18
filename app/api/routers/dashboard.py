@@ -274,8 +274,8 @@ async def get_stats_data(
             "raw_data": ev.raw_data
         })
 
-    avg_latency = round(total_latency_seconds / latency_samples, 2) if latency_samples > 0 else 0
-    avg_rc_latency = round(total_rc_latency_seconds / rc_latency_samples, 2) if rc_latency_samples > 0 else 0
+    avg_latency = round(total_latency_seconds / latency_samples, 3) if latency_samples > 0 else 0
+    avg_rc_latency = round(total_rc_latency_seconds / rc_latency_samples, 3) if rc_latency_samples > 0 else 0
 
     # Calcular latencia de recepción push desde la memoria
     avg_push_latency = 0.0
