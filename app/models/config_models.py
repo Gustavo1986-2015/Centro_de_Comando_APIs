@@ -38,6 +38,7 @@ class DailyStat(Base):
     avg_transmission_latency_sec = Column(Float, nullable=True)
     avg_hub_latency_sec = Column(Float, nullable=True)
     avg_rc_latency_sec = Column(Float, nullable=True)
+    avg_push_latency_ms = Column(Float, nullable=True)
 
 class SystemSettings(Base):
     """Modelo para configuración global e infraestructura del Hub."""
