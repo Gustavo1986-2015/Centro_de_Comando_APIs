@@ -49,34 +49,42 @@ def _persist_batch(batch: list):
         try:
             events_to_add = []
             for payload in items_for_env:
-                canonical_list = map_schmitz_payload(payload)    # ahora retorna list
-                raw_json_str   = json.dumps(payload, ensure_ascii=False)
-                for canonical in canonical_list:
-                    events_to_add.append(NormalizedRCEvent(
-                        provider="schmitz",
-                        status="pending",
-                        raw_data=raw_json_str,          # mismo raw para todos los clones del payload
-                        chassis_number=canonical.chassis_number,
-                        latitude=canonical.latitude,
-                        longitude=canonical.longitude,
-                        speed=canonical.speed,
-                        code=canonical.code,            # unico campo que varia entre clones
-                        date=canonical.date,
-                        altitude=canonical.altitude,
-                        battery=canonical.battery,
-                        course=canonical.course,
-                        humidity=canonical.humidity,
-                        ignition=canonical.ignition,
-                        odometer=canonical.odometer,
-                        temperature=canonical.temperature,
-                        serial_number=canonical.serial_number,
-                        shipment=canonical.shipment,
-                        vehicle_type=canonical.vehicle_type,
-                        vehicle_brand=canonical.vehicle_brand,
-                        vehicle_model=canonical.vehicle_model,
-                    ))
-            db.add_all(events_to_add)
-            db.commit()
+                try:
+                    # Usamos el mapper con extracción de Tenant (el router no recibe headers en el inner batch, se asume tenant generico o payload-based aqui)
+                    canonical_list = map_schmitz_payload(payload)
+                    raw_json_str   = json.dumps(payload, ensure_ascii=False)
+                    for canonical in canonical_list:
+                        events_to_add.append(NormalizedRCEvent(
+                            provider="schmitz",
+                            status="pending",
+                            raw_data=raw_json_str,
+                            chassis_number=canonical.chassis_number,
+                            latitude=canonical.latitude,
+                            longitude=canonical.longitude,
+                            speed=canonical.speed,
+                            code=canonical.code,            # unico campo que varia entre clones
+                            date=canonical.date,
+                            altitude=canonical.altitude,
+                            battery=canonical.battery,
+                            course=canonical.course,
+                            humidity=canonical.humidity,
+                            ignition=canonical.ignition,
+                            odometer=canonical.odometer,
+                            temperature=canonical.temperature,
+                            serial_number=canonical.serial_number,
+                            shipment=canonical.shipment,
+                            vehicle_type=canonical.vehicle_type,
+                            vehicle_brand=canonical.vehicle_brand,
+                            vehicle_model=canonical.vehicle_model,
+                        ))
+                except ValueError as ve:
+                    logger.warning(f"Drop and Forget activado: {ve}")
+                except Exception as e:
+                    logger.error(f"Error procesando payload en batch: {e}")
+            
+            if events_to_add:
+                db.add_all(events_to_add)
+                db.commit()
         except Exception as e:
             logger.error(f"Error saving batch: {e}")
         finally:
@@ -128,13 +136,16 @@ async def schmitz_webhook(
     authorized: bool = Depends(verify_api_key)
 ):
     try:
-        payload = await request.json()
+        try:
+            payload = await request.json()
+        except Exception:
+            # Schmitz manual dice "always return 200/202"
+            return {"status": "accepted"}
+
+        _webhook_queue.put_nowait((payload, env))
     except Exception as e:
-        return {"error": "Invalid JSON format", "detail": str(e)}
-
-    # Poner en la cola en memoria (instantáneo, ~0ms)
-    _webhook_queue.put_nowait((payload, env))
-
+        logger.error(f"Error inesperado en webhook: {e}")
+    
     return {"status": "accepted"}
 
 @router_spec.post("/Json/Data", status_code=status.HTTP_202_ACCEPTED)
@@ -155,9 +166,13 @@ async def schmitz_json_data(
         return {"status": "ok", "message": "TripData recibido y descartado."}
 
     try:
-        payload = await request.json()
-    except Exception as e:
-        return {"error": "Invalid JSON format", "detail": str(e)}
+        try:
+            payload = await request.json()
+        except Exception:
+            return {"status": "accepted"}
 
-    _webhook_queue.put_nowait((payload, env))
+        _webhook_queue.put_nowait((payload, env))
+    except Exception as e:
+        logger.error(f"Error inesperado en Json/Data: {e}")
+        
     return {"status": "accepted"}
