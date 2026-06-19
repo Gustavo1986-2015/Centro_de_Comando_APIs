@@ -5,9 +5,18 @@ from app.schemas.canonical import RCCanonicalModel
 
 # Cache de estados para deteccion de cambios entre payloads del mismo remolque.
 # Formato: { "chassis_number": { "IsCoupled": True, "IsDoor1Open": False, ... } }
+# Formato: { "chassis_number": { "IsCoupled": True, "IsDoor1Open": False, ... } }
 # Se reinicia al reiniciar el servidor. El primer payload siempre genera estados nuevos.
 _STATE_CACHE: Dict[str, Dict[str, Any]] = {}
 
+def extract_tenant_id(payload: Dict[str, Any], headers: Dict[str, str] = None) -> str:
+    """Extrae el Tenant ID desde cabecera o payload (Schmitz v1.35)."""
+    headers = headers or {}
+    # Case-insensitive header lookup
+    tenant = headers.get("x-assistcargo-tenant") or headers.get("X-Assistcargo-Tenant")
+    if tenant:
+        return str(tenant).strip()
+    return str(payload.get("ReferenceCustomerName") or "unknown_tenant").strip()
 
 def parse_date_to_utc0(date_str: str) -> datetime | None:
     if not date_str:
@@ -35,14 +44,13 @@ def unwrap_ex(obj, default=None):
     return obj if obj is not None else default
 
 
-def map_schmitz_payload(payload: Dict[str, Any]) -> list:
+def map_schmitz_payload(payload: Dict[str, Any], headers: Dict[str, str] = None) -> list:
     """
     Mapea un payload crudo de Schmitz a UNA LISTA de RCCanonicalModel.
     Retorna entre 1 y N eventos segun las reglas del hub:
 
-      1. Evento base (siempre): code = Reason.ItemElementName
-      2. Alarmas concurrentes de Events[] distintas al Reason
-      3. Cambios de estado de sensores (IsCoupled, IsDoor1Open, DoorLocking, AlarmWire)
+      1. Evento base: prioriza array Events[], fallback a Reason.
+      2. Cambios de estado de sensores (IsCoupled, IsDoor1Open, DoorLocking, AlarmWire)
       4. Sabotaje TAPA cuando alguno de sus campos booleanos es True
 
     El caller (_persist_batch) debe iterar la lista resultante.
@@ -60,7 +68,10 @@ def map_schmitz_payload(payload: Dict[str, Any]) -> list:
         return curr
 
     # ── Extraer bloques del payload ───────────────────────────────────────────
-    chassis_number = payload.get("Plate") or payload.get("ChassisNumber", "UNKNOWN")
+    chassis_number = payload.get("Plate") or payload.get("ChassisNumber")
+    if not chassis_number:
+        raise ValueError("Activo desconocido: ChassisNumber y Plate estan vacios o no existen en el payload")
+        
     status_data_0  = get_safe(payload, ["StatusData", 0], {})
     position       = get_safe(status_data_0, ["Position"], {})
     ebs            = get_safe(status_data_0, ["EBS"], {})
@@ -131,21 +142,21 @@ def map_schmitz_payload(payload: Dict[str, Any]) -> list:
 
     result = []
 
-    # ── 1. Evento base: siempre desde Reason ──────────────────────────────────
-    reason_code = str(reason.get("ItemElementName") or "Standard")
-    result.append(build_event(reason_code))
+    # ── 1. Evento base: priorizar Events, fallback a Reason ───────────────────
+    events_to_process = []
+    if events_array:
+        for ev in events_array:
+            if isinstance(ev, dict) and ev.get("Type"):
+                events_to_process.append(str(ev.get("Type")).strip())
+    
+    if not events_to_process:
+        reason_code = str(reason.get("ItemElementName") or "Standard")
+        events_to_process.append(reason_code)
 
-    # ── 2. Alarmas concurrentes de Events[] ───────────────────────────────────
-    # Schmitz envia aqui TODAS las alarmas activas simultaneamente.
-    # Se omiten las que repiten el Reason para no duplicar eventos en RC.
-    for ev in events_array:
-        if not isinstance(ev, dict):
-            continue
-        ev_type = str(ev.get("Type", "")).strip()
-        if ev_type and ev_type != reason_code:
-            result.append(build_event(ev_type))
+    for ev_type in events_to_process:
+        result.append(build_event(ev_type))
 
-    # ── 3. Estados de sensores fisicos (solo cuando cambian) ─────────────────
+    # ── 2. Estados de sensores fisicos (solo cuando cambian) ─────────────────
     # El cache persiste en memoria entre payloads del mismo remolque.
     # El primer payload de cada remolque siempre genera eventos (cache vacio).
     cache = _STATE_CACHE.setdefault(chassis_number, {})
