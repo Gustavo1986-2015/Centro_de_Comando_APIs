@@ -739,6 +739,7 @@
         #spark-sent     polyline { stroke: var(--color-green-vibrant); }
         #spark-failed   polyline { stroke: var(--color-red); }
         #spark-retries  polyline { stroke: var(--color-orange); }
+        #spark-push     polyline { stroke: #14b8a6; }
         .provider-bar {
             background: var(--level-0);
             border-bottom: 1px solid var(--card-border);
@@ -1012,8 +1013,17 @@
                 </div>
             </div>
             <div class="card" style="border-top: 4px solid #14b8a6;" title="Latencia Push: Tiempo exacto (en milisegundos) que demora nuestra API en responder con código 200/202 OK al proveedor al recibir un evento webhook.">
-                <div class="card-title">Latencia Push</div>
-                <div class="card-value" id="val-push-latency" style="color: #14b8a6;">0.000s</div>
+                <div class="card-title">LATENCIA PUSH</div>
+                <div class="card-value" id="val-push-latency" style="color:#14b8a6;">0.000s</div>
+                <div style="font-size:0.72rem;color:var(--color-gray-label);margin-top:0.3rem;display:flex;gap:0.75rem;justify-content:center;flex-wrap:wrap;">
+                    <span>SLA &lt;250ms: <strong id="push-sla-pct" style="color:var(--color-green-bright);">100%</strong></span>
+                    <span id="push-count-label" style="color:var(--color-gray-label);">
+                        <span id="push-count">0</span> eventos (24h)
+                    </span>
+                </div>
+                <div class="sparkline-wrap">
+                    <svg class="sparkline" id="spark-push" viewBox="0 0 120 30" preserveAspectRatio="none"></svg>
+                </div>
             </div>
             <div class="card" style="border-top: 4px solid #8b5cf6;" title="Latencia Hub AC: Procesos internos. Incluye: 1) Recepción en Cola. 2) Espera por Micro-Batching (estándar seguro ~1.0s) para agrupar ráfagas. 3) Normalización y Mapeo Canónico. 4) Preparación y despacho del envío.">
                 <div class="card-title">Latencia Hub AC</div>
@@ -1121,6 +1131,7 @@
                             <th style="color: var(--color-yellow); white-space: nowrap;" title="Latencia promedio desde la generación del evento en el GPS hasta su llegada al Hub de Assistcargo (GPS -> Hub)">Lat. Transmisión</th>
                             <th style="color: var(--color-green-bright); white-space: nowrap;" title="Latencia promedio de procesamiento interno y cola en el Hub de Assistcargo (Hub -> RC)">Lat. Hub AC</th>
                             <th style="color: #3b82f6; white-space: nowrap;" title="Latencia promedio de red SOAP de Recurso Confiable (Envío -> ID de Job)">Lat. SOAP RC</th>
+                            <th style="color:#14b8a6; white-space:nowrap;" title="Latencia promedio de recepción HTTP del webhook Push (SLA Schmitz ≤250ms)">Lat. Push</th>
                         </tr>
                     </thead>
                     <tbody id="history-table-body">
@@ -1523,6 +1534,7 @@
             'spark-sent':     new Array(60).fill(0),
             'spark-failed':   new Array(60).fill(0),
             'spark-retries':  new Array(60).fill(0),
+            'spark-push':     new Array(60).fill(0),
         };
 
         function updateSparkline(sparkId, metricId) {
@@ -1939,7 +1951,7 @@
                 tbody.innerHTML = '';
                 
                 if (data.length === 0) {
-                    tbody.innerHTML = '<tr><td colspan="9" style="text-align:center; color: var(--color-gray)">No hay registros históricos consolidados aún.</td></tr>';
+                    tbody.innerHTML = '<tr><td colspan="10" style="text-align:center; color: var(--color-gray)">No hay registros históricos consolidados aún.</td></tr>';
                     return;
                 }
                 
@@ -1975,6 +1987,7 @@
                         <td style="color: var(--color-yellow); font-weight: bold;">${transText}</td>
                         <td style="color: var(--color-green-bright); font-weight: bold;">${hubText}</td>
                         <td style="color: #3b82f6; font-weight: bold;">${rcText}</td>
+                        <td style="color:#14b8a6; font-weight:bold;">${row.avg_push_latency_ms != null ? row.avg_push_latency_ms.toFixed(3) + 'ms' : 'N/A'}</td>
                     `;
                     tbody.appendChild(tr);
                 });
@@ -2020,7 +2033,27 @@
                 updateValue('val-sent', data.sent);
                 updateValue('val-failed', data.failed);
                 updateValue('val-retries', data.retries);
-                updateValue('val-push-latency', (data.avg_push_latency_sec || 0).toFixed(3) + 's');
+                
+                // Filtrar push stats por proveedor activo en el selector
+                const currentFilter = document.getElementById('filter-provider')?.value || 'all';
+                const pushData = (currentFilter && currentFilter !== 'all' && data.push_per_provider)
+                    ? (data.push_per_provider[currentFilter.toLowerCase()] || data.push_stats)
+                    : (data.push_stats || {});
+
+                updateValue('val-push-latency', ((pushData.avg_ms || 0) / 1000).toFixed(3) + 's');
+
+                const sla = pushData.compliance_pct ?? 100;
+                const slaEl = document.getElementById('push-sla-pct');
+                if (slaEl) {
+                    slaEl.textContent = sla.toFixed(1) + '%';
+                    slaEl.style.color = sla >= 99 ? 'var(--color-green-bright)'
+                                      : sla >= 95 ? 'var(--color-yellow)'
+                                      : 'var(--color-red)';
+                }
+                const countEl = document.getElementById('push-count');
+                if (countEl) countEl.textContent = (pushData.count || 0).toLocaleString();
+
+                updateSparkline('spark-push', 'val-push-latency');
                 updateValue('val-latency', (data.avg_latency_sec || 0).toFixed(3) + 's');
                 updateValue('val-rc-latency', (data.avg_rc_latency_sec || 0).toFixed(3) + 's');
 
