@@ -307,6 +307,16 @@ def update_daily_stats(provider: str, env: str):
         avg_transmission = success_stats.avg_transmission if success_stats else None
         avg_rc = success_stats.avg_rc if success_stats else None
         
+        avg_push_ms = None
+        try:
+            from app.api.routers.dashboard import get_push_stats
+            p_stats = get_push_stats(provider)
+            if p_stats and p_stats.get("avg_ms", 0) > 0:
+                avg_push_ms = p_stats["avg_ms"]
+        except Exception:
+            pass
+
+        
     except Exception as e:
         logger.error(f"Error al contar estadísticas de hoy para {provider}_{env}: {e}")
         return
@@ -315,6 +325,13 @@ def update_daily_stats(provider: str, env: str):
         
     db_global = get_session("system_config", "global")
     try:
+        from sqlalchemy import text
+        try:
+            db_global.execute(text("ALTER TABLE daily_stats ADD COLUMN avg_push_latency_ms REAL DEFAULT NULL"))
+            db_global.commit()
+        except Exception:
+            db_global.rollback()
+
         today_date = datetime.now().date()
         stat = db_global.query(DailyStat).filter(
             DailyStat.date == today_date,
@@ -331,13 +348,15 @@ def update_daily_stats(provider: str, env: str):
                 failed_count=0,
                 avg_transmission_latency_sec=avg_transmission,
                 avg_hub_latency_sec=avg_hub,
-                avg_rc_latency_sec=avg_rc
+                avg_rc_latency_sec=avg_rc,
+                avg_push_latency_ms=avg_push_ms
             )
             db_global.add(stat)
         else:
             if avg_transmission is not None: stat.avg_transmission_latency_sec = avg_transmission
             if avg_hub is not None: stat.avg_hub_latency_sec = avg_hub
             if avg_rc is not None: stat.avg_rc_latency_sec = avg_rc
+            if avg_push_ms is not None: stat.avg_push_latency_ms = avg_push_ms
             
         db_global.commit()
     except Exception as e:

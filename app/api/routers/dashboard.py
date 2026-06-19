@@ -16,15 +16,39 @@ from typing import List
 from datetime import datetime, timezone, timedelta
 from sqlalchemy import func, case
 
-# Memoria temporal para calcular Latencia de Recepción Push (HTTP)
-push_latency_store = {}
+from collections import deque
+import time as _time
+
+PUSH_SLA_MS   = 250
+PUSH_WIN_SECS = 86400  # 24h
+
+push_latency_store: dict[str, deque] = {}
+# formato: { "schmitz": deque([(timestamp, latency_sec), ...]) }
 
 def record_push_latency(provider: str, latency: float):
-    if provider not in push_latency_store:
-        push_latency_store[provider] = []
-    push_latency_store[provider].append(latency)
-    if len(push_latency_store[provider]) > 200:
-        push_latency_store[provider].pop(0)
+    key = provider.lower()
+    if key not in push_latency_store:
+        push_latency_store[key] = deque()
+    push_latency_store[key].append((_time.time(), latency))
+    cutoff = _time.time() - PUSH_WIN_SECS
+    while push_latency_store[key] and push_latency_store[key][0][0] < cutoff:
+        push_latency_store[key].popleft()
+
+def get_push_stats(provider_key: str | None = None) -> dict:
+    """Calcula avg_ms, compliance_pct y count para el provider dado (o todos)."""
+    if provider_key and provider_key.lower() != 'all':
+        samples = list(push_latency_store.get(provider_key.lower(), []))
+    else:
+        samples = [s for q in push_latency_store.values() for s in q]
+    if not samples:
+        return {"avg_ms": 0.0, "compliance_pct": 100.0, "count": 0}
+    ms_vals    = [lat * 1000 for _, lat in samples]
+    compliant  = sum(1 for v in ms_vals if v <= PUSH_SLA_MS)
+    return {
+        "avg_ms":          round(sum(ms_vals) / len(ms_vals), 3),
+        "compliance_pct":  round(compliant / len(ms_vals) * 100, 1),
+        "count":           len(ms_vals),
+    }
 
 
 security = HTTPBasic()
@@ -277,18 +301,11 @@ async def get_stats_data(
     avg_latency = round(total_latency_seconds / latency_samples, 3) if latency_samples > 0 else 0
     avg_rc_latency = round(total_rc_latency_seconds / rc_latency_samples, 3) if rc_latency_samples > 0 else 0
 
-    # Calcular latencia de recepción push desde la memoria
-    avg_push_latency = 0.0
-    if provider_filter and provider_filter.lower() != 'all':
-        prov_latencies = push_latency_store.get(provider_filter.lower(), [])
-        if prov_latencies:
-            avg_push_latency = sum(prov_latencies) / len(prov_latencies)
-    else:
-        all_latencies = []
-        for lats in push_latency_store.values():
-            all_latencies.extend(lats)
-        if all_latencies:
-            avg_push_latency = sum(all_latencies) / len(all_latencies)
+    push_stats = get_push_stats(provider_filter)
+    # Incluir stats por proveedor para filtrado client-side
+    push_per_provider = {
+        k: get_push_stats(k) for k in push_latency_store
+    }
 
     return {
         "pending": total_pending,
@@ -297,7 +314,9 @@ async def get_stats_data(
         "retries": total_retries,
         "avg_latency_sec": avg_latency,
         "avg_rc_latency_sec": avg_rc_latency,
-        "avg_push_latency_sec": round(avg_push_latency, 3),
+        "push_stats":              push_stats,
+        "push_per_provider":       push_per_provider,
+        "push_sla_target_ms":      PUSH_SLA_MS,
         "recent": recent_list,
         "throughput": throughput_per_provider,
         "all_providers": list(set([p.provider_name for p in providers]))
