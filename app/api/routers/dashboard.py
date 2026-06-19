@@ -605,7 +605,8 @@ async def get_daily_history(_: None = Depends(verify_dashboard_auth)):
             "failed_count": s.failed_count,
             "avg_transmission_latency_sec": round(max(0.0, s.avg_transmission_latency_sec), 2) if s.avg_transmission_latency_sec is not None and s.avg_transmission_latency_sec >= 0 else None,
             "avg_hub_latency_sec": round(max(0.0, s.avg_hub_latency_sec), 2) if s.avg_hub_latency_sec is not None and s.avg_hub_latency_sec >= 0 else None,
-            "avg_rc_latency_sec": round(s.avg_rc_latency_sec, 2) if s.avg_rc_latency_sec is not None else None
+            "avg_rc_latency_sec": round(s.avg_rc_latency_sec, 2) if s.avg_rc_latency_sec is not None else None,
+            "avg_push_latency_ms": round(s.avg_push_latency_ms, 3) if s.avg_push_latency_ms is not None else None
         } for s in stats]
     finally:
         db.close()
