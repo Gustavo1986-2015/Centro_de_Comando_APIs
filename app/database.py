@@ -65,6 +65,9 @@ def check_and_migrate_db():
             if "avg_rc_latency_sec" not in columns_stats:
                 cursor.execute("ALTER TABLE daily_stats ADD COLUMN avg_rc_latency_sec REAL")
                 conn.commit()
+            if "avg_push_latency_ms" not in columns_stats:
+                cursor.execute("ALTER TABLE daily_stats ADD COLUMN avg_push_latency_ms REAL")
+                conn.commit()
     except Exception:
         pass
 
