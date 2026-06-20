@@ -8,10 +8,11 @@ Hub Telemático corporativo centralizado para la recepción, transformación y o
 
 El sistema ha sido diseñado desde cero para soportar un alto throughput (miles de eventos por segundo) sin pérdida de rendimiento ni interbloqueos, empleando un diseño moderno, asíncrono y seguro.
 
-### 1. Ingesta Híbrida y Procesamiento Asíncrono
-- **Motores PUSH (Webhooks):** Recepción pasiva de eventos. Validaciones de esquema estricto y encolado en milisegundos.
-- **Motores PULL (Cron-Driven):** Tareas en segundo plano (vía `httpx` asíncrono) para orquestar consumos periódicos desde APIs externas (ej. Protrack). Extrae de forma dinámica listas de activos y maneja firmas de seguridad MD5 dinámicas al vuelo.
-- **Auto-Escalado y Despertador Thread-Safe:** El *Worker* de despacho actúa como un motor inteligente. Utiliza eventos asíncronos (`asyncio.Event`) para despertar instantáneamente apenas ingresa tráfico. Ante ráfagas masivas (Burst Mode), despliega *ThreadPools* ampliados para derretir las colas locales bajando la latencia a menos de 0.25s.
+### 1. Ingesta Híbrida y Procesamiento Asíncrono (Desacoplamiento)
+- **El Patrón Traductor (Mappers):** La arquitectura aísla el conocimiento de cada proveedor. Se crea un único archivo `mapper.py` por proveedor que traduce su JSON propietario "crudo" al "Español" (el Modelo Canónico). Una vez traducido, el resto del sistema opera a ciegas de manera universal.
+- **Motores PUSH (Webhooks - "Agujero Negro 202"):** Recepción pasiva de eventos blindada. Los routers actúan como un agujero negro fail-safe: absorben la data, la toleran (Pydantic `extra='ignore'`), encolan en milisegundos y responden HTTP 202 inmediatamente, descartando silenciosamente la basura ("Drop and Forget") para jamás bloquear al proveedor.
+- **Motores PULL (Cron-Driven):** Tareas en segundo plano (vía `httpx` asíncrono) para orquestar consumos periódicos desde APIs externas.
+- **Auto-Escalado y Protección de Ráfagas:** El *Worker* de despacho lee la cola agnóstica y empuja a Recurso Confiable. Para evitar saturar a RC tras una desconexión masiva (Queue Burst), implementa semáforos asíncronos (`asyncio.Semaphore`) que estrangulan y limitan la concurrencia máxima en paralelo.
 
 ### 2. Base de Datos Fragmentada (Sharding)
 Para evitar el "Database Locked" característico de SQLite bajo estrés, se implementa **Sharding por Proveedor y Entorno**. Cada integración escribe exclusivamente en su propio archivo físico (ej. `protrack_prod.db`, `schmitz_test.db`). Esto garantiza que picos de tráfico en un proveedor no afecten el rendimiento ni la latencia de otros proveedores.
