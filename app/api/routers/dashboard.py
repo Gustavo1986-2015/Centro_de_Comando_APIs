@@ -621,21 +621,42 @@ async def get_daily_history(_: None = Depends(verify_dashboard_auth)):
     finally:
         db.close()
 
+def _resolve_db_path(db_name: str) -> str | None:
+    """
+    Resuelve y valida la ruta de una base de datos dentro de ./db/.
+    Soporta rutas con subcarpeta (ej: 'protrack/test.db') y raíz (ej: 'system_config_global.db').
+    Previene path traversal rechazando cualquier ruta que contenga '..'.
+    Retorna la ruta absoluta válida, o None si es sospechosa.
+    """
+    if not db_name or ".." in db_name:
+        return None
+    db_root = os.path.abspath("./db")
+    candidate = os.path.abspath(os.path.join(db_root, db_name))
+    # La ruta resuelta debe quedar dentro de db/
+    if not candidate.startswith(db_root + os.sep) and candidate != db_root:
+        return None
+    return candidate
+
 @router.get("/api/db-viewer/databases")
 async def get_databases(_: None = Depends(verify_dashboard_auth)):
-    """Lista todas las bases de datos SQLite en el directorio db."""
+    """Lista todas las bases de datos SQLite: raíz + subcarpetas por AVL."""
     db_dir = "./db"
     if not os.path.exists(db_dir):
         return []
-    files = glob.glob(f"{db_dir}/*.db")
-    return [{"name": os.path.basename(f)} for f in files]
+    # Raíz (system_config_global.db) + subcarpetas de proveedores
+    files = glob.glob(f"{db_dir}/*.db") + glob.glob(f"{db_dir}/**/*.db")
+    result = []
+    for f in sorted(files):
+        rel = os.path.relpath(f, db_dir).replace("\\", "/")
+        result.append({"name": rel})
+    return result
 
 @router.get("/api/db-viewer/tables")
 async def get_tables(db_name: str = Query(...), _: None = Depends(verify_dashboard_auth)):
     """Lista las tablas de una base de datos específica."""
-    # Prevención básica de path traversal
-    safe_db_name = os.path.basename(db_name)
-    db_path = f"./db/{safe_db_name}"
+    db_path = _resolve_db_path(db_name)
+    if not db_path:
+        raise HTTPException(status_code=400, detail="Ruta de base de datos inválida")
     if not os.path.exists(db_path):
         return []
     
@@ -654,8 +675,9 @@ async def get_tables(db_name: str = Query(...), _: None = Depends(verify_dashboa
 @router.get("/api/db-viewer/query")
 async def execute_query(db_name: str = Query(...), table: str = Query(...), limit: int = 50, offset: int = 0, _: None = Depends(verify_dashboard_auth)):
     """Retorna los datos y las columnas de una tabla seleccionada. Incluye rowid para edición."""
-    safe_db_name = os.path.basename(db_name)
-    db_path = f"./db/{safe_db_name}"
+    db_path = _resolve_db_path(db_name)
+    if not db_path:
+        raise HTTPException(status_code=400, detail="Ruta de base de datos inválida")
     if not os.path.exists(db_path):
         return {"error": "Base de datos no encontrada"}
     
@@ -729,13 +751,14 @@ async def update_cell(body: CellUpdateRequest, _: None = Depends(verify_dashboar
     if body.column_name == "__rowid__":
         raise HTTPException(status_code=400, detail="El rowid no es editable")
 
-    safe_db_name = os.path.basename(body.db_name)
-    db_path = f"./db/{safe_db_name}"
-    if not os.path.exists(db_path):
+    safe_db_path = _resolve_db_path(body.db_name)
+    if not safe_db_path:
+        raise HTTPException(status_code=400, detail="Ruta de base de datos inválida")
+    if not os.path.exists(safe_db_path):
         raise HTTPException(status_code=404, detail="Base de datos no encontrada")
 
     try:
-        conn = sqlite3.connect(db_path)
+        conn = sqlite3.connect(safe_db_path)
         cursor = conn.cursor()
         # UPDATE completamente parametrizado — sin f-strings en los valores
         cursor.execute(

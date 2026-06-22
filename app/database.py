@@ -10,11 +10,17 @@ _engines = {}
 _sessions = {}
 
 def get_db_url(provider: str, env: str) -> str:
-    """Retorna la URL de conexión de SQLite según proveedor y entorno."""
-    os.makedirs("./db", exist_ok=True)
+    """Retorna la URL de conexión de SQLite según proveedor y entorno.
+    
+    Estructura de carpetas:
+      db/system_config_global.db          ← archivo maestro, siempre en raíz
+      db/{provider}/{env}.db              ← colas operativas por AVL
+    """
     if provider == "system_config":
+        os.makedirs("./db", exist_ok=True)
         return "sqlite:///./db/system_config_global.db"
-    return f"sqlite:///./db/{provider}_{env}.db"
+    os.makedirs(f"./db/{provider}", exist_ok=True)
+    return f"sqlite:///./db/{provider}/{env}.db"
 
 def check_and_migrate_db():
     """Ejecuta una migración automática para agregar campos que falten en sqlite."""
