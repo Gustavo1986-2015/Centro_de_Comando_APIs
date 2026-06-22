@@ -1292,6 +1292,11 @@
                             onmouseover="this.style.background='#6d28d9'" onmouseout="this.style.background='#7c3aed'">
                             🔍 Consultar
                         </button>
+                        <button onclick="copyAllVisibleVehicles()"
+                            style="background: #4b5563; color: white; border: none; border-radius: 6px; padding: 7px 18px; font-size: 0.88rem; font-weight: 600; cursor: pointer; white-space: nowrap; transition: background 0.2s; height: 34px; align-self: flex-end;"
+                            onmouseover="this.style.background='#374151'" onmouseout="this.style.background='#4b5563'">
+                            📋 Copiar Visibles
+                        </button>
                     </div>
 
                     <!-- Resultados -->
@@ -2012,10 +2017,64 @@
 
         // --- Buscador de Vehículos Únicos ---
         let _vehDebounceTimer = null;
+        let _lastVehicleData = {};
 
         function debounceVehicleSearch() {
             clearTimeout(_vehDebounceTimer);
             _vehDebounceTimer = setTimeout(loadVehicles, 500);
+        }
+
+        async function copyAllVisibleVehicles() {
+            if (!_lastVehicleData || Object.keys(_lastVehicleData).length === 0) {
+                alert("No hay vehículos para copiar.");
+                return;
+            }
+            let all = [];
+            for (const [key, info] of Object.entries(_lastVehicleData)) {
+                if (info.vehicles && info.vehicles.length > 0) {
+                    all.push(...info.vehicles);
+                }
+            }
+            const unique = [...new Set(all)];
+            if (unique.length === 0) {
+                alert("No hay vehículos para copiar.");
+                return;
+            }
+            try {
+                await navigator.clipboard.writeText(unique.join('\\n'));
+                alert(`Copiadas ${unique.length} patentes únicas al portapapeles.`);
+            } catch (err) {
+                alert("Error al copiar al portapapeles.");
+            }
+        }
+
+        async function downloadVehicleData(provider, env, chassis) {
+            const dateVal = document.getElementById('veh-date-filter')?.value || '';
+            try {
+                const res = await fetch(`/api/vehicles/data?provider=${provider}&env=${env}&chassis=${encodeURIComponent(chassis)}&date=${dateVal}`, { cache: 'no-store' });
+                const data = await res.json();
+                const jsonStr = JSON.stringify(data, null, 2);
+                
+                // Copiar al portapapeles
+                await navigator.clipboard.writeText(jsonStr);
+                
+                // Descargar archivo JSON
+                const blob = new Blob([jsonStr], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `${chassis}_${provider}_${env}_${dateVal || 'hoy'}.json`;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+                
+                // Mostrar confirmación
+                showDisconnectBanner(`Datos de ${chassis} copiados y descargados.`);
+                setTimeout(hideDisconnectBanner, 3000);
+            } catch (err) {
+                alert(`Error obteniendo datos de ${chassis}: ` + err.message);
+            }
         }
 
         async function loadVehicles() {
@@ -2035,6 +2094,7 @@
             try {
                 const res  = await fetch(`/api/vehicles/unique?${params.toString()}`, { cache: 'no-store' });
                 const data = await res.json();
+                _lastVehicleData = data;
                 const entries = Object.entries(data);
 
                 if (entries.length === 0) {
@@ -2049,39 +2109,39 @@
                 // Tarjeta resumen global (solo si hay más de un proveedor)
                 if (entries.length > 1) {
                     html += `
-                        <div style="background:rgba(124,58,237,0.12);border:1px solid rgba(124,58,237,0.3);border-radius:10px;padding:1rem 1.4rem;min-width:140px;display:flex;flex-direction:column;align-items:center;gap:2px;">
-                            <span style="font-size:0.72rem;color:#c4b5fd;text-transform:uppercase;letter-spacing:0.07em;font-weight:600;">Total Global</span>
-                            <span style="font-size:2.6rem;font-weight:800;color:#a78bfa;line-height:1.1;">${totalGlobal}</span>
-                            <span style="font-size:0.7rem;color:var(--color-gray-label);">vehículos únicos</span>
+                        <div style="background:rgba(124,58,237,0.12);border:1px solid rgba(124,58,237,0.3);border-radius:8px;padding:0.6rem 1rem;min-width:120px;display:flex;flex-direction:column;align-items:center;gap:2px;">
+                            <span style="font-size:0.65rem;color:#c4b5fd;text-transform:uppercase;letter-spacing:0.07em;font-weight:600;">Total Global</span>
+                            <span style="font-size:2rem;font-weight:800;color:#a78bfa;line-height:1.1;">${totalGlobal}</span>
+                            <span style="font-size:0.65rem;color:var(--color-gray-label);">vehículos únicos</span>
                         </div>`;
                 }
 
-                // Tarjeta por proveedor
+                // Tarjeta por proveedor (más compactas)
                 for (const [key, info] of entries) {
                     const hasVehicles = info.total > 0;
                     const envColor    = info.env === 'PROD' ? '#10b981' : '#f59e0b';
                     const pillsHtml   = hasVehicles
                         ? info.vehicles.map(v => {
-                            const esc = v.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                            const esc = v.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&');
                             const highlighted = searchVal
                                 ? v.replace(new RegExp(`(${esc})`, 'gi'), '<mark style="background:#7c3aed44;color:#c4b5fd;border-radius:3px;padding:0 2px;">$1</mark>')
                                 : v;
-                            return `<span title="${v}" style="background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.1);border-radius:5px;padding:3px 9px;font-size:0.78rem;color:#e2e8f0;font-family:monospace;">${highlighted}</span>`;
+                            return `<span onclick="downloadVehicleData('${info.provider.toLowerCase()}', '${info.env.toLowerCase()}', '${v}')" title="Clic para descargar JSON de ${v}" style="background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.1);border-radius:5px;padding:3px 8px;font-size:0.75rem;color:#e2e8f0;font-family:monospace;cursor:pointer;transition:background 0.2s;" onmouseover="this.style.background='rgba(124,58,237,0.3)'" onmouseout="this.style.background='rgba(255,255,255,0.06)'">${highlighted}</span>`;
                           }).join('')
-                        : '<span style="color:var(--color-gray-label);font-size:0.78rem;font-style:italic;">Sin actividad en este período</span>';
+                        : '<span style="color:var(--color-gray-label);font-size:0.75rem;font-style:italic;">Sin actividad en este período</span>';
 
                     html += `
-                        <div style="flex:1;min-width:260px;background:rgba(15,17,21,0.6);border:1px solid rgba(255,255,255,0.06);border-radius:10px;padding:1rem 1.2rem;display:flex;flex-direction:column;gap:0.7rem;">
-                            <div style="display:flex;align-items:center;gap:8px;">
-                                <span style="font-weight:700;font-size:0.9rem;color:white;">${info.provider}</span>
-                                <span style="background:${envColor}22;color:${envColor};border:1px solid ${envColor}55;border-radius:4px;padding:1px 7px;font-size:0.72rem;font-weight:700;">${info.env}</span>
-                                <span style="margin-left:auto;font-size:1.6rem;font-weight:800;color:${hasVehicles ? '#a78bfa' : 'var(--color-gray)'};">${info.total}</span>
-                                <span style="font-size:0.7rem;color:var(--color-gray-label);">veh.</span>
+                        <div style="flex:1;min-width:200px;background:rgba(15,17,21,0.6);border:1px solid rgba(255,255,255,0.06);border-radius:8px;padding:0.75rem 1rem;display:flex;flex-direction:column;gap:0.5rem;">
+                            <div style="display:flex;align-items:center;gap:6px;">
+                                <span style="font-weight:700;font-size:0.85rem;color:white;">${info.provider}</span>
+                                <span style="background:${envColor}22;color:${envColor};border:1px solid ${envColor}55;border-radius:4px;padding:1px 6px;font-size:0.68rem;font-weight:700;">${info.env}</span>
+                                <span style="margin-left:auto;font-size:1.4rem;font-weight:800;color:${hasVehicles ? '#a78bfa' : 'var(--color-gray)'};">${info.total}</span>
+                                <span style="font-size:0.65rem;color:var(--color-gray-label);">veh.</span>
                             </div>
-                            <div style="display:flex;gap:6px;flex-wrap:wrap;max-height:140px;overflow-y:auto;padding-right:4px;">
+                            <div style="display:flex;gap:5px;flex-wrap:wrap;max-height:100px;overflow-y:auto;padding-right:4px;">
                                 ${pillsHtml}
                             </div>
-                            ${info.error ? `<span style="color:var(--color-red);font-size:0.75rem;">⚠ ${info.error}</span>` : ''}
+                            ${info.error ? `<span style="color:var(--color-red);font-size:0.7rem;">⚠ ${info.error}</span>` : ''}
                         </div>`;
                 }
 
