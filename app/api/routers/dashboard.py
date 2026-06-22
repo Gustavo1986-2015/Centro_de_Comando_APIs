@@ -706,6 +706,51 @@ async def get_unique_vehicles(
 
     return result
 
+@router.get("/api/vehicles/data")
+async def get_vehicle_data(
+    provider: str = Query(...),
+    env: str = Query(...),
+    chassis: str = Query(...),
+    date: str = Query(None, description="Fecha YYYY-MM-DD. Por defecto: hoy."),
+    _: None = Depends(verify_dashboard_auth)
+):
+    """
+    Devuelve todo el historial de eventos de un chasis particular en una fecha dada.
+    Útil para descargar/copiar los datos en formato JSON crudo.
+    """
+    try:
+        if date:
+            target_date = datetime.strptime(date, "%Y-%m-%d").date()
+        else:
+            target_date = datetime.now().date()
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Formato de fecha inválido.")
+
+    day_start = datetime.combine(target_date, datetime.min.time())
+    day_end   = datetime.combine(target_date, datetime.max.time())
+    
+    db = get_session(provider, env)
+    try:
+        query = db.query(NormalizedRCEvent).filter(
+            NormalizedRCEvent.created_at >= day_start,
+            NormalizedRCEvent.created_at <= day_end,
+            NormalizedRCEvent.chassis_number == chassis
+        ).order_by(NormalizedRCEvent.created_at.desc()).limit(500).all()
+        
+        # Serializar omitiendo campos internos de SQLAlchemy
+        data = []
+        for r in query:
+            d = {k: v for k, v in r.__dict__.items() if not k.startswith('_')}
+            for dt_field in ['date', 'created_at', 'updated_at', 'next_retry_at']:
+                if isinstance(d.get(dt_field), datetime):
+                    d[dt_field] = d[dt_field].isoformat()
+            data.append(d)
+            
+        return data
+    finally:
+        db.close()
+
+
 @router.get("/api/db-viewer/databases")
 async def get_databases(_: None = Depends(verify_dashboard_auth)):
     """Lista todas las bases de datos SQLite: raíz + subcarpetas por AVL."""
