@@ -1013,14 +1013,14 @@
                 </div>
             </div>
             <div class="card" style="border-top: 4px solid #14b8a6;" title="Latencia Push: Tiempo exacto (en milisegundos) que demora nuestra API en responder con código 200/202 OK al proveedor al recibir un evento webhook.">
-                <div class="card-title">LATENCIA PUSH</div>
-                <div class="card-value" id="val-push-latency" style="color:#14b8a6;">0.000s</div>
-                <div style="font-size:0.72rem;color:var(--color-gray-label);margin-top:0.3rem;display:flex;gap:0.75rem;justify-content:center;flex-wrap:wrap;">
-                    <span>SLA &lt;250ms: <strong id="push-sla-pct" style="color:var(--color-green-bright);">100%</strong></span>
-                    <span id="push-count-label" style="color:var(--color-gray-label);">
-                        <span id="push-count">0</span> eventos (24h)
-                    </span>
+                <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 0.5rem;">
+                    <div class="card-title" style="margin-bottom: 0;">LATENCIA PUSH</div>
+                    <div style="text-align: right; font-size: 0.65rem; color: var(--color-gray-label); line-height: 1.3;">
+                        <span>SLA &lt;250ms: <strong id="push-sla-pct" style="color:var(--color-green-bright);">100%</strong></span><br>
+                        <span id="push-count-label"><span id="push-count">0</span> evs (24h)</span>
+                    </div>
                 </div>
+                <div class="card-value" id="val-push-latency" style="color:#14b8a6;">0.000s</div>
                 <div class="sparkline-wrap">
                     <svg class="sparkline" id="spark-push" viewBox="0 0 120 30" preserveAspectRatio="none"></svg>
                 </div>
