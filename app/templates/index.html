@@ -1083,7 +1083,10 @@
         <div class="recent-section">
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
                 <h2>Configuración de Proveedores (APIs)</h2>
-                <button class="btn-save" onclick="saveConfig()">Guardar Cambios</button>
+                <div style="display: flex; gap: 10px;">
+                    <button class="btn-save" style="background: var(--color-green-vibrant); color: var(--color-black);" onclick="createNewProvider()">+ Nuevo Proveedor</button>
+                    <button class="btn-save" onclick="saveConfig()">Guardar Cambios</button>
+                </div>
             </div>
             
             <div class="table-container">
@@ -3538,6 +3541,11 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
                 if(data.status === 'success') {
                     alert("Proveedor creado exitosamente.");
                     await loadProviders();
+                    if (document.getElementById('view-config').style.display === 'flex') {
+                        loadConfig();
+                    } else {
+                        switchView('integrations');
+                    }
                 } else {
                     alert("Error: " + data.message);
                 }
