@@ -13,13 +13,13 @@ def get_db_url(provider: str, env: str) -> str:
     """Retorna la URL de conexión de SQLite según proveedor y entorno."""
     os.makedirs("./db", exist_ok=True)
     if provider == "system_config":
-        return "sqlite:///./db/telematics_hub.db"
+        return "sqlite:///./db/system_config_global.db"
     return f"sqlite:///./db/{provider}_{env}.db"
 
 def check_and_migrate_db():
     """Ejecuta una migración automática para agregar campos que falten en sqlite."""
     import sqlite3
-    db_path = "./db/telematics_hub.db"
+    db_path = "./db/system_config_global.db"
     if not os.path.exists(db_path):
         return
     try:
