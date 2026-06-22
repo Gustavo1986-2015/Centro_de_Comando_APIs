@@ -1780,8 +1780,8 @@
             }
             try {
                 const params = new URLSearchParams();
-                if (currentStatusFilter !== 'all') params.set('status_filter', currentStatusFilter);
-                if (currentProviderFilter !== 'all') params.set('provider_filter', currentProviderFilter);
+                if (currentStatusFilter !== 'all') params.set('status', currentStatusFilter);
+                if (currentProviderFilter !== 'all') params.set('provider', currentProviderFilter);
                 const res = await fetch(`/api/stats?${params.toString()}`, { cache: 'no-store' });
                 const data = await res.json();
                 allRecentEvents = data.recent || [];
