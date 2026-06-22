@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Request, Query, Depends, HTTPException
+from fastapi import APIRouter, Request, Query, Depends, HTTPException, Body
 from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
@@ -12,12 +12,20 @@ from app.database import get_session
 from app.models.db_models import NormalizedRCEvent
 from app.models.config_models import ProviderConfig, DailyStat
 from pydantic import BaseModel
-from typing import List
+from typing import List, Optional
 from datetime import datetime, timezone, timedelta
 from sqlalchemy import func, case
 
 from collections import deque
 import time as _time
+
+# Tablas que el administrador puede editar desde el Visor de BD.
+# Las tablas operativas (normalized_rc_events, etc.) son de SOLO LECTURA siempre.
+EDITABLE_TABLES = {
+    "provider_config",
+    "provider_dictionary",
+    "daily_stats",
+}
 
 PUSH_SLA_MS   = 250
 PUSH_WIN_SECS = 86400  # 24h
@@ -644,7 +652,7 @@ async def get_tables(db_name: str = Query(...), _: None = Depends(verify_dashboa
 
 @router.get("/api/db-viewer/query")
 async def execute_query(db_name: str = Query(...), table: str = Query(...), limit: int = 50, offset: int = 0, _: None = Depends(verify_dashboard_auth)):
-    """Retorna los datos y las columnas de una tabla seleccionada."""
+    """Retorna los datos y las columnas de una tabla seleccionada. Incluye rowid para edición."""
     import sqlite3
     safe_db_name = os.path.basename(db_name)
     db_path = f"./db/{safe_db_name}"
@@ -655,17 +663,17 @@ async def execute_query(db_name: str = Query(...), table: str = Query(...), limi
         conn = sqlite3.connect(db_path)
         cursor = conn.cursor()
         
-        # Validar el nombre de la tabla para evitar inyección SQL (solo permitir caracteres alfanuméricos y guiones bajos)
         import re
         if not re.match(r'^[a-zA-Z0-9_]+$', table):
             return {"error": "Nombre de tabla inválido"}
-            
-        cursor.execute(f"SELECT * FROM {table} LIMIT ? OFFSET ?", (limit, offset))
+        
+        # Incluir rowid como identificador único universal de SQLite (funciona aunque no haya PK)
+        cursor.execute(f"SELECT rowid, * FROM {table} LIMIT ? OFFSET ?", (limit, offset))
         rows = cursor.fetchall()
         
-        # Obtener los nombres de las columnas
+        # Obtener los nombres de las columnas (prefijado con __rowid__ para el frontend)
         cursor.execute(f"PRAGMA table_info({table})")
-        columns = [col[1] for col in cursor.fetchall()]
+        columns = ["__rowid__"] + [col[1] for col in cursor.fetchall()]
         
         # Obtener conteo total
         cursor.execute(f"SELECT COUNT(*) FROM {table}")
@@ -676,7 +684,8 @@ async def execute_query(db_name: str = Query(...), table: str = Query(...), limi
             "rows": rows,
             "total": total,
             "limit": limit,
-            "offset": offset
+            "offset": offset,
+            "editable": table in EDITABLE_TABLES  # El frontend muestra el modo edición solo si es True
         }
     except Exception as e:
         return {"error": str(e)}
@@ -684,3 +693,66 @@ async def execute_query(db_name: str = Query(...), table: str = Query(...), limi
         if 'conn' in locals():
             conn.close()
 
+
+class CellUpdateRequest(BaseModel):
+    db_name: str
+    table: str
+    rowid: int
+    column_name: str
+    new_value: Optional[str]
+    password: str  # Revalidación de DASHBOARD_PASSWORD — seguridad real, no cosmética
+
+
+@router.post("/api/db-viewer/update_cell")
+async def update_cell(body: CellUpdateRequest, _: None = Depends(verify_dashboard_auth)):
+    """
+    Edita una celda específica de una tabla permitida.
+    Requiere revalidar DASHBOARD_PASSWORD para confirmar la operación.
+    Las tablas operativas (normalized_rc_events, etc.) son de SOLO LECTURA y siempre serán rechazadas.
+    """
+    import sqlite3, re
+
+    # Ajuste 1 (Claude): Validar con la contraseña real del .env, no con un PIN cosmético
+    correct_pass = os.getenv("DASHBOARD_PASSWORD", "")
+    if not secrets.compare_digest(body.password.encode(), correct_pass.encode()):
+        raise HTTPException(status_code=403, detail="Contraseña de administrador incorrecta")
+
+    # Ajuste 2 (Claude): Whitelist estricta — rechazo explícito de tablas operativas
+    if body.table not in EDITABLE_TABLES:
+        raise HTTPException(
+            status_code=403,
+            detail=f"La tabla '{body.table}' es de solo lectura. Edición no permitida."
+        )
+
+    # Validar nombres para prevenir SQL injection
+    if not re.match(r'^[a-zA-Z0-9_]+$', body.table):
+        raise HTTPException(status_code=400, detail="Nombre de tabla inválido")
+    if not re.match(r'^[a-zA-Z0-9_]+$', body.column_name):
+        raise HTTPException(status_code=400, detail="Nombre de columna inválido")
+    if body.column_name == "__rowid__":
+        raise HTTPException(status_code=400, detail="El rowid no es editable")
+
+    safe_db_name = os.path.basename(body.db_name)
+    db_path = f"./db/{safe_db_name}"
+    if not os.path.exists(db_path):
+        raise HTTPException(status_code=404, detail="Base de datos no encontrada")
+
+    try:
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        # UPDATE completamente parametrizado — sin f-strings en los valores
+        cursor.execute(
+            f"UPDATE {body.table} SET {body.column_name} = ? WHERE rowid = ?",
+            (body.new_value, body.rowid)
+        )
+        conn.commit()
+        if cursor.rowcount == 0:
+            raise HTTPException(status_code=404, detail="Fila no encontrada")
+        return {"ok": True, "updated_rows": cursor.rowcount}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        if 'conn' in locals():
+            conn.close()
