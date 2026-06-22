@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, ConfigDict
 from typing import Optional
 from datetime import datetime
 import re
@@ -8,6 +8,8 @@ class RCCanonicalModel(BaseModel):
     Modelo canónico para datos de Recurso Confiable (RC).
     Todos los adaptadores de proveedores deben mapear a este esquema.
     """
+    model_config = ConfigDict(extra='ignore', from_attributes=True)
+    
     chassis_number: str = Field(..., description="ChassisNumber o Plate")
 
     @field_validator('chassis_number', mode='before')
@@ -39,13 +41,12 @@ class RCCanonicalModel(BaseModel):
     vehicle_brand: Optional[str] = Field(None, description="Marca del tráiler")
     vehicle_model: Optional[str] = Field(None, description="Modelo de telemática")
 
-    class Config:
-        from_attributes = True
-
 class EventCreate(BaseModel):
     """
     Esquema para creación inicial de evento en la BD.
     """
+    model_config = ConfigDict(extra='ignore')
+    
     provider: str
     status: str = "pending"
     raw_data: str
