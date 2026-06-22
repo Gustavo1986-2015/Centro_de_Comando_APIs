@@ -7,6 +7,8 @@ import asyncio
 import json
 import os
 import glob
+import sqlite3
+import re
 
 from app.database import get_session
 from app.models.db_models import NormalizedRCEvent
@@ -631,7 +633,6 @@ async def get_databases(_: None = Depends(verify_dashboard_auth)):
 @router.get("/api/db-viewer/tables")
 async def get_tables(db_name: str = Query(...), _: None = Depends(verify_dashboard_auth)):
     """Lista las tablas de una base de datos específica."""
-    import sqlite3
     # Prevención básica de path traversal
     safe_db_name = os.path.basename(db_name)
     db_path = f"./db/{safe_db_name}"
@@ -653,7 +654,6 @@ async def get_tables(db_name: str = Query(...), _: None = Depends(verify_dashboa
 @router.get("/api/db-viewer/query")
 async def execute_query(db_name: str = Query(...), table: str = Query(...), limit: int = 50, offset: int = 0, _: None = Depends(verify_dashboard_auth)):
     """Retorna los datos y las columnas de una tabla seleccionada. Incluye rowid para edición."""
-    import sqlite3
     safe_db_name = os.path.basename(db_name)
     db_path = f"./db/{safe_db_name}"
     if not os.path.exists(db_path):
@@ -663,7 +663,6 @@ async def execute_query(db_name: str = Query(...), table: str = Query(...), limi
         conn = sqlite3.connect(db_path)
         cursor = conn.cursor()
         
-        import re
         if not re.match(r'^[a-zA-Z0-9_]+$', table):
             return {"error": "Nombre de tabla inválido"}
         
@@ -710,8 +709,6 @@ async def update_cell(body: CellUpdateRequest, _: None = Depends(verify_dashboar
     Requiere revalidar DASHBOARD_PASSWORD para confirmar la operación.
     Las tablas operativas (normalized_rc_events, etc.) son de SOLO LECTURA y siempre serán rechazadas.
     """
-    import sqlite3, re
-
     # Ajuste 1 (Claude): Validar con la contraseña real del .env, no con un PIN cosmético
     correct_pass = os.getenv("DASHBOARD_PASSWORD", "")
     if not secrets.compare_digest(body.password.encode(), correct_pass.encode()):
