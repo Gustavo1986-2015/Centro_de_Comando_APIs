@@ -1215,8 +1215,26 @@
                     </tbody>
                 </table>
             </div>
-            <div style="display: flex; justify-content: space-between; margin-top: 1rem; color: var(--color-gray);">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 1rem; color: var(--color-gray);">
                 <span id="db-viewer-info">Mostrando 0 registros.</span>
+                <span id="db-edit-badge" style="display:none; font-size:0.78rem; padding: 0.3rem 0.8rem; border-radius: 20px; font-weight: 700;"></span>
+            </div>
+
+            <!-- Modal de confirmación de contraseña para edición -->
+            <div id="db-edit-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.7); z-index:9999; align-items:center; justify-content:center;">
+                <div style="background:#1a1d23; border:1px solid rgba(16,185,129,0.4); border-radius:14px; padding:2rem; min-width:340px; box-shadow: 0 20px 60px rgba(0,0,0,0.6);">
+                    <h3 style="color:#10B981; margin:0 0 0.5rem;">🔐 Confirmar Edición</h3>
+                    <p style="color:#9ca3af; font-size:0.85rem; margin:0 0 1.2rem;">Ingresa la contraseña de administrador para guardar el cambio en <strong id="db-edit-modal-target" style="color:#fff;"></strong>.</p>
+                    <div style="margin-bottom:0.5rem; font-size:0.8rem; color:#6b7280;">Campo: <span id="db-edit-modal-col" style="color:#e5e7eb;"></span></div>
+                    <div style="margin-bottom:1.2rem; font-size:0.8rem; color:#6b7280;">Valor nuevo: <span id="db-edit-modal-val" style="color:#10B981; word-break:break-all;"></span></div>
+                    <input type="password" id="db-edit-password" placeholder="Contraseña de administrador" autocomplete="current-password"
+                        style="width:100%; padding:0.7rem; border-radius:8px; border:1px solid rgba(255,255,255,0.1); background:#0f1115; color:#fff; font-size:0.9rem; box-sizing:border-box; margin-bottom:1rem;">
+                    <div style="display:flex; gap:0.75rem; justify-content:flex-end;">
+                        <button onclick="closeEditModal()" style="padding:0.6rem 1.2rem; border-radius:8px; border:1px solid rgba(255,255,255,0.1); background:transparent; color:#9ca3af; cursor:pointer;">Cancelar</button>
+                        <button onclick="confirmCellEdit()" style="padding:0.6rem 1.4rem; border-radius:8px; border:none; background:#10B981; color:#000; font-weight:700; cursor:pointer;">Confirmar Cambio</button>
+                    </div>
+                    <p id="db-edit-error" style="color:#f87171; font-size:0.8rem; margin:0.8rem 0 0; display:none;"></p>
+                </div>
             </div>
         </div>
     </main>
@@ -2589,6 +2607,9 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
             }
         }
 
+        // Estado global del editor de BD
+        let _dbEditorState = { db: null, table: null, editable: false, pendingEdit: null };
+
         async function loadQueryData() {
             const dbName = document.getElementById('db-select').value;
             const tableName = document.getElementById('table-select').value;
@@ -2600,33 +2621,119 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
             const thead = document.getElementById('db-viewer-thead');
             const tbody = document.getElementById('db-viewer-tbody');
             const info = document.getElementById('db-viewer-info');
+            const badge = document.getElementById('db-edit-badge');
             
             thead.innerHTML = '<tr><th>Cargando datos...</th></tr>';
             tbody.innerHTML = '';
             info.textContent = 'Mostrando 0 registros.';
+            badge.style.display = 'none';
             
             try {
                 const res = await fetch(`/api/db-viewer/query?db_name=${encodeURIComponent(dbName)}&table=${encodeURIComponent(tableName)}&limit=50&offset=0`);
                 const data = await res.json();
                 if(data.error) throw new Error(data.error);
-                
-                // Generar Columnas
-                thead.innerHTML = '<tr>' + data.columns.map(c => `<th>${c}</th>`).join('') + '</tr>';
+
+                _dbEditorState.db = dbName;
+                _dbEditorState.table = tableName;
+                _dbEditorState.editable = data.editable;
+
+                // Badge: editable o solo lectura
+                if (data.editable) {
+                    badge.textContent = '✏️ Edición habilitada — doble clic en celda para editar';
+                    badge.style.cssText = 'display:inline-block; font-size:0.78rem; padding:0.3rem 0.8rem; border-radius:20px; font-weight:700; background:rgba(16,185,129,0.15); color:#10B981; border:1px solid rgba(16,185,129,0.3);';
+                } else {
+                    badge.textContent = '🔒 Solo lectura — tabla operativa protegida';
+                    badge.style.cssText = 'display:inline-block; font-size:0.78rem; padding:0.3rem 0.8rem; border-radius:20px; font-weight:700; background:rgba(248,113,113,0.1); color:#f87171; border:1px solid rgba(248,113,113,0.25);';
+                }
+
+                // Generar Columnas — ocultar columna __rowid__ al usuario
+                const visibleCols = data.columns.filter(c => c !== '__rowid__');
+                thead.innerHTML = '<tr>' + visibleCols.map(c => `<th>${c}</th>`).join('') + '</tr>';
                 
                 // Generar Filas
                 if(data.rows.length === 0) {
-                    tbody.innerHTML = `<tr><td colspan="${data.columns.length}" style="text-align:center;">No hay datos en esta tabla.</td></tr>`;
+                    tbody.innerHTML = `<tr><td colspan="${visibleCols.length}" style="text-align:center;">No hay datos en esta tabla.</td></tr>`;
                 } else {
                     tbody.innerHTML = data.rows.map(row => {
-                        return '<tr>' + row.map(val => `<td style="white-space: nowrap; max-width: 200px; overflow: hidden; text-overflow: ellipsis;" title="${String(val).replace(/"/g, '&quot;')}">${val !== null ? val : '<em>NULL</em>'}</td>`).join('') + '</tr>';
+                        const rowid = row[0]; // primer elemento es siempre __rowid__
+                        const cells = row.slice(1); // resto son los datos visibles
+                        return '<tr>' + cells.map((val, colIdx) => {
+                            const colName = visibleCols[colIdx];
+                            const title = String(val).replace(/"/g, '&quot;');
+                            const editAttr = data.editable ? `ondblclick="openEditModal(${rowid}, '${colName}', this)" style="cursor:pointer; white-space:nowrap; max-width:200px; overflow:hidden; text-overflow:ellipsis;"` : `style="white-space:nowrap; max-width:200px; overflow:hidden; text-overflow:ellipsis;"`;
+                            return `<td ${editAttr} title="${title}">${val !== null ? val : '<em>NULL</em>'}</td>`;
+                        }).join('') + '</tr>';
                     }).join('');
                 }
-                info.textContent = `Mostrando ${data.rows.length} registros de un total de ${data.total} en la tabla ${tableName}. (Límite visual 50)`;
+                info.textContent = `Mostrando ${data.rows.length} de ${data.total} registros en "${tableName}". (Límite visual 50)`;
             } catch(e) {
                 thead.innerHTML = '<tr><th>Error</th></tr>';
                 tbody.innerHTML = `<tr><td style="color:var(--color-red)">${e.message}</td></tr>`;
             }
         }
+
+        function openEditModal(rowid, colName, tdEl) {
+            if (!_dbEditorState.editable) return;
+            const currentVal = tdEl.innerText.trim();
+            _dbEditorState.pendingEdit = { rowid, colName, tdEl, originalVal: currentVal };
+            document.getElementById('db-edit-modal-target').textContent = `${_dbEditorState.table} (fila ${rowid})`;
+            document.getElementById('db-edit-modal-col').textContent = colName;
+            document.getElementById('db-edit-modal-val').textContent = currentVal;
+            document.getElementById('db-edit-password').value = '';
+            document.getElementById('db-edit-error').style.display = 'none';
+            const modal = document.getElementById('db-edit-modal');
+            modal.style.display = 'flex';
+            setTimeout(() => document.getElementById('db-edit-password').focus(), 100);
+        }
+
+        function closeEditModal() {
+            document.getElementById('db-edit-modal').style.display = 'none';
+            _dbEditorState.pendingEdit = null;
+        }
+
+        async function confirmCellEdit() {
+            const pass = document.getElementById('db-edit-password').value;
+            const errEl = document.getElementById('db-edit-error');
+            const { rowid, colName, tdEl } = _dbEditorState.pendingEdit;
+            const newValue = _dbEditorState.pendingEdit.originalVal;
+
+            if (!pass) { errEl.textContent = 'Debes ingresar la contraseña.'; errEl.style.display='block'; return; }
+
+            try {
+                const res = await fetch('/api/db-viewer/update_cell', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        db_name: _dbEditorState.db,
+                        table: _dbEditorState.table,
+                        rowid: rowid,
+                        column_name: colName,
+                        new_value: newValue,
+                        password: pass
+                    })
+                });
+                const result = await res.json();
+                if (!res.ok) {
+                    errEl.textContent = result.detail || 'Error desconocido';
+                    errEl.style.display = 'block';
+                    return;
+                }
+                // Éxito: cerrar modal y recargar tabla
+                closeEditModal();
+                tdEl.style.transition = 'background 0.4s';
+                tdEl.style.background = 'rgba(16,185,129,0.25)';
+                setTimeout(() => { tdEl.style.background = ''; loadQueryData(); }, 800);
+            } catch(e) {
+                errEl.textContent = 'Error de conexión: ' + e.message;
+                errEl.style.display = 'block';
+            }
+        }
+
+        // Cerrar modal al presionar Escape
+        document.addEventListener('keydown', e => {
+            if (e.key === 'Escape') closeEditModal();
+            if (e.key === 'Enter' && document.getElementById('db-edit-modal').style.display === 'flex') confirmCellEdit();
+        });
 
         // Inicio
         
