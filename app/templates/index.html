@@ -1358,9 +1358,16 @@
 
                 <!-- Sección PUSH -->
                 <div id="intake-push-section">
-                    <label style="font-size:0.85rem; color: var(--color-gray-label);">URL del Webhook (para entregar al proveedor):</label>
-                    <div id="webhookUrl" style="background: rgba(74,110,224,0.1); color: #a5b4fc; padding: 0.6rem; border-radius: 6px; font-size: 0.82rem; word-break: break-all; margin-top: 0.4rem; border: 1px dashed #4a6ee0;">
-                        Seleccioná un proveedor para ver la URL
+                    <p style="font-size:0.8rem; color: var(--color-gray-label); margin-bottom: 0.5rem;">Las integraciones creadas aquí operan bajo el <strong>iPaaS Universal</strong> dinámico. Si el proveedor cuenta con un script customizado (ej. Schmitz), usará su ruta propia.</p>
+                    
+                    <label style="font-size:0.85rem; color: var(--color-gray-label); font-weight: 600;">🔗 URL de Producción (Universal):</label>
+                    <div id="prodWebhookUrl" style="background: rgba(16, 185, 129, 0.1); color: #10b981; padding: 0.6rem; border-radius: 6px; font-size: 0.82rem; word-break: break-all; margin-top: 0.4rem; margin-bottom: 1rem; border: 1px dashed #10b981;">
+                        Selecciona un proveedor para ver su ruta
+                    </div>
+
+                    <label style="font-size:0.85rem; color: var(--color-gray-label); font-weight: 600;">🛠 URL de Pruebas (Inspector Interno):</label>
+                    <div id="inspectorWebhookUrl" style="background: rgba(74,110,224,0.1); color: #a5b4fc; padding: 0.6rem; border-radius: 6px; font-size: 0.82rem; word-break: break-all; margin-top: 0.4rem; border: 1px dashed #4a6ee0;">
+                        Generando...
                     </div>
                 </div>
 
@@ -2961,10 +2968,14 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
         let pollingInterval = null;
 
         function loadIntegrationStudio() {
-            const url = window.location.origin + "/inspector/catch/" + sessionUuid;
-            document.getElementById('webhookUrl').innerText = url;
-            const inspectorEl = document.getElementById('webhookUrlInspector');
-            if (inspectorEl) inspectorEl.innerText = url;
+            const inspectorUrl = window.location.origin + "/inspector/catch/" + sessionUuid;
+            
+            const inspectorEl = document.getElementById('inspectorWebhookUrl');
+            if (inspectorEl) inspectorEl.innerText = inspectorUrl;
+            
+            const mappingInspectorEl = document.getElementById('webhookUrlInspector');
+            if (mappingInspectorEl) mappingInspectorEl.innerText = inspectorUrl;
+            
             loadProviders();
         }
 
@@ -2982,6 +2993,12 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
                     if(val) {
                         const [name, env] = val.split('|');
                         currentIpaasProvider = {name, env};
+                        
+                        // Actualizar URL de Producción
+                        const prodUrl = window.location.origin + \`/webhook/dynamic/\${name}?env=\${env}\`;
+                        const prodEl = document.getElementById('prodWebhookUrl');
+                        if (prodEl) prodEl.innerText = prodUrl;
+
                         loadMapping(name, env);
                         if(typeof loadEnrichment === 'function') loadEnrichment(name, env);
                     } else {
