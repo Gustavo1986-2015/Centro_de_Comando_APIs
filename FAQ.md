@@ -11,7 +11,7 @@ En el ecosistema logístico, existen múltiples proveedores de GPS (ej. Protrack
 El Centro de Comando actúa como un **Hub Telemático Inteligente**. Su misión es atrapar este caos, transformarlo a un "Modelo Canónico" unificado (el formato estándar que requiere Assistcargo), encolarlo de manera segura, y despacharlo de forma asíncrona y ordenada hacia el servidor central (Recurso Confiable).
 
 ### ¿Cómo evita el sistema colapsar si llegan miles de eventos por segundo?
-El sistema evita el tradicional error `database is locked` implementando un patrón de **Sharding Dinámico**. En lugar de guardar todos los eventos en un solo archivo físico gigante, el Hub asigna una base de datos local independiente (`.db` SQLite) para cada proveedor y entorno (ej. `protrack_prod.db`, `schmitz_test.db`). Esto permite transacciones de escritura paralelas reales a nivel de sistema operativo, escalando el throughput horizontalmente.
+El sistema evita el tradicional error `database is locked` implementando un patrón de **Sharding Dinámico**. En lugar de guardar todos los eventos en un solo archivo físico gigante, el Hub asigna una base de datos local independiente (`.db` SQLite) para cada proveedor y entorno (ej. `db/protrack/prod.db`, `db/schmitz/test.db`). Esto permite transacciones de escritura paralelas reales a nivel de sistema operativo, escalando el throughput horizontalmente.
 
 ---
 

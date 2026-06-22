@@ -15,7 +15,7 @@ El sistema ha sido diseñado desde cero para soportar un alto throughput (miles 
 - **Auto-Escalado y Protección de Ráfagas:** El *Worker* de despacho lee la cola agnóstica y empuja a Recurso Confiable. Para evitar saturar a RC tras una desconexión masiva (Queue Burst), implementa semáforos asíncronos (`asyncio.Semaphore`) que estrangulan y limitan la concurrencia máxima en paralelo.
 
 ### 2. Base de Datos Fragmentada (Sharding)
-Para evitar el "Database Locked" característico de SQLite bajo estrés, se implementa **Sharding por Proveedor y Entorno**. Cada integración escribe exclusivamente en su propio archivo físico (ej. `protrack_prod.db`, `schmitz_test.db`). Esto garantiza que picos de tráfico en un proveedor no afecten el rendimiento ni la latencia de otros proveedores.
+Para evitar el "Database Locked" característico de SQLite bajo estrés, se implementa **Sharding por Proveedor y Entorno**. Cada integración escribe exclusivamente en su propia subcarpeta y archivo físico (ej. `db/protrack/prod.db`, `db/schmitz/test.db`). Esto garantiza que picos de tráfico en un proveedor no afecten el rendimiento ni la latencia de otros proveedores, a la vez que mantiene el directorio raíz limpio.
 
 ### 3. Modelo Canónico y Resiliencia
 - **Validación Estricta:** Todo dato entrante se filtra mediante `Pydantic` hacia el **Modelo Canónico** de Assistcargo.
@@ -24,6 +24,7 @@ Para evitar el "Database Locked" característico de SQLite bajo estrés, se impl
 
 ### 4. Monitoreo Táctico y Dashboard en Tiempo Real
 - **Frontend SSE:** Un Dashboard moderno, estéticamente enriquecido, impulsado por *Server-Sent Events*. Provee telemetría en vivo y trazabilidad sin saturar el servidor mediante técnicas de "Long Polling".
+- **Buscador de Vehículos Únicos:** Un monitor forense interno que permite buscar patentes específicas con filtros de fecha y proveedor, y extraer o descargar en formato JSON crudo todo el historial de eventos de un chasis particular en tiempo real.
 - **Filtros contra Outliers:** Matemática defensiva integrada. Si un evento se desconecta de la red y entra como "zombie" días después, su latencia queda aislada del cálculo promedio global mediante un umbral seguro de **300 segundos**, garantizando que los KPIs operativos no se contaminen.
 
 ### 5. Seguridad End-to-End
