@@ -22,13 +22,20 @@ El Centro de Comando cuenta con dos motores de ingesta híbridos:
 1. **Motores PUSH (Webhooks):** Son endpoints de recepción pasiva (ej. la ruta de Schmitz). Están constantemente abiertos y escuchando. Cuando el proveedor tiene un dato nuevo, lo "empuja" al Hub e ingresa en milisegundos a la cola.
 2. **Motores PULL (Cron-Driven):** Hay proveedores que no envían datos, sino que exigen que el Hub vaya a buscarlos (ej. Protrack). Para ellos, el sistema tiene un "Puller" dinámico. Mediante un temporizador asíncrono, el Hub genera firmas de seguridad dinámicas (hashes MD5 basados en la fecha actual), solicita el estado de cientos de patentes a la vez, y empuja las respuestas a la cola interna, emulando un comportamiento en tiempo real.
 
+### ¿Cómo sabe el sistema leer los JSON distintos de cada proveedor?
+El sistema utiliza el **Patrón Traductor (Mappers)**. Existe 1 solo archivo `mapper.py` por cada proveedor. Su única función es tomar el JSON "en idioma crudo" del proveedor (ej. Schmitz, Protrack) y traducirlo al **Modelo Canónico** (el "idioma universal" de nuestro sistema). Una vez traducido a este idioma estándar, el resto del Hub funciona exactamente igual para todos los proveedores, completamente a ciegas del origen del dato. A esto se le llama **Desacoplamiento Absoluto**.
+
+### ¿Qué es el "Agujero Negro 202" y el "Drop and Forget"?
+Los proveedores Push más estrictos castigan a los servidores que responden con errores. Para evitarlo, nuestras rutas Webhook operan como un agujero negro (*Fail-safe Ingress*): 
+Aceptan el JSON, lo meten en la cola de memoria en milisegundos y automáticamente le devuelven un `HTTP 202 Accepted` al proveedor. Si el JSON traía basura o le faltaban campos, el sistema lo descarta silenciosamente de fondo ("Drop and Forget") sin generar errores hacia afuera. Así nos aseguramos de no romper nunca la transmisión del proveedor.
+
 ---
 
 ## 3. Procesamiento, Despacho y Resiliencia
 
 ### ¿Cómo se despachan los eventos a Recurso Confiable (RC)?
-No se despachan inmediatamente en el hilo web (lo cual bloquearía la recepción de nuevos datos). Todo lo que ingresa se guarda como estado `pending`.
-En el fondo del servidor corre un **Worker Asíncrono**. No utiliza un bucle ineficiente que consulta la base cada "N" segundos; está conectado a un *Despertador Thread-Safe*. En el mismo milisegundo en que ingresa un payload, el Webhook dispara una alerta que "despierta" al Worker, toma un lote de la base de datos, y despacha a RC utilizando un pool de hilos (`ThreadPoolExecutor`) para no bloquear el sistema principal.
+No se despachan inmediatamente en el hilo web (lo cual bloquearía la recepción de nuevos datos). Todo lo que ingresa se guarda en SQLite.
+En el fondo del servidor corre un **Worker Asíncrono**. El mismo milisegundo en que ingresa un payload, se "despierta" al Worker. Para evitar que el envío de datos colapse a Recurso Confiable tras una desconexión masiva de la red (Queue Burst), el Worker utiliza un **Semáforo Asíncrono** limitando la cantidad máxima de conexiones en paralelo (ej. 4 simultáneas). Si hay 70.000 datos en la cola, el Hub los absorberá dosificando la entrega para jamás saturar la API externa de destino.
 
 ### ¿Qué ocurre si Recurso Confiable o la red se caen?
 El Centro de Comando está diseñado para nunca perder un dato. Si un envío falla (por un error 500 o un Timeout temporal de RC), el evento no se descarta. Su estado se mantiene como `pending` y se incrementa un contador de reintentos.

@@ -81,6 +81,9 @@ async def process_provider_events(provider: str, env: str):
         db_conf.close()
         rc_client = get_rc_client(rc_u, rc_p)
         
+        # Semáforo para limitar concurrencia a RC y prevenir saturación por ráfagas (burst)
+        soap_semaphore = asyncio.Semaphore(4)
+        
         async def process_single_batch(batch, batch_idx):
             """Tarea auto-contenida: SOAP + escritura en BD inmediata para un solo sub-lote."""
             metrics = {"sent": 0, "failed": 0, "retry": 0, "soap_ms": 0}
@@ -203,10 +206,15 @@ async def process_provider_events(provider: str, env: str):
             metrics["sent"] = len(updates_to_sent)
             return metrics, updates_to_retry, updates_to_fail, updates_to_sent
 
+        async def bounded_process_single_batch(batch, batch_idx):
+            """Wrapper para aplicar el semáforo concurrente al lote."""
+            async with soap_semaphore:
+                return await process_single_batch(batch, batch_idx)
+
         # 3. Disparar todos los sub-lotes en paralelo (cada uno auto-contenido con su propio SOAP + DB write)
         logger.info(f"Enviando {len(pendings)} eventos en {len(batches)} sub-lote(s) auto-contenido(s) para {provider}_{env}")
         all_metrics = await asyncio.gather(
-            *[process_single_batch(batch, idx) for idx, batch in enumerate(batches)],
+            *[bounded_process_single_batch(batch, idx) for idx, batch in enumerate(batches)],
             return_exceptions=True
         )
         

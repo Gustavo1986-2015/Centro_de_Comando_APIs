@@ -15,9 +15,9 @@ graph TD
         A[Proveedor: Schmitz/Otros] -->|POST HTTP /provider/webhook| B[FastAPI Router]
         B -->|1. Resguardo Crudo| C[Auditor: app/core/auditor.py]
         C -->|Escribe logs diarios| D[(audit/schmitz_test.jsonl)]
-        B -->|2. Adaptación| E[Mapper: app/providers/...]
+        B -->|2. Desacoplamiento| E[Mapper: app/providers/...]
         E -->|Mapea JSON a Canonical Model| F[Validador Pydantic: app/schemas/canonical.py]
-        F -->|3. Persistencia Local| G[(db/schmitz_test.db)]
+        F -->|3. Persistencia Local (Drop and Forget)| G[(db/schmitz_test.db)]
     end
 
     %% Bloque Ingesta (PULL)
@@ -66,8 +66,9 @@ En lugar de un clásico bucle `while True: sleep(5)` ciego, el Worker duerme has
 1. Pasa el `WORKER_INTERVAL_SEC` (Fallback natural).
 2. El endpoint de inyección (Webhook) ejecuta `trigger_worker()`, que activa la bandera del evento de asyncio. El worker despierta **en milisegundos** tras el ingreso de un payload.
 
-### Hilos de Red
-Al despertar, lee lotes de la DB. El envío hacia el WSDL de Recurso Confiable (operación de red bloqueante) se orquesta envolviendo el cliente SOAP (`Zeep`) dentro de un `ThreadPoolExecutor` nativo de Python (`run_in_executor`). Esto impide que un timeout externo bloquee el hilo principal de ASGI/FastAPI.
+### Hilos de Red y Semáforos (Protección de Ráfagas)
+Al despertar, lee lotes de la DB. El envío hacia el WSDL de Recurso Confiable (operación de red bloqueante) se orquesta envolviendo el cliente SOAP (`Zeep`) dentro de un `ThreadPoolExecutor` nativo de Python (`run_in_executor`). 
+Para evitar tumbar a Recurso Confiable durante una ráfaga masiva de eventos encolados (Queue Burst), se implementan Semáforos Asíncronos (`asyncio.Semaphore`) que estrangulan la salida, permitiendo únicamente un máximo predefinido de conexiones paralelas a RC por proveedor, manteniendo la salud del sistema intacta.
 
 ---
 
