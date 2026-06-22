@@ -17,7 +17,7 @@ graph TD
         C -->|Escribe logs diarios| D[(audit/schmitz_test.jsonl)]
         B -->|2. Desacoplamiento| E[Mapper: app/providers/...]
         E -->|Mapea JSON a Canonical Model| F[Validador Pydantic: app/schemas/canonical.py]
-        F -->|3. Persistencia Local (Drop and Forget)| G[(db/schmitz_test.db)]
+        F -->|3. Persistencia Local (Drop and Forget)| G[(db/schmitz/test.db)]
     end
 
     %% Bloque Ingesta (PULL)
@@ -51,7 +51,7 @@ graph TD
 
 El sistema requiere ingestar miles de eventos simultáneos. Si todas las peticiones escribieran sobre un único archivo SQLite (`main.db`), el sistema sufriría el error `database is locked`. Para resolver esto, el Hub implementa un esquema de **Sharding Dinámico**.
 
-- La función `get_session(provider, env)` crea o devuelve una conexión SQLAlchemy enrutada físicamente a `./db/{provider}_{env}.db`.
+- La función `get_session(provider, env)` crea o devuelve una conexión SQLAlchemy enrutada físicamente a `./db/{provider}/{env}.db`.
 - **Beneficio:** Las transacciones ocurren en paralelo a nivel sistema operativo. La saturación de un proveedor jamás degrada el throughput de escritura de otro.
 - **Configuración Global:** La base de datos `system_config.db` (aislada) se utiliza exclusivamente para almacenar tokens persistentes, diccionarios dinámicos y el historial de estadísticas diarias consolidadas (`daily_stats`).
 
@@ -97,8 +97,9 @@ El navegador del cliente recibe pasivamente este objeto JSON y repinta el DOM.
 Debido a la naturaleza asíncrona de los reportes GPS (ej. camión sale de zona de cobertura y envía lotes atrasados), las latencias podrían desvirtuarse. 
 El backend incorpora mitigaciones a nivel query (`func.max(0.0, diff)`) y bloquea de las medias matemáticas cualquier latencia de Hub superior a **300 segundos**, garantizando que un evento "Zombie" no arruine el KPI diario del tablero.
 
-### Intercambio Activo (Filtros)
+### Intercambio Activo (Filtros y Búsquedas)
 Al aplicar un filtro en la UI (ej. "Mostrar solo PROTRACK"), la limitación de SSE (broadcast global masivo) se vuelve un impedimento. El Frontend interrumpe la escucha SSE del grid y dispara solicitudes `GET /api/stats?provider_filter=PROTRACK` directo al backend para garantizar la extracción exacta.
+Para búsquedas profundas e históricas (ej. Buscador de Vehículos Únicos), la UI invoca endpoints dedicados (`GET /api/vehicles/unique`) que escanean las subcarpetas de SQLite de manera bajo demanda, salvaguardando así el hilo principal de SSE.
 
 ---
 
