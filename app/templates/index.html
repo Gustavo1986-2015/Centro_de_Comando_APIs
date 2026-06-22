@@ -1259,6 +1259,47 @@
                     </div>
                 </div>
 
+                <!-- ====== BUSCADOR DE VEHÍCULOS ÚNICOS ====== -->
+                <div style="grid-column: 1 / -1; background: rgba(15, 17, 21, 0.5); border: 1px solid rgba(124,58,237,0.25); border-radius: 12px; padding: 1.5rem; backdrop-filter: blur(10px);">
+                    <h3 style="color: #a78bfa; margin-bottom: 1.2rem; font-size: 1.1rem; display: flex; align-items: center; gap: 10px; font-weight: 600;">
+                        <span style="font-size: 1.3rem;">🚛</span> Buscador de Vehículos Únicos
+                    </h3>
+
+                    <!-- Controles -->
+                    <div style="display: flex; gap: 0.75rem; flex-wrap: wrap; align-items: flex-end; margin-bottom: 1.25rem;">
+                        <div style="display: flex; flex-direction: column; gap: 4px;">
+                            <label style="font-size: 0.72rem; color: var(--color-gray-label); text-transform: uppercase; letter-spacing: 0.05em;">Fecha</label>
+                            <input type="date" id="veh-date-filter"
+                                style="background: var(--level-2); color: white; border: 1px solid var(--card-border); border-radius: 6px; padding: 6px 10px; font-size: 0.88rem; cursor: pointer; color-scheme: dark;"
+                                onchange="loadVehicles()">
+                        </div>
+                        <div style="display: flex; flex-direction: column; gap: 4px;">
+                            <label style="font-size: 0.72rem; color: var(--color-gray-label); text-transform: uppercase; letter-spacing: 0.05em;">Proveedor</label>
+                            <select id="veh-provider-filter"
+                                style="background: var(--level-2); color: white; border: 1px solid var(--card-border); border-radius: 6px; padding: 6px 10px; font-size: 0.88rem; min-width: 160px;"
+                                onchange="loadVehicles()">
+                                <option value="">Todos los proveedores</option>
+                            </select>
+                        </div>
+                        <div style="display: flex; flex-direction: column; gap: 4px; flex: 1; min-width: 180px;">
+                            <label style="font-size: 0.72rem; color: var(--color-gray-label); text-transform: uppercase; letter-spacing: 0.05em;">Buscar Placa / Chasis</label>
+                            <input type="text" id="veh-search-input" placeholder="Ej: C131091 o 131..."
+                                style="background: var(--level-2); color: white; border: 1px solid var(--card-border); border-radius: 6px; padding: 6px 12px; font-size: 0.88rem; width: 100%; box-sizing: border-box;"
+                                oninput="debounceVehicleSearch()">
+                        </div>
+                        <button onclick="loadVehicles()" id="veh-search-btn"
+                            style="background: #7c3aed; color: white; border: none; border-radius: 6px; padding: 7px 18px; font-size: 0.88rem; font-weight: 600; cursor: pointer; white-space: nowrap; transition: background 0.2s; height: 34px; align-self: flex-end;"
+                            onmouseover="this.style.background='#6d28d9'" onmouseout="this.style.background='#7c3aed'">
+                            🔍 Consultar
+                        </button>
+                    </div>
+
+                    <!-- Resultados -->
+                    <div id="veh-results" style="display: flex; gap: 1rem; flex-wrap: wrap; min-height: 60px; align-items: flex-start;">
+                        <span style="color: var(--color-gray-label); font-size: 0.83rem; align-self: center;">Selecciona una fecha y presiona Consultar.</span>
+                    </div>
+                </div>
+
                 <div style="background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 12px; padding: 1.2rem;">
                     <h3 style="color: var(--color-green-bright); margin-bottom: 1rem; font-size: 1rem; display: flex; align-items: center; gap: 8px;">
                         <span style="display: inline-block; width: 8px; height: 8px; background: var(--color-green-bright); border-radius: 50%;"></span> GET /api/stats
@@ -1587,7 +1628,8 @@
         function updateProviderBar(recentEvents) {
             const now = Date.now();
             recentEvents.forEach(ev => {
-                if (!ev.id || _seenEventIds.has(ev.id)) return;  // ya contado, ignorar
+                const uniqueId = `${ev.provider}-${ev.env}-${ev.id}-${ev.time}`;
+                if (!ev.id || _seenEventIds.has(uniqueId)) return;  // ya contado, ignorar
 
                 // Silenciar eventos históricos que tienen más de 60 segundos
                 if (ev.time) {
@@ -1596,7 +1638,7 @@
                 }
 
                 // Agregar al Set con límite de tamaño (evita memory leak en sesiones largas)
-                _seenEventIds.add(ev.id);
+                _seenEventIds.add(uniqueId);
                 if (_seenEventIds.size > SEEN_IDS_MAX) {
                     // Eliminar el primer elemento insertado (el más antiguo)
                     _seenEventIds.delete(_seenEventIds.values().next().value);
@@ -1911,6 +1953,13 @@
                 loadDatabases();
             } else if (view === 'monitor') {
                 loadMonitor();
+                // Inicializar el buscador de vehículos con la fecha de hoy
+                const dateInput = document.getElementById('veh-date-filter');
+                if (dateInput && !dateInput.value) {
+                    dateInput.value = new Date().toISOString().slice(0, 10);
+                }
+                initVehicleProviderDropdown();
+                loadVehicles();
             } else if (view === 'integrations') {
                 loadIntegrationStudio();
             } else {
@@ -1959,6 +2008,108 @@
                 document.getElementById('monitor-stats').value = "Network Error";
                 document.getElementById('monitor-health').value = "Network Error";
             }
+        }
+
+        // --- Buscador de Vehículos Únicos ---
+        let _vehDebounceTimer = null;
+
+        function debounceVehicleSearch() {
+            clearTimeout(_vehDebounceTimer);
+            _vehDebounceTimer = setTimeout(loadVehicles, 500);
+        }
+
+        async function loadVehicles() {
+            const dateVal     = document.getElementById('veh-date-filter')?.value || '';
+            const providerVal = document.getElementById('veh-provider-filter')?.value || '';
+            const searchVal   = document.getElementById('veh-search-input')?.value?.trim() || '';
+            const resultsEl   = document.getElementById('veh-results');
+            if (!resultsEl) return;
+
+            resultsEl.innerHTML = '<span style="color:var(--color-gray-label); font-size:0.83rem;">Consultando...</span>';
+
+            const params = new URLSearchParams();
+            if (dateVal)     params.set('date',     dateVal);
+            if (providerVal) params.set('provider', providerVal);
+            if (searchVal)   params.set('search',   searchVal);
+
+            try {
+                const res  = await fetch(`/api/vehicles/unique?${params.toString()}`, { cache: 'no-store' });
+                const data = await res.json();
+                const entries = Object.entries(data);
+
+                if (entries.length === 0) {
+                    resultsEl.innerHTML = '<span style="color:var(--color-gray-label);font-size:0.83rem;">No hay proveedores configurados.</span>';
+                    return;
+                }
+
+                // Total global entre todos los proveedores visibles
+                const totalGlobal = entries.reduce((sum, [, v]) => sum + (v.total || 0), 0);
+                let html = '';
+
+                // Tarjeta resumen global (solo si hay más de un proveedor)
+                if (entries.length > 1) {
+                    html += `
+                        <div style="background:rgba(124,58,237,0.12);border:1px solid rgba(124,58,237,0.3);border-radius:10px;padding:1rem 1.4rem;min-width:140px;display:flex;flex-direction:column;align-items:center;gap:2px;">
+                            <span style="font-size:0.72rem;color:#c4b5fd;text-transform:uppercase;letter-spacing:0.07em;font-weight:600;">Total Global</span>
+                            <span style="font-size:2.6rem;font-weight:800;color:#a78bfa;line-height:1.1;">${totalGlobal}</span>
+                            <span style="font-size:0.7rem;color:var(--color-gray-label);">vehículos únicos</span>
+                        </div>`;
+                }
+
+                // Tarjeta por proveedor
+                for (const [key, info] of entries) {
+                    const hasVehicles = info.total > 0;
+                    const envColor    = info.env === 'PROD' ? '#10b981' : '#f59e0b';
+                    const pillsHtml   = hasVehicles
+                        ? info.vehicles.map(v => {
+                            const esc = v.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                            const highlighted = searchVal
+                                ? v.replace(new RegExp(`(${esc})`, 'gi'), '<mark style="background:#7c3aed44;color:#c4b5fd;border-radius:3px;padding:0 2px;">$1</mark>')
+                                : v;
+                            return `<span title="${v}" style="background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.1);border-radius:5px;padding:3px 9px;font-size:0.78rem;color:#e2e8f0;font-family:monospace;">${highlighted}</span>`;
+                          }).join('')
+                        : '<span style="color:var(--color-gray-label);font-size:0.78rem;font-style:italic;">Sin actividad en este período</span>';
+
+                    html += `
+                        <div style="flex:1;min-width:260px;background:rgba(15,17,21,0.6);border:1px solid rgba(255,255,255,0.06);border-radius:10px;padding:1rem 1.2rem;display:flex;flex-direction:column;gap:0.7rem;">
+                            <div style="display:flex;align-items:center;gap:8px;">
+                                <span style="font-weight:700;font-size:0.9rem;color:white;">${info.provider}</span>
+                                <span style="background:${envColor}22;color:${envColor};border:1px solid ${envColor}55;border-radius:4px;padding:1px 7px;font-size:0.72rem;font-weight:700;">${info.env}</span>
+                                <span style="margin-left:auto;font-size:1.6rem;font-weight:800;color:${hasVehicles ? '#a78bfa' : 'var(--color-gray)'};">${info.total}</span>
+                                <span style="font-size:0.7rem;color:var(--color-gray-label);">veh.</span>
+                            </div>
+                            <div style="display:flex;gap:6px;flex-wrap:wrap;max-height:140px;overflow-y:auto;padding-right:4px;">
+                                ${pillsHtml}
+                            </div>
+                            ${info.error ? `<span style="color:var(--color-red);font-size:0.75rem;">⚠ ${info.error}</span>` : ''}
+                        </div>`;
+                }
+
+                resultsEl.innerHTML = html;
+            } catch(e) {
+                resultsEl.innerHTML = `<span style="color:var(--color-red);font-size:0.83rem;">Error al consultar: ${e.message}</span>`;
+            }
+        }
+
+        // Poblamos el selector de proveedor del buscador al cargar la vista
+        async function initVehicleProviderDropdown() {
+            try {
+                const res  = await fetch('/api/config/providers', { cache: 'no-store' });
+                const list = await res.json();
+                const sel  = document.getElementById('veh-provider-filter');
+                if (!sel) return;
+                const seen = new Set();
+                list.forEach(p => {
+                    const name = p.provider_name.toLowerCase();
+                    if (!seen.has(name)) {
+                        seen.add(name);
+                        const opt = document.createElement('option');
+                        opt.value     = name;
+                        opt.innerText = name.toUpperCase();
+                        sel.appendChild(opt);
+                    }
+                });
+            } catch(_) {}
         }
 
         async function loadHistory() {
