@@ -637,6 +637,75 @@ def _resolve_db_path(db_name: str) -> str | None:
         return None
     return candidate
 
+@router.get("/api/vehicles/unique")
+async def get_unique_vehicles(
+    date: str = Query(None, description="Fecha en formato YYYY-MM-DD. Por defecto: hoy."),
+    provider: str = Query(None, description="Filtrar por proveedor específico. Por defecto: todos."),
+    search: str = Query(None, description="Búsqueda libre por texto en la patente/chasis."),
+    _: None = Depends(verify_dashboard_auth)
+):
+    """
+    Devuelve los vehículos únicos (chassis_number DISTINCT) que generaron eventos
+    en la fecha indicada, opcionalmente filtrados por proveedor y búsqueda libre.
+    
+    Respuesta: { "protrack_test": { "total": 5, "vehicles": ["C131091", ...] }, ... }
+    """
+    # --- Determinar rango de fechas ---
+    try:
+        if date:
+            target_date = datetime.strptime(date, "%Y-%m-%d").date()
+        else:
+            target_date = datetime.now().date()
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Formato de fecha inválido. Use YYYY-MM-DD.")
+
+    day_start = datetime.combine(target_date, datetime.min.time())
+    day_end   = datetime.combine(target_date, datetime.max.time())
+
+    # --- Obtener la lista de proveedores configurados ---
+    config_db = get_session("system_config", "global")
+    try:
+        all_providers = config_db.query(ProviderConfig).all()
+    finally:
+        config_db.close()
+
+    result = {}
+
+    for p in all_providers:
+        # Filtrar por proveedor si se indicó
+        if provider and provider.lower() not in ("all", "") and p.provider_name.lower() != provider.lower():
+            continue
+
+        key = f"{p.provider_name}_{p.env}"
+        db = get_session(p.provider_name, p.env)
+        try:
+            query = db.query(NormalizedRCEvent.chassis_number).filter(
+                NormalizedRCEvent.created_at >= day_start,
+                NormalizedRCEvent.created_at <= day_end,
+                NormalizedRCEvent.chassis_number != None,
+                NormalizedRCEvent.chassis_number != ""
+            ).distinct()
+
+            # Búsqueda libre de texto parcial (LIKE %search%)
+            if search and search.strip():
+                query = query.filter(
+                    NormalizedRCEvent.chassis_number.ilike(f"%{search.strip()}%")
+                )
+
+            vehicles = sorted([row[0] for row in query.all() if row[0]])
+            result[key] = {
+                "provider": p.provider_name.upper(),
+                "env": p.env.upper(),
+                "total": len(vehicles),
+                "vehicles": vehicles
+            }
+        except Exception as e:
+            result[key] = {"provider": p.provider_name.upper(), "env": p.env.upper(), "total": 0, "vehicles": [], "error": str(e)}
+        finally:
+            db.close()
+
+    return result
+
 @router.get("/api/db-viewer/databases")
 async def get_databases(_: None = Depends(verify_dashboard_auth)):
     """Lista todas las bases de datos SQLite: raíz + subcarpetas por AVL."""
