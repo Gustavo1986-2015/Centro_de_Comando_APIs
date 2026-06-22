@@ -14,15 +14,15 @@ from concurrent.futures import ThreadPoolExecutor
 # ==============================================================================
 
 # 1. MODO DE EJECUCIÓN (True = Ráfagas masivas concurrentes / False = Envío lento normal)
-MODO_ESTRES = False
+MODO_ESTRES = True
 
 # 2. CONFIGURACIÓN MODO NORMAL (MODO_ESTRES = False)
 PLACAS_NORMALES          = ["RHR5776", "GDG8486", "JMC1236", "AB1234"]
-SEGUNDOS_ESPERA_NORMAL   = 30  # Tiempo que espera el simulador entre cada ciclo
+SEGUNDOS_ESPERA_NORMAL   = 5  # Tiempo que espera el simulador entre cada ciclo
 
 # 3. CONFIGURACIÓN MODO ESTRÉS (MODO_ESTRES = True)
-PLACAS_ESTRES            = [f"TEST-{str(i).zfill(3)}" for i in range(1, 41)]  # 40 eventos por ciclo
-SEGUNDOS_ESPERA_ESTRES   = 5   # Bombardeo rápido cada X segundos
+PLACAS_ESTRES            = [f"TEST-{str(i).zfill(3)}" for i in range(1, 51)]  # 50 eventos por ciclo
+SEGUNDOS_ESPERA_ESTRES   = 1   # Bombardeo rápido cada X segundos
 
 # 4. PUNTO DE ENLACE (URL)
 WEBHOOK_URL = "http://127.0.0.1:8000/Json/Data?env=test"

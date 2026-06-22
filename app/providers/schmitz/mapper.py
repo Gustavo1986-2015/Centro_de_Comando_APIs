@@ -9,15 +9,6 @@ from app.schemas.canonical import RCCanonicalModel
 # Se reinicia al reiniciar el servidor. El primer payload siempre genera estados nuevos.
 _STATE_CACHE: Dict[str, Dict[str, Any]] = {}
 
-def extract_tenant_id(payload: Dict[str, Any], headers: Dict[str, str] = None) -> str:
-    """Extrae el Tenant ID desde cabecera o payload (Schmitz v1.35)."""
-    headers = headers or {}
-    # Case-insensitive header lookup
-    tenant = headers.get("x-assistcargo-tenant") or headers.get("X-Assistcargo-Tenant")
-    if tenant:
-        return str(tenant).strip()
-    return str(payload.get("ReferenceCustomerName") or "unknown_tenant").strip()
-
 def parse_date_to_utc0(date_str: str) -> datetime | None:
     if not date_str:
         return None
