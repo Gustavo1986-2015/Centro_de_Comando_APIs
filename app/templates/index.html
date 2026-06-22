@@ -2995,7 +2995,7 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
                         currentIpaasProvider = {name, env};
                         
                         // Actualizar URL de Producción
-                        const prodUrl = window.location.origin + \`/webhook/dynamic/\${name}?env=\${env}\`;
+                        const prodUrl = window.location.origin + `/webhook/dynamic/${name}?env=${env}`;
                         const prodEl = document.getElementById('prodWebhookUrl');
                         if (prodEl) prodEl.innerText = prodUrl;
 
