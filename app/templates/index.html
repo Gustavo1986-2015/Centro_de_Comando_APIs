@@ -973,6 +973,9 @@
                 <span>Modo Compacto</span>
             </label>
             <div class="status-indicator" title="Estado del servicio de escucha en vivo">
+                <span id="rc-circuit-badge" title="Estado del Circuit Breaker de Recurso Confiable" style="font-size:0.78rem; font-weight:600; margin-right:0.75rem;">
+                    ● RC Online
+                </span>
                 <span id="sync-status">Conectado y Escuchando</span>
                 <div class="pulse"></div>
             </div>
@@ -2324,6 +2327,20 @@
 
                 document.getElementById('sync-status').textContent = 'Conectado y Escuchando';
                 document.querySelector('.pulse').style.backgroundColor = 'var(--color-green-bright)';
+
+                // Estado del Circuit Breaker de RC
+                const cbState = data.rc_circuit_state || 'CLOSED';
+                const cbEl    = document.getElementById('rc-circuit-badge');
+                if (cbEl) {
+                    const labels = {
+                        'CLOSED':    { text: '● RC Online',    color: 'var(--color-green-bright)' },
+                        'OPEN':      { text: '⚡ RC Caído',     color: 'var(--color-red)'          },
+                        'HALF_OPEN': { text: '◑ RC Probando', color: 'var(--color-yellow)'        },
+                    };
+                    const info = labels[cbState] || labels['CLOSED'];
+                    cbEl.textContent   = info.text;
+                    cbEl.style.color   = info.color;
+                }
             } catch (error) {
                 console.error("Error procesando data SSE:", error);
                 alert("JS Error en renderStats: " + error.message);
