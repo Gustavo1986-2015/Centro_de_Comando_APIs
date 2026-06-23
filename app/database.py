@@ -126,12 +126,14 @@ def get_engine(provider: str, env: str = "prod"):
         
         # Asegurar que los modelos estén registrados en Base.metadata
         if provider == "system_config":
-            from app.models.config_models import ProviderConfig, DailyStat, SystemSettings
+            from app.models.config_models import ProviderConfig, DailyStat, SystemSettings, ProviderDictionary
+            target_tables = [ProviderConfig.__table__, DailyStat.__table__, SystemSettings.__table__, ProviderDictionary.__table__]
         else:
             from app.models.db_models import NormalizedRCEvent
+            target_tables = [NormalizedRCEvent.__table__]
             
         # Crear tablas
-        Base.metadata.create_all(bind=engine)
+        Base.metadata.create_all(bind=engine, tables=target_tables)
         
         # Migración automática
         if provider == "system_config":
