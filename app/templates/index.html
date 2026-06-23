@@ -967,18 +967,20 @@
         <div class="hamburger" title="Menú de Opciones" onclick="toggleMenu()">☰</div>
         <div class="title" title="Panel principal del Hub Telemático">Centro de Comando APIs | Assistcargo</div>
         
-        <div style="margin-left: auto; display: flex; align-items: center; gap: 1.5rem;">
-            <label style="display: flex; align-items: center; gap: 0.4rem; cursor: pointer; font-size: 0.85rem; color: var(--color-gray-label);" title="Reducir espacios visuales">
+        <div style="margin-left: auto; display: flex; flex-direction: column; align-items: flex-end; gap: 0.5rem;">
+            <div style="display: flex; align-items: center; gap: 1.5rem;">
+                <div id="rc-circuit-container" class="status-indicator" title="Estado del Circuit Breaker de Recurso Confiable" style="padding: 8px 16px; margin-right: -0.5rem; transition: all 0.3s;">
+                    <span id="rc-circuit-badge">● RC Online</span>
+                </div>
+                <div class="status-indicator" title="Estado del servicio de escucha en vivo">
+                    <span id="sync-status">Conectado y Escuchando</span>
+                    <div class="pulse"></div>
+                </div>
+            </div>
+            <label style="display: flex; align-items: center; gap: 0.4rem; cursor: pointer; font-size: 0.85rem; color: var(--color-gray-label); margin-top: 0.2rem;" title="Reducir espacios visuales">
                 <input type="checkbox" id="compact-mode-toggle" onchange="toggleCompactMode(this.checked)" style="cursor: pointer;">
                 <span>Modo Compacto</span>
             </label>
-            <div id="rc-circuit-container" class="status-indicator" title="Estado del Circuit Breaker de Recurso Confiable" style="padding: 8px 16px; margin-right: -0.5rem; transition: all 0.3s;">
-                <span id="rc-circuit-badge">● RC Online</span>
-            </div>
-            <div class="status-indicator" title="Estado del servicio de escucha en vivo">
-                <span id="sync-status">Conectado y Escuchando</span>
-                <div class="pulse"></div>
-            </div>
         </div>
     </header>
 
