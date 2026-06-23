@@ -2083,8 +2083,7 @@
                 URL.revokeObjectURL(url);
                 
                 // Mostrar confirmación
-                showDisconnectBanner(`Datos de ${chassis} copiados y descargados.`);
-                setTimeout(hideDisconnectBanner, 3000);
+                alert(`Datos de ${chassis} copiados y descargados.`);
             } catch (err) {
                 alert(`Error obteniendo datos de ${chassis}: ` + err.message);
             }
