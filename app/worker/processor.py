@@ -7,6 +7,109 @@ from datetime import datetime, timezone, timedelta, date
 from app.database import get_session
 from app.models.db_models import NormalizedRCEvent
 from app.schemas.canonical import RCCanonicalModel
+import threading as _threading
+
+class CircuitBreaker:
+    """
+    Circuit Breaker para llamadas salientes a Recurso Confiable (SOAP).
+
+    Estados:
+      CLOSED   → operación normal, las llamadas pasan
+      OPEN     → RC detectado como caído, llamadas bloqueadas hasta recovery_at
+      HALF_OPEN → período de prueba: deja pasar 1 llamada para verificar si RC volvió
+
+    Uso:
+      cb = CircuitBreaker(failure_threshold=5, recovery_timeout=60)
+      if cb.allow_request():
+          try:
+              resultado = llamar_rc()
+              cb.record_success()
+          except Exception:
+              cb.record_failure()
+      else:
+          # RC sigue caído, omitir este ciclo
+    """
+
+    CLOSED    = "CLOSED"
+    OPEN      = "OPEN"
+    HALF_OPEN = "HALF_OPEN"
+
+    def __init__(
+        self,
+        failure_threshold: int = 5,    # fallos consecutivos para abrir el circuito
+        recovery_timeout:  int = 60,   # segundos antes del primer intento de prueba
+        max_timeout:       int = 600,  # techo del backoff exponencial (10 minutos)
+    ):
+        self.failure_threshold = failure_threshold
+        self.recovery_timeout  = recovery_timeout
+        self.max_timeout       = max_timeout
+
+        self._state            = self.CLOSED
+        self._failure_count    = 0
+        self._last_failure_at  = 0.0
+        self._current_timeout  = recovery_timeout
+        self._lock             = _threading.Lock()
+
+    # ── API pública ───────────────────────────────────────────────────────────
+
+    def allow_request(self) -> bool:
+        """Retorna True si el circuito permite que pase la llamada."""
+        with self._lock:
+            if self._state == self.CLOSED:
+                return True
+
+            if self._state == self.OPEN:
+                if time.time() >= self._last_failure_at + self._current_timeout:
+                    self._state = self.HALF_OPEN
+                    return True   # dejar pasar el intento de prueba
+                return False      # circuito abierto, bloquear
+
+            # HALF_OPEN: ya dejamos pasar un intento de prueba
+            return True
+
+    def record_success(self):
+        """Llamar después de una respuesta exitosa de RC."""
+        with self._lock:
+            self._failure_count   = 0
+            self._current_timeout = self.recovery_timeout   # resetear backoff
+            if self._state != self.CLOSED:
+                logger.info("[CircuitBreaker] RC respondió correctamente — circuito CERRADO.")
+            self._state = self.CLOSED
+
+    def record_failure(self):
+        """Llamar cuando RC lanza excepción o devuelve error irrecuperable."""
+        with self._lock:
+            self._failure_count  += 1
+            self._last_failure_at = time.time()
+
+            if self._state == self.HALF_OPEN or self._failure_count >= self.failure_threshold:
+                # Abrir el circuito con backoff exponencial (techo en max_timeout)
+                self._current_timeout = min(
+                    self._current_timeout * 2 if self._state == self.OPEN else self.recovery_timeout,
+                    self.max_timeout
+                )
+                self._state = self.OPEN
+                logger.warning(
+                    f"[CircuitBreaker] RC no responde ({self._failure_count} fallos). "
+                    f"Circuito ABIERTO — próximo intento en {self._current_timeout}s."
+                )
+
+    @property
+    def state(self) -> str:
+        return self._state
+
+    @property
+    def is_open(self) -> bool:
+        return self._state == self.OPEN
+
+
+# Instancia global — un circuit breaker por proceso, compartido entre workers
+_rc_circuit_breaker = CircuitBreaker(
+    failure_threshold=5,    # 5 fallos consecutivos abren el circuito
+    recovery_timeout=60,    # esperar 60s antes del primer intento de prueba
+    max_timeout=600,        # máximo 10 minutos entre reintentos
+)
+
 from app.services.rc_soap import get_rc_client
 
 from app.models.config_models import ProviderConfig, DailyStat
@@ -29,10 +132,30 @@ def trigger_worker(provider: str, env: str):
             pass
 
 async def send_batch_and_measure(canonical_events, rc_client):
+    """
+    Llama al cliente SOAP de RC y mide la latencia.
+    Integra el Circuit Breaker: si el circuito está abierto, lanza
+    una excepción controlada en lugar de intentar la llamada.
+    """
+    if not _rc_circuit_breaker.allow_request():
+        raise ConnectionError(
+            f"[CircuitBreaker] RC no disponible — circuito ABIERTO. "
+            f"Próximo intento en ~{_rc_circuit_breaker._current_timeout}s."
+        )
+
     start_time = time.time()
-    results = await rc_client.send_events_batch(canonical_events)
-    elapsed = time.time() - start_time
-    return results, elapsed
+    try:
+        results = await rc_client.send_events_batch(canonical_events)
+        elapsed = time.time() - start_time
+        _rc_circuit_breaker.record_success()
+        return results, elapsed
+    except ConnectionError:
+        # Re-levantar la excepción del circuit breaker sin contar como fallo de RC
+        raise
+    except Exception as e:
+        elapsed = time.time() - start_time
+        _rc_circuit_breaker.record_failure()
+        raise
 
 def get_active_providers():
     db = get_session("system_config", "global")
