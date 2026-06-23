@@ -147,10 +147,19 @@ async def send_batch_and_measure(canonical_events, rc_client):
     try:
         results = await rc_client.send_events_batch(canonical_events)
         elapsed = time.time() - start_time
+        
+        # Detectar error silencioso de conexión capturado dentro de rc_client
+        if results and isinstance(results, list) and len(results) > 0:
+            success, job_id, raw_response = results[0]
+            if not success and "rc_conn_err" in str(job_id):
+                # Es un error de conexión real a RC
+                _rc_circuit_breaker.record_failure()
+                raise Exception(raw_response)
+                
         _rc_circuit_breaker.record_success()
         return results, elapsed
     except ConnectionError:
-        # Re-levantar la excepción del circuit breaker sin contar como fallo de RC
+        # Re-levantar la excepción del circuit breaker (para no sumar fallo doble)
         raise
     except Exception as e:
         elapsed = time.time() - start_time
