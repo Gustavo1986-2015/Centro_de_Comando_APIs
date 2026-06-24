@@ -550,22 +550,90 @@ async def process_pending_events():
 
 
 async def purge_provider_events(provider: str, env: str):
-    """Purga una BD individual eliminando solo los eventos enviados/fallidos anteriores al día de hoy local."""
+    """Purga una BD individual eliminando solo los eventos enviados/fallidos anteriores al día de hoy local. Genera un backup JSON mensual y limpia backups > 30 días."""
     db: Session = get_session(provider, env)
     try:
         from datetime import datetime, timezone
+        import json
+        import os
+        import time
+        import asyncio
+        
         local_now = datetime.now().astimezone()
         today_start_local = datetime.combine(local_now.date(), datetime.min.time()).replace(tzinfo=local_now.tzinfo)
         today_start = today_start_local.astimezone(timezone.utc).replace(tzinfo=None)
         
-        deleted_count = db.query(NormalizedRCEvent).filter(
+        # Obtener los registros a eliminar
+        records_to_delete = db.query(NormalizedRCEvent).filter(
             NormalizedRCEvent.status.in_(["sent", "failed"]),
             NormalizedRCEvent.created_at < today_start
-        ).delete(synchronize_session=False)
+        ).all()
         
-        db.commit()
+        deleted_count = len(records_to_delete)
+        
         if deleted_count > 0:
-            logger.info(f"Purga Automática completada para {provider}_{env}: {deleted_count} eliminados.")
+            # Agrupar por mes y guardar JSONs
+            month_str = local_now.strftime("%Y-%m")
+            day_str = local_now.strftime("%Y-%m-%d")
+            backup_dir = os.path.join("db", "backups_diarios", f"{provider}_{env}", month_str)
+            os.makedirs(backup_dir, exist_ok=True)
+            
+            backup_file = os.path.join(backup_dir, f"procesados_{day_str}.json")
+            
+            data_to_save = []
+            for r in records_to_delete:
+                data_to_save.append({
+                    "id": r.id,
+                    "provider": r.provider,
+                    "env": env,
+                    "chassis": r.chassis_number,
+                    "status": r.status,
+                    "created_at": r.created_at.isoformat() if r.created_at else None,
+                    "payload": r.raw_data,
+                    "response": r.rc_response
+                })
+                
+            def write_backup():
+                existing_data = []
+                if os.path.exists(backup_file):
+                    try:
+                        with open(backup_file, "r", encoding="utf-8") as f:
+                            existing_data = json.load(f)
+                    except Exception:
+                        pass
+                existing_data.extend(data_to_save)
+                with open(backup_file, "w", encoding="utf-8") as f:
+                    json.dump(existing_data, f, ensure_ascii=False, indent=2)
+                    
+            await asyncio.to_thread(write_backup)
+            
+            # Ejecutar el borrado en SQLite
+            db.query(NormalizedRCEvent).filter(
+                NormalizedRCEvent.status.in_(["sent", "failed"]),
+                NormalizedRCEvent.created_at < today_start
+            ).delete(synchronize_session=False)
+            
+            db.commit()
+            logger.info(f"Purga Automática completada para {provider}_{env}: {deleted_count} respaldados y eliminados.")
+            
+        # Limpieza automatica > 30 dias (1 mes)
+        def clean_old_files():
+            cutoff = time.time() - (30 * 24 * 60 * 60)
+            dirs_to_clean = [
+                os.path.join("db", "backups_diarios", f"{provider}_{env}"),
+                os.path.join("audit", provider)
+            ]
+            for d in dirs_to_clean:
+                if os.path.exists(d):
+                    for root, dirs, files in os.walk(d):
+                        for file in files:
+                            if file.endswith(".json") or file.endswith(".jsonl"):
+                                filepath = os.path.join(root, file)
+                                if os.path.getmtime(filepath) < cutoff:
+                                    try: os.remove(filepath)
+                                    except: pass
+        await asyncio.to_thread(clean_old_files)
+        
     except Exception as e:
         logger.error(f"Error en purga para {provider}_{env}: {str(e)}")
         db.rollback()
