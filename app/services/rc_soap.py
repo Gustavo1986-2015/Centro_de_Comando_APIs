@@ -34,10 +34,11 @@ class RCSOAPClient:
     _global_zeep_client = None
     _global_lock = threading.RLock()
 
-    def __init__(self, username: str = RC_USERNAME, password: str = RC_PASSWORD, endpoint: str = RC_ENDPOINT):
+    def __init__(self, username: str = RC_USERNAME, password: str = RC_PASSWORD, endpoint: str = RC_ENDPOINT, use_mock: bool = False):
         self.username = username
         self.password = password
         self.endpoint = endpoint
+        self.use_mock = use_mock
         self._token = None
         self._token_expires_at = None
 
@@ -289,7 +290,7 @@ class RCSOAPClient:
             return []
             
         try:
-            if RC_USE_MOCK:
+            if RC_USE_MOCK or self.use_mock:
                 # Simulación de éxito para todo el lote
                 results = []
                 import random
@@ -356,7 +357,7 @@ class RCSOAPClient:
 
 
 
-def get_rc_client(username: str = None, password: str = None) -> RCSOAPClient:
+def get_rc_client(username: str = None, password: str = None, use_mock: bool = False) -> RCSOAPClient:
     username = username or RC_USERNAME
     password = password or RC_PASSWORD
-    return RCSOAPClient(username=username, password=password)
+    return RCSOAPClient(username=username, password=password, use_mock=use_mock)
