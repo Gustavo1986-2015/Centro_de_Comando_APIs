@@ -1,9 +1,13 @@
+import os
+os.environ["RC_USE_MOCK"] = "True"
+os.environ["APP_ENV"] = "development"
+
 import asyncio
 from datetime import datetime, timezone
 from app.database import get_engine, get_session, Base
 from app.models.db_models import NormalizedRCEvent
 from app.worker.processor import process_pending_events, purge_processed_events, get_active_providers
-from app.services.rc_soap import rc_client
+from app.services.rc_soap import get_rc_client
 from app.schemas.canonical import RCCanonicalModel
 
 import logging
@@ -31,7 +35,21 @@ async def test_worker_flow():
     Base.metadata.create_all(bind=engine)
     db = get_session(provider, env)
     
-    # 2. Limpiar e Insertar evento de prueba con algunos valores nulos
+    # 2.5 Configurar global system_config para que get_active_providers lo encuentre
+    from app.models.config_models import ProviderConfig
+    engine_global = get_engine("system_config", "global")
+    Base.metadata.create_all(bind=engine_global)
+    db_global = get_session("system_config", "global")
+    conf = db_global.query(ProviderConfig).filter_by(provider_name=provider, env=env).first()
+    if not conf:
+        conf = ProviderConfig(provider_name=provider, env=env, is_active=True)
+        db_global.add(conf)
+    else:
+        conf.is_active = True
+    db_global.commit()
+    db_global.close()
+    
+    # 3. Limpiar e Insertar evento de prueba con algunos valores nulos
     db.query(NormalizedRCEvent).delete()
     db.commit()
     
