@@ -74,3 +74,12 @@ No. Antes siquiera de intentar mapear, validar o guardar en SQLite, la capa HTTP
 ### ¿Qué es el Inspector de APIs del Dashboard?
 Es un módulo interno que emula a Postman. Permite a los analistas probar conexiones salientes directamente desde los servidores de Assistcargo en la nube, saltándose problemas locales de VPN corporativas o bloqueos del navegador (CORS).
 Por diseño de seguridad, este inspector cuenta con un **Escudo Anti-SSRF**, que intercepta y bloquea llamadas maliciosas (ej. un usuario intentando que el servidor se consulte a sí mismo en `127.0.0.1` o escanee redes privadas).
+
+### ¿Por qué se eliminó la deduplicación de coordenadas en el motor PULL?
+En integraciones pasivas (PUSH), el Hub acepta todo lo que le envíen. Para integraciones activas (PULL como Protrack), originalmente el Hub ignoraba los datos si la fecha y coordenadas eran idénticas a la lectura anterior (ej. camión estacionado). Por requerimiento operativo estricto de Assistcargo: *"Siempre debemos mostrar lo que consumimos"*, se removió ese bloqueo local. Ahora el Hub enviará el dato 20 veces por hora a Recurso Confiable si Protrack lo informa 20 veces, dejando la responsabilidad de deduplicar a la plataforma destino.
+
+### ¿Qué hace el Circuit Breaker y los Micro-cortes?
+Cuando el Hub experimenta Timeouts o caídas de red intentando comunicarse con RC, se registra un "Micro-corte" (o fallo). Zeep utiliza un **Timeout Granular** (5 segundos para conectar, 25 para leer). Si ocurren **5 fallos consecutivos**, el "Circuit Breaker" corta la corriente y suspende todos los envíos a RC durante 10 minutos (estado OPEN/Rojo). En la UI, si ves `(Micro-cortes: 2/5)` significa que la red está intermitente, pero el sistema está absorbiendo el impacto sin detener el flujo general, protegiendo a RC de saturarse y al Worker de colapsar.
+
+### ¿Se llenará el disco duro del servidor con todos estos logs?
+No. El Hub posee un recolector de basura automatizado. Transforma los eventos de base de datos a un formato comprimido de texto por líneas (`.jsonl`) agrupado mensualmente. Cada ciclo de procesamiento purga y borra de forma definitiva cualquier archivo de respaldo en crudo (`audit/`) y procesado (`db/backups_diarios/`) que supere los **30 días de antigüedad**, garantizando que el almacenamiento del servidor permanezca estable sin importar el volumen de vehículos traficados.

@@ -107,6 +107,30 @@ Para búsquedas profundas e históricas (ej. Buscador de Vehículos Únicos), la
 
 Toda interfaz orientada al operador (Dashboard y visualizador DB) está blindada bajo **HTTP Basic Auth** (`verify_dashboard_auth`). 
 Adicionalmente, el proyecto incorpora la herramienta `/inspector`, un proxy inverso (Mini-Postman) para facilitar el debug desde el propio servidor. Para prevenir vulnerabilidades de Server-Side Request Forgery (SSRF) introducidas por esta herramienta de proxy, toda URL objetivo pasa por el helper `_is_safe_url()`, el cual resuelve DNS y bloquea cualquier resolución a los rangos IP:
-- Loopback (`127.0.0.0/8`)
-- Redes Privadas (`10.x.x.x`, `192.168.x.x`, `172.16.x.x/12`)
 - AWS/GCP Meta-data (`169.254.169.254`)
+
+---
+
+## 7. Retención, Respaldos y Purga de Datos (Ciclo de Vida)
+
+Para prevenir el colapso del almacenamiento y mantener la RAM optimizada, el sistema implementa una estricta política de retención:
+
+1. **Ingesta Cruda (JSONL):** Todo payload entrante se guarda inmediatamente en texto plano, agregando líneas a `audit/{proveedor}/YYYY-MM/crudos_YYYY-MM-DD.jsonl`.
+2. **Backups de Procesados:** Cuando los eventos finalizan su ciclo (enviados exitosamente o fallidos definitivamente), son extraídos de SQLite y resguardados en `db/backups_diarios/{proveedor}_{env}/YYYY-MM/procesados_YYYY-MM-DD.jsonl` usando cursores `.yield_per()` para evitar desbordar la memoria RAM durante purgas masivas.
+3. **Purga Automática:** Los archivos físicos `.jsonl` más antiguos a 30 días se eliminan del disco duro de forma automática.
+4. **SQLite Volátil:** Las bases `.db` se mantienen extremadamente livianas alojando únicamente el tráfico "en vuelo" (pendientes, reintentos y las últimas horas de enviados).
+
+---
+
+## 8. Circuit Breaker y Timeouts Granulares (Protección de Red)
+
+El envío SOAP a Recurso Confiable (RC) es el eslabón más frágil por las fluctuaciones de red. Para aislar fallos externos:
+
+- **Timeout Granular en Zeep:** El cliente `requests.Session` inyectado en Zeep tiene configurado un timeout dividido `(5, 25)`. Esto asegura que si RC rechaza la conexión TCP, fallamos rápido en 5 segundos. Si la acepta pero tarda en responder, esperamos un máximo de 25 segundos, evitando que el *Worker* de FastAPI se congele.
+- **Patrón Circuit Breaker:** Se interceptan las fallas de conexión o timeouts de lectura. Si el sistema sufre **5 fallos de transporte consecutivos**, el Circuit Breaker pasa a estado **OPEN (Rojo)**, cortando la salida temporalmente (10 minutos) para permitir que el receptor respire y se recupere. Los eventos se marcan para reintento hasta que el circuito pase a **HALF_OPEN (Amarillo)** y finalmente se restablezca a **CLOSED (Verde)**. 
+
+---
+
+## 9. Filosofía de Deduplicación en PULL
+
+Para las APIs de extracción (PULL, ej. Protrack), el sistema adopta una postura "Passthrough Directo". No se realiza deduplicación local basada en coordenadas idénticas. Si el vehículo está detenido y la API del proveedor emite repetidamente la misma posición, el motor insertará todos y cada uno de esos registros. La responsabilidad de filtrado estático se delega integralmente a la capa del cliente final (RC).
