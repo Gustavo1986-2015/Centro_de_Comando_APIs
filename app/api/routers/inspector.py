@@ -7,6 +7,18 @@ import uuid
 import ipaddress
 import socket
 import urllib.parse
+import os
+import logging
+
+logger = logging.getLogger(__name__)
+
+INSPECTOR_ALLOW_INSECURE_TLS = os.getenv("INSPECTOR_ALLOW_INSECURE_TLS", "False").lower() == "true"
+
+if INSPECTOR_ALLOW_INSECURE_TLS:
+    logger.warning(
+        "⚠️ Inspector ejecutando con verificación TLS DESHABILITADA (INSPECTOR_ALLOW_INSECURE_TLS=True). "
+        "Riesgo de MITM. Solo usar en pruebas locales contra endpoints self-signed."
+    )
 
 router = APIRouter(prefix="/inspector", tags=["API Inspector"])
 
@@ -117,7 +129,7 @@ async def fetch_api(request_data: dict = Body(...), _: None = Depends(verify_das
             json=body if isinstance(body, (dict, list)) else None,
             data=body if isinstance(body, str) else None,
             timeout=30,
-            verify=False
+            verify=not INSPECTOR_ALLOW_INSECURE_TLS
         )
         elapsed_ms = round((time.perf_counter() - start) * 1000)
         
@@ -174,7 +186,7 @@ async def fetch_token(request_data: dict = Body(...), _: None = Depends(verify_d
             auth=auth_tuple,
             data=token_body if isinstance(token_body, (dict, str)) else None,
             timeout=15,
-            verify=False
+            verify=not INSPECTOR_ALLOW_INSECURE_TLS
         )
         elapsed_ms = round((time.perf_counter() - start) * 1000)
         
