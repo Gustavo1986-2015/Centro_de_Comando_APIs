@@ -9,6 +9,10 @@ import os
 import glob
 import sqlite3
 import re
+import logging
+import traceback
+
+logger = logging.getLogger(__name__)
 
 from app.database import get_session
 from app.models.db_models import NormalizedRCEvent
@@ -332,7 +336,7 @@ async def get_stats_data(
         "throughput": throughput_per_provider,
         "all_providers": list(set([p.provider_name for p in providers])),
         "rc_circuit_state": _rc_circuit_breaker.state,
-        "rc_failure_count": _rc_circuit_breaker.failure_count
+        "rc_failure_count": _rc_circuit_breaker._failure_count
     }
 
 @router.get("/api/config/providers")

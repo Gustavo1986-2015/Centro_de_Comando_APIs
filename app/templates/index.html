@@ -971,8 +971,8 @@
             <div style="display: flex; align-items: center; gap: 1.5rem;">
                 <div id="rc-circuit-container" class="status-indicator" title="Estado del Circuit Breaker de Recurso Confiable" style="padding: 8px 16px; margin-right: -0.5rem; transition: all 0.3s; display: flex; flex-direction: column; align-items: center; gap: 4px;">
                     <div style="display: flex; align-items: center; gap: 0.5rem;">
-                        <span id="rc-circuit-badge" style="font-weight:bold;">● RC Online</span>
                         <div id="rc-circuit-pulse" class="pulse"></div>
+                        <span id="rc-circuit-badge" style="font-weight:bold;">RC Online</span>
                     </div>
                     <span id="rc-circuit-microcuts" style="font-size: 0.7rem; color: var(--color-gray-label); display: none;"></span>
                 </div>
@@ -2351,9 +2351,9 @@
 
                 if (cbEl && cbCont) {
                     const labels = {
-                        'CLOSED':    { text: '● RC Online',    color: 'var(--color-green-bright)', rgba: 'rgba(16, 185, 129,' },
-                        'OPEN':      { text: '⚡ RC Caído',     color: 'var(--color-red)',          rgba: 'rgba(239, 68, 68,' },
-                        'HALF_OPEN': { text: '◑ RC Probando', color: 'var(--color-yellow)',       rgba: 'rgba(251, 191, 36,' },
+                        'CLOSED':    { text: 'RC Online',    color: 'var(--color-green-bright)', rgba: 'rgba(16, 185, 129,' },
+                        'OPEN':      { text: 'RC Caído',     color: 'var(--color-red)',          rgba: 'rgba(239, 68, 68,' },
+                        'HALF_OPEN': { text: 'RC Probando', color: 'var(--color-yellow)',       rgba: 'rgba(251, 191, 36,' },
                     };
                     const info = labels[cbState] || labels['CLOSED'];
                     cbEl.textContent   = info.text;
