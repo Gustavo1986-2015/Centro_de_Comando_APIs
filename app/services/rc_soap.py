@@ -16,7 +16,19 @@ logger = logging.getLogger(__name__)
 RC_USERNAME = os.getenv("RC_USERNAME", "demo")
 RC_PASSWORD = os.getenv("RC_PASSWORD", "demo")
 RC_ENDPOINT = os.getenv("RC_ENDPOINT", "http://gps.rcontrol.com.mx/Tracking/wcf/RCService.svc")
-RC_USE_MOCK = os.getenv("RC_USE_MOCK", "True").lower() == "true"
+RC_USE_MOCK = os.getenv("RC_USE_MOCK", "False").lower() == "true"
+APP_ENV = os.getenv("APP_ENV", "production").lower()
+
+if RC_USE_MOCK:
+    logger.warning(
+        "⚠️ RC_USE_MOCK=True — los eventos NO se enviarán a Recurso Confiable. "
+        "Solo usar en desarrollo."
+    )
+    if APP_ENV == "production":
+        raise RuntimeError(
+            "RC_USE_MOCK=True está prohibido en APP_ENV=production. "
+            "Setea RC_USE_MOCK=False y configura credenciales RC reales."
+        )
 
 class RCSOAPClient:
     _global_zeep_client = None
