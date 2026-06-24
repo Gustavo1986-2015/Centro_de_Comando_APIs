@@ -2044,20 +2044,28 @@
                 alert("No hay vehículos para copiar.");
                 return;
             }
-            let all = [];
+            const dateVal = document.getElementById('veh-date-filter')?.value || new Date().toISOString().split('T')[0];
+            let outputDict = { 
+                fecha: dateVal, 
+                proveedores: {} 
+            };
+            let totalCopied = 0;
+
             for (const [key, info] of Object.entries(_lastVehicleData)) {
                 if (info.vehicles && info.vehicles.length > 0) {
-                    all.push(...info.vehicles);
+                    const providerName = `${info.provider} ${info.env}`;
+                    outputDict.proveedores[providerName] = info.vehicles;
+                    totalCopied += info.vehicles.length;
                 }
             }
-            const unique = [...new Set(all)];
-            if (unique.length === 0) {
+
+            if (totalCopied === 0) {
                 alert("No hay vehículos para copiar.");
                 return;
             }
             try {
-                await navigator.clipboard.writeText(unique.join('\\n'));
-                alert(`Copiadas ${unique.length} patentes únicas al portapapeles.`);
+                await navigator.clipboard.writeText(JSON.stringify(outputDict, null, 2));
+                alert(`Copiadas ${totalCopied} patentes al portapapeles en formato estructurado.`);
             } catch (err) {
                 alert("Error al copiar al portapapeles.");
             }
