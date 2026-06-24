@@ -153,7 +153,6 @@ async def send_batch_and_measure(canonical_events, rc_client):
             success, job_id, raw_response = results[0]
             if not success and "rc_conn_err" in str(job_id):
                 # Es un error de conexión real a RC
-                _rc_circuit_breaker.record_failure()
                 raise Exception(raw_response)
                 
         _rc_circuit_breaker.record_success()
