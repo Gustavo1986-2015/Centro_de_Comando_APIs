@@ -1105,6 +1105,7 @@
                             <th>Proveedor</th>
                             <th>Entorno</th>
                             <th>Activo (Worker)</th>
+                            <th>Envío Simulado a RC</th>
                             <th>RC Usuario</th>
                             <th>RC Password</th>
                             <th>Purga (min)</th>
@@ -2658,6 +2659,12 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
                                     <span class="slider"></span>
                                 </label>
                             </td>
+                            <td>
+                                <label class="switch" title="Si está activo, los eventos se envían a RC pero de forma simulada. Útil para pruebas.">
+                                    <input type="checkbox" id="mock_${c._originalIdx}" ${c.use_mock ? 'checked' : ''}>
+                                    <span class="slider" style="background-color: var(--color-yellow);"></span>
+                                </label>
+                            </td>
                             <td><input class="form-control" type="text" id="user_${c._originalIdx}" value="${c.rc_user}"></td>
                             <td><input class="form-control" type="password" id="pass_${c._originalIdx}" value="${c.rc_password}"></td>
                             <td><input class="form-control" type="number" id="purge_${c._originalIdx}" value="${c.purge_interval_min}" style="width: 80px;"></td>
@@ -2682,6 +2689,7 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
             const updates = currentConfigs.map((c, idx) => ({
                 id: c.id,
                 is_active: document.getElementById(`active_${idx}`).checked,
+                use_mock: document.getElementById(`mock_${idx}`).checked,
                 rc_user: document.getElementById(`user_${idx}`).value,
                 rc_password: document.getElementById(`pass_${idx}`).value,
                 purge_interval_min: parseInt(document.getElementById(`purge_${idx}`).value) || 15,

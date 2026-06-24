@@ -42,6 +42,9 @@ def check_and_migrate_db():
             if "queue_backend" not in columns:
                 cursor.execute("ALTER TABLE provider_config ADD COLUMN queue_backend TEXT DEFAULT 'sqlite'")
                 conn.commit()
+            if "use_mock" not in columns:
+                cursor.execute("ALTER TABLE provider_config ADD COLUMN use_mock BOOLEAN DEFAULT 1")
+                conn.commit()
             if "mapping_schema" not in columns:
                 cursor.execute("ALTER TABLE provider_config ADD COLUMN mapping_schema JSON DEFAULT '{}'")
                 conn.commit()

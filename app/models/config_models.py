@@ -10,6 +10,7 @@ class ProviderConfig(Base):
     is_active = Column(Boolean, default=True)
     rc_user = Column(String, default="")
     rc_password = Column(String, default="")
+    use_mock = Column(Boolean, default=True)
     purge_interval_min = Column(Integer, default=15)
     run_interval_sec = Column(Integer, default=5)
     queue_backend = Column(String, default="sqlite") # sqlite, redis, postgres

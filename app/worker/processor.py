@@ -209,8 +209,9 @@ async def process_provider_events(provider: str, env: str):
         conf = db_conf.query(ProviderConfig).filter_by(provider_name=provider, env=env).first()
         rc_u = conf.rc_user if conf else None
         rc_p = conf.rc_password if conf else None
+        rc_use_mock = conf.use_mock if conf and hasattr(conf, 'use_mock') else True
         db_conf.close()
-        rc_client = get_rc_client(rc_u, rc_p)
+        rc_client = get_rc_client(rc_u, rc_p, use_mock=rc_use_mock)
         
         # Semáforo para limitar concurrencia a RC y prevenir saturación por ráfagas (burst)
         soap_semaphore = asyncio.Semaphore(4)

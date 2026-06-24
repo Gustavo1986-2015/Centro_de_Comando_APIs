@@ -88,6 +88,7 @@ class ConfigUpdate(BaseModel):
     is_active: bool
     rc_user: str
     rc_password: str
+    use_mock: bool
     purge_interval_min: int
     run_interval_sec: int
     queue_backend: str
@@ -415,6 +416,7 @@ async def create_provider(payload: dict, _: None = Depends(verify_dashboard_auth
             provider_name=provider_name,
             env="prod",
             is_active=False,
+            use_mock=True,
             queue_backend="sqlite",
             mapping_schema={}
         )
@@ -422,6 +424,7 @@ async def create_provider(payload: dict, _: None = Depends(verify_dashboard_auth
             provider_name=provider_name,
             env="test",
             is_active=True,
+            use_mock=True,
             queue_backend="sqlite",
             mapping_schema={}
         )
@@ -533,6 +536,7 @@ async def get_all_configs(_: None = Depends(verify_dashboard_auth)):
             "is_active": c.is_active,
             "rc_user": c.rc_user,
             "rc_password": "••••••••" if c.rc_password else "",
+            "use_mock": c.use_mock,
             "purge_interval_min": c.purge_interval_min,
             "run_interval_sec": c.run_interval_sec,
             "queue_backend": c.queue_backend if hasattr(c, 'queue_backend') and c.queue_backend else "sqlite"
@@ -551,6 +555,7 @@ async def update_configs(updates: List[ConfigUpdate], _: None = Depends(verify_d
                 conf.rc_user = u.rc_user
                 if u.rc_password and u.rc_password != "••••••••":
                     conf.rc_password = u.rc_password
+                conf.use_mock = u.use_mock
                 conf.purge_interval_min = u.purge_interval_min
                 conf.run_interval_sec = u.run_interval_sec
                 conf.queue_backend = u.queue_backend.lower()
