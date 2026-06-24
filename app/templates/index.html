@@ -969,8 +969,12 @@
         
         <div style="margin-left: auto; display: flex; flex-direction: column; align-items: flex-end; gap: 0.5rem;">
             <div style="display: flex; align-items: center; gap: 1.5rem;">
-                <div id="rc-circuit-container" class="status-indicator" title="Estado del Circuit Breaker de Recurso Confiable" style="padding: 8px 16px; margin-right: -0.5rem; transition: all 0.3s;">
-                    <span id="rc-circuit-badge">● RC Online</span>
+                <div id="rc-circuit-container" class="status-indicator" title="Estado del Circuit Breaker de Recurso Confiable" style="padding: 8px 16px; margin-right: -0.5rem; transition: all 0.3s; display: flex; flex-direction: column; align-items: center; gap: 4px;">
+                    <div style="display: flex; align-items: center; gap: 0.5rem;">
+                        <span id="rc-circuit-badge" style="font-weight:bold;">● RC Online</span>
+                        <div id="rc-circuit-pulse" class="pulse"></div>
+                    </div>
+                    <span id="rc-circuit-microcuts" style="font-size: 0.7rem; color: var(--color-gray-label); display: none;"></span>
                 </div>
                 <div class="status-indicator" title="Estado del servicio de escucha en vivo">
                     <span id="sync-status">Conectado y Escuchando</span>
@@ -2339,8 +2343,12 @@
 
                 // Estado del Circuit Breaker de RC
                 const cbState = data.rc_circuit_state || 'CLOSED';
+                const cbFailures = data.rc_failure_count || 0;
                 const cbEl    = document.getElementById('rc-circuit-badge');
                 const cbCont  = document.getElementById('rc-circuit-container');
+                const cbPulse = document.getElementById('rc-circuit-pulse');
+                const cbCuts  = document.getElementById('rc-circuit-microcuts');
+
                 if (cbEl && cbCont) {
                     const labels = {
                         'CLOSED':    { text: '● RC Online',    color: 'var(--color-green-bright)', rgba: 'rgba(16, 185, 129,' },
@@ -2353,6 +2361,21 @@
                     cbCont.style.borderColor = info.rgba + ' 0.3)';
                     cbCont.style.background  = info.rgba + ' 0.1)';
                     cbCont.style.textShadow  = '0 0 10px ' + info.rgba + ' 0.5)';
+                    
+                    if (cbPulse) {
+                        cbPulse.style.backgroundColor = info.color;
+                    }
+                    if (cbCuts) {
+                        if (cbState === 'CLOSED' && cbFailures > 0) {
+                            cbCuts.style.display = 'block';
+                            cbCuts.textContent = `(Micro-cortes: ${cbFailures}/5)`;
+                        } else if (cbState !== 'CLOSED') {
+                            cbCuts.style.display = 'block';
+                            cbCuts.textContent = `(Reconectando...)`;
+                        } else {
+                            cbCuts.style.display = 'none';
+                        }
+                    }
                 }
             } catch (error) {
                 console.error("Error procesando data SSE:", error);

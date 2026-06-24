@@ -331,7 +331,8 @@ async def get_stats_data(
         "recent": recent_list,
         "throughput": throughput_per_provider,
         "all_providers": list(set([p.provider_name for p in providers])),
-        "rc_circuit_state": _rc_circuit_breaker.state
+        "rc_circuit_state": _rc_circuit_breaker.state,
+        "rc_failure_count": _rc_circuit_breaker.failure_count
     }
 
 @router.get("/api/config/providers")
