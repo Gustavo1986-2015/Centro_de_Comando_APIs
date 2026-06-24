@@ -43,7 +43,7 @@ class RCSOAPClient:
                 
                 # Configurar timeout explícito para que el worker no se quede colgado
                 session = requests.Session()
-                session.timeout = 25  # 25 segundos máximo de espera (Read y Connect)
+                session.timeout = (5, 25)  # (connect_timeout, read_timeout)
                 transport = Transport(session=session)
                 
                 wsdl = endpoint + "?wsdl"

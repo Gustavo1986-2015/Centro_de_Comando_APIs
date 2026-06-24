@@ -22,8 +22,6 @@ def dynamic_md5(pwd: str) -> tuple[str, str]:
 
 from app.core.dynamic_mapper import DynamicMapper
 
-LAST_SEEN_TELEMETRY = {}
-
 logger = logging.getLogger(__name__)
 
 async def execute_fetch(fetch_config: dict) -> dict | list:

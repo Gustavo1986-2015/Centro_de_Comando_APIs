@@ -563,50 +563,40 @@ async def purge_provider_events(provider: str, env: str):
         today_start_local = datetime.combine(local_now.date(), datetime.min.time()).replace(tzinfo=local_now.tzinfo)
         today_start = today_start_local.astimezone(timezone.utc).replace(tzinfo=None)
         
-        # Obtener los registros a eliminar
-        records_to_delete = db.query(NormalizedRCEvent).filter(
+        # Obtener los registros a eliminar (usando streaming para no explotar la RAM)
+        query = db.query(NormalizedRCEvent).filter(
             NormalizedRCEvent.status.in_(["sent", "failed"]),
             NormalizedRCEvent.created_at < today_start
-        ).all()
+        )
         
-        deleted_count = len(records_to_delete)
+        # Guardar en JSONL de a bloques
+        month_str = local_now.strftime("%Y-%m")
+        day_str = local_now.strftime("%Y-%m-%d")
+        backup_dir = os.path.join("db", "backups_diarios", f"{provider}_{env}", month_str)
+        os.makedirs(backup_dir, exist_ok=True)
+        backup_file = os.path.join(backup_dir, f"procesados_{day_str}.jsonl")
+        
+        deleted_count = 0
+        def write_backup():
+            nonlocal deleted_count
+            with open(backup_file, "a", encoding="utf-8") as f:
+                for r in query.yield_per(500):
+                    deleted_count += 1
+                    event_dict = {
+                        "id": r.id,
+                        "provider": r.provider,
+                        "env": env,
+                        "chassis": r.chassis_number,
+                        "status": r.status,
+                        "created_at": r.created_at.isoformat() if r.created_at else None,
+                        "payload": r.raw_data,
+                        "response": r.rc_response
+                    }
+                    f.write(json.dumps(event_dict, ensure_ascii=False) + "\n")
+                    
+        await asyncio.to_thread(write_backup)
         
         if deleted_count > 0:
-            # Agrupar por mes y guardar JSONs
-            month_str = local_now.strftime("%Y-%m")
-            day_str = local_now.strftime("%Y-%m-%d")
-            backup_dir = os.path.join("db", "backups_diarios", f"{provider}_{env}", month_str)
-            os.makedirs(backup_dir, exist_ok=True)
-            
-            backup_file = os.path.join(backup_dir, f"procesados_{day_str}.json")
-            
-            data_to_save = []
-            for r in records_to_delete:
-                data_to_save.append({
-                    "id": r.id,
-                    "provider": r.provider,
-                    "env": env,
-                    "chassis": r.chassis_number,
-                    "status": r.status,
-                    "created_at": r.created_at.isoformat() if r.created_at else None,
-                    "payload": r.raw_data,
-                    "response": r.rc_response
-                })
-                
-            def write_backup():
-                existing_data = []
-                if os.path.exists(backup_file):
-                    try:
-                        with open(backup_file, "r", encoding="utf-8") as f:
-                            existing_data = json.load(f)
-                    except Exception:
-                        pass
-                existing_data.extend(data_to_save)
-                with open(backup_file, "w", encoding="utf-8") as f:
-                    json.dump(existing_data, f, ensure_ascii=False, indent=2)
-                    
-            await asyncio.to_thread(write_backup)
-            
             # Ejecutar el borrado en SQLite
             db.query(NormalizedRCEvent).filter(
                 NormalizedRCEvent.status.in_(["sent", "failed"]),
