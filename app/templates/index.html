@@ -2660,10 +2660,24 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
                                 </label>
                             </td>
                             <td>
-                                <label class="switch" title="Si está activo, los eventos se envían a RC pero de forma simulada. Útil para pruebas.">
-                                    <input type="checkbox" id="mock_${c._originalIdx}" ${c.use_mock ? 'checked' : ''}>
-                                    <span class="slider" style="background-color: var(--color-yellow);"></span>
-                                </label>
+                                <div style="display: flex; align-items: center;">
+                                    <label class="switch" title="Si está activo, los eventos se envían a RC pero de forma simulada. Útil para pruebas.">
+                                        <input type="checkbox" id="mock_${c._originalIdx}" ${c.use_mock ? 'checked' : ''} onchange="
+                                            const lbl = document.getElementById('mock_lbl_${c._originalIdx}');
+                                            if (this.checked) {
+                                                lbl.innerText = 'SIMULANDO';
+                                                lbl.style.color = 'var(--color-green-vibrant)';
+                                            } else {
+                                                lbl.innerText = 'REAL';
+                                                lbl.style.color = '#EF4444';
+                                            }
+                                        ">
+                                        <span class="slider"></span>
+                                    </label>
+                                    <span id="mock_lbl_${c._originalIdx}" style="font-size: 0.75rem; font-weight: 700; margin-left: 8px; display: inline-block; width: 80px; color: ${c.use_mock ? 'var(--color-green-vibrant)' : '#EF4444'};">
+                                        ${c.use_mock ? 'SIMULANDO' : 'REAL'}
+                                    </span>
+                                </div>
                             </td>
                             <td><input class="form-control" type="text" id="user_${c._originalIdx}" value="${c.rc_user}"></td>
                             <td><input class="form-control" type="password" id="pass_${c._originalIdx}" value="${c.rc_password}"></td>
