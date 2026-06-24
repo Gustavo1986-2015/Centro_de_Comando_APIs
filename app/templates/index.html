@@ -967,15 +967,20 @@
         <div class="hamburger" title="Menú de Opciones" onclick="toggleMenu()">☰</div>
         <div class="title" title="Panel principal del Hub Telemático">Centro de Comando APIs | Assistcargo</div>
         
-        <div style="margin-left: auto; display: flex; align-items: center; gap: 1.5rem;">
-            <label style="display: flex; align-items: center; gap: 0.4rem; cursor: pointer; font-size: 0.85rem; color: var(--color-gray-label);" title="Reducir espacios visuales">
+        <div style="margin-left: auto; display: flex; flex-direction: column; align-items: flex-end; gap: 0.5rem;">
+            <div style="display: flex; align-items: center; gap: 1.5rem;">
+                <div id="rc-circuit-container" class="status-indicator" title="Estado del Circuit Breaker de Recurso Confiable" style="padding: 8px 16px; margin-right: -0.5rem; transition: all 0.3s;">
+                    <span id="rc-circuit-badge">● RC Online</span>
+                </div>
+                <div class="status-indicator" title="Estado del servicio de escucha en vivo">
+                    <span id="sync-status">Conectado y Escuchando</span>
+                    <div class="pulse"></div>
+                </div>
+            </div>
+            <label style="display: flex; align-items: center; gap: 0.4rem; cursor: pointer; font-size: 0.85rem; color: var(--color-gray-label); margin-top: 0.2rem;" title="Reducir espacios visuales">
                 <input type="checkbox" id="compact-mode-toggle" onchange="toggleCompactMode(this.checked)" style="cursor: pointer;">
                 <span>Modo Compacto</span>
             </label>
-            <div class="status-indicator" title="Estado del servicio de escucha en vivo">
-                <span id="sync-status">Conectado y Escuchando</span>
-                <div class="pulse"></div>
-            </div>
         </div>
     </header>
 
@@ -2080,8 +2085,7 @@
                 URL.revokeObjectURL(url);
                 
                 // Mostrar confirmación
-                showDisconnectBanner(`Datos de ${chassis} copiados y descargados.`);
-                setTimeout(hideDisconnectBanner, 3000);
+                alert(`Datos de ${chassis} copiados y descargados.`);
             } catch (err) {
                 alert(`Error obteniendo datos de ${chassis}: ` + err.message);
             }
@@ -2324,6 +2328,24 @@
 
                 document.getElementById('sync-status').textContent = 'Conectado y Escuchando';
                 document.querySelector('.pulse').style.backgroundColor = 'var(--color-green-bright)';
+
+                // Estado del Circuit Breaker de RC
+                const cbState = data.rc_circuit_state || 'CLOSED';
+                const cbEl    = document.getElementById('rc-circuit-badge');
+                const cbCont  = document.getElementById('rc-circuit-container');
+                if (cbEl && cbCont) {
+                    const labels = {
+                        'CLOSED':    { text: '● RC Online',    color: 'var(--color-green-bright)', rgba: 'rgba(16, 185, 129,' },
+                        'OPEN':      { text: '⚡ RC Caído',     color: 'var(--color-red)',          rgba: 'rgba(239, 68, 68,' },
+                        'HALF_OPEN': { text: '◑ RC Probando', color: 'var(--color-yellow)',       rgba: 'rgba(251, 191, 36,' },
+                    };
+                    const info = labels[cbState] || labels['CLOSED'];
+                    cbEl.textContent   = info.text;
+                    cbEl.style.color   = info.color;
+                    cbCont.style.borderColor = info.rgba + ' 0.3)';
+                    cbCont.style.background  = info.rgba + ' 0.1)';
+                    cbCont.style.textShadow  = '0 0 10px ' + info.rgba + ' 0.5)';
+                }
             } catch (error) {
                 console.error("Error procesando data SSE:", error);
                 alert("JS Error en renderStats: " + error.message);
