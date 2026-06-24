@@ -1,5 +1,8 @@
 import os
-os.environ["RC_USE_MOCK"] = "True"
+# Permitir correr el smoke test golpeando RC real si el desarrollador lo pide explícitamente:
+# ej: RC_USE_MOCK=False python -m app.worker.test_worker
+if "RC_USE_MOCK" not in os.environ:
+    os.environ["RC_USE_MOCK"] = "True"
 os.environ["APP_ENV"] = "development"
 
 import asyncio
