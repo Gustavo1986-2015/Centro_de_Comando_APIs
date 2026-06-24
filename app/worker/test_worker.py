@@ -1,6 +1,10 @@
 import os
-# Permitir correr el smoke test golpeando RC real si el desarrollador lo pide explícitamente:
-# ej: RC_USE_MOCK=False python -m app.worker.test_worker
+from dotenv import load_dotenv
+
+# Cargar configuración desde el archivo .env
+load_dotenv()
+
+# Si RC_USE_MOCK no fue explícitamente configurado en el .env, por seguridad forzamos True
 if "RC_USE_MOCK" not in os.environ:
     os.environ["RC_USE_MOCK"] = "True"
 os.environ["APP_ENV"] = "development"
