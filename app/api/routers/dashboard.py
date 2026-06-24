@@ -13,6 +13,7 @@ import re
 from app.database import get_session
 from app.models.db_models import NormalizedRCEvent
 from app.models.config_models import ProviderConfig, DailyStat
+from app.worker.processor import _rc_circuit_breaker
 from pydantic import BaseModel
 from typing import List, Optional
 from datetime import datetime, timezone, timedelta
@@ -329,7 +330,8 @@ async def get_stats_data(
         "push_sla_target_ms":      PUSH_SLA_MS,
         "recent": recent_list,
         "throughput": throughput_per_provider,
-        "all_providers": list(set([p.provider_name for p in providers]))
+        "all_providers": list(set([p.provider_name for p in providers])),
+        "rc_circuit_state": _rc_circuit_breaker.state
     }
 
 @router.get("/api/config/providers")
