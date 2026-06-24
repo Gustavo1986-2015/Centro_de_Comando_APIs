@@ -38,8 +38,16 @@ class RCSOAPClient:
         with cls._global_lock:
             if not cls._global_zeep_client:  # double-check dentro del lock
                 from zeep import Client
+                from zeep.transports import Transport
+                import requests
+                
+                # Configurar timeout explícito para que el worker no se quede colgado
+                session = requests.Session()
+                session.timeout = 25  # 25 segundos máximo de espera (Read y Connect)
+                transport = Transport(session=session)
+                
                 wsdl = endpoint + "?wsdl"
-                cls._global_zeep_client = Client(wsdl)
+                cls._global_zeep_client = Client(wsdl, transport=transport)
         return cls._global_zeep_client
 
     def _load_token_from_cache(self):
