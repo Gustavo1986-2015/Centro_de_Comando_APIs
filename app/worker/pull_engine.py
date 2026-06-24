@@ -248,15 +248,9 @@ async def process_and_enqueue(provider_name: str, env: str, data: dict|list, map
                 
                 if not canonical_list:
                     continue
-                
-                # Deduplicación basada en el primer evento (posición base)
-                base_canonical = canonical_list[0]
-                cache_key = f"{provider_name}_{env}_{base_canonical.chassis_number}"
-                date_str = base_canonical.date
-                if date_str and LAST_SEEN_TELEMETRY.get(cache_key) == date_str:
-                    continue
-                LAST_SEEN_TELEMETRY[cache_key] = date_str
-
+                # Deduplicación eliminada a petición del usuario:
+                # Ahora se procesará siempre lo que devuelva el API en cada ciclo de sondeo,
+                # incluso si el vehículo está detenido y la fecha/hora es idéntica al ciclo anterior.
             except Exception:
                 continue
 
