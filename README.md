@@ -17,10 +17,11 @@ El sistema ha sido diseñado desde cero para soportar un alto throughput (miles 
 ### 2. Base de Datos Fragmentada (Sharding)
 Para evitar el "Database Locked" característico de SQLite bajo estrés, se implementa **Sharding por Proveedor y Entorno**. Cada integración escribe exclusivamente en su propia subcarpeta y archivo físico (ej. `db/protrack/prod.db`, `db/schmitz/test.db`). Esto garantiza que picos de tráfico en un proveedor no afecten el rendimiento ni la latencia de otros proveedores, a la vez que mantiene el directorio raíz limpio.
 
-### 3. Modelo Canónico y Resiliencia
+### 3. Modelo Canónico y Resiliencia Extrema
 - **Validación Estricta:** Todo dato entrante se filtra mediante `Pydantic` hacia el **Modelo Canónico** de Assistcargo.
-- **Reintentos Inteligentes (Backoff Lineal):** Si un envío a RC falla (timeout, error 500), el evento queda retenido y se reintenta progresivamente (Ej. +10s, +45s, +120s, +300s). El Worker aísla los eventos fallidos para que el tráfico nuevo (el "happy path") siga fluyendo inmediatamente.
-- **Resguardo Crudo (Auditor):** Cada payload JSON original que ingresa se guarda en logs `.jsonl` rotativos antes del procesamiento, permitiendo auditoría y recuperación ante desastres sin pérdida de datos.
+- **Circuit Breaker y Timeouts:** Si un envío a RC falla (ej. timeout de red), el sistema absorbe el impacto. Zeep cuenta con un **timeout granular (5s conexión / 25s lectura)**. Si ocurren 5 fallos consecutivos, el "Circuit Breaker" corta el tráfico hacia RC (estado OPEN) para evitar congestión, hasta que la red se recupere.
+- **Reintentos Inteligentes (Backoff Lineal/Exponencial):** Los eventos fallidos quedan retenidos y se reintentan progresivamente (Ej. +10s, +45s, +120s...). El Worker aísla los eventos fallidos para que el tráfico nuevo fluya inmediatamente.
+- **Respaldo JSONL y Auto-Purga:** Todo payload se guarda en logs rotativos `.jsonl` y los eventos procesados se respaldan en disco agrupados mensualmente. El sistema auto-purga archivos mayores a 30 días para proteger el espacio del servidor y opera la BD SQLite estrictamente como una RAM volátil.
 
 ### 4. Monitoreo Táctico y Dashboard en Tiempo Real
 - **Frontend SSE:** Un Dashboard moderno, estéticamente enriquecido, impulsado por *Server-Sent Events*. Provee telemetría en vivo y trazabilidad sin saturar el servidor mediante técnicas de "Long Polling".
