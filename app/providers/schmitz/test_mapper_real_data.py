@@ -5,10 +5,25 @@ from app.providers.schmitz.mapper import map_schmitz_payload
 import logging
 logger = logging.getLogger(__name__)
 
+import sys
+
+PAYLOADS_DIR = os.getenv("SCHMITZ_PAYLOADS_DIR")
 
 def test_real_data():
-    base_dir = r"C:\Users\gustavogomez\Downloads\Quickstart_RESTPushAPI_v_1_35_v01_eng\Demo_Payloads"
+    if not PAYLOADS_DIR:
+        print("SCHMITZ_PAYLOADS_DIR no seteado. Saltando test (no hay payloads disponibles).")
+        sys.exit(0)
     
+    if not os.path.isdir(PAYLOADS_DIR):
+        print(f"SCHMITZ_PAYLOADS_DIR='{PAYLOADS_DIR}' no es un directorio valido. Saltando test.")
+        sys.exit(0)
+        
+    if not os.listdir(PAYLOADS_DIR):
+        logger.warning(f"El directorio '{PAYLOADS_DIR}' existe pero esta vacio. Saltando test.")
+        sys.exit(0)
+        
+    print(f"Probando mapper con payloads de: {PAYLOADS_DIR}")
+    base_dir = PAYLOADS_DIR
     total_files = 0
     success = 0
     failures = 0
