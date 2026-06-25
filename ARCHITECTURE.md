@@ -134,3 +134,10 @@ El envío SOAP a Recurso Confiable (RC) es el eslabón más frágil por las fluc
 ## 9. Filosofía de Deduplicación en PULL
 
 Para las APIs de extracción (PULL, ej. Protrack), el sistema adopta una postura "Passthrough Directo". No se realiza deduplicación local basada en coordenadas idénticas. Si el vehículo está detenido y la API del proveedor emite repetidamente la misma posición, el motor insertará todos y cada uno de esos registros. La responsabilidad de filtrado estático se delega integralmente a la capa del cliente final (RC).
+
+---
+
+## 10. Implementación de Colas y Backends
+
+Actualmente, el sistema utiliza **SQLite** de forma nativa para el manejo de las colas asíncronas (`app/core/sqlite_queue.py`), aprovechando el esquema de Sharding Dinámico detallado en la sección 2.
+**Redis backend:** planeado, no implementado. La clase `RedisQueue` existe como un *stub* (esqueleto) para futura implementación. El factory de colas fallará explícitamente (`NotImplementedError`) en el arranque si se intenta activar el backend `redis`.

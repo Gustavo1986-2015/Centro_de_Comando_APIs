@@ -9,6 +9,19 @@ logger = logging.getLogger(__name__)
 
 class RedisQueue(MessageQueueInterface):
     """
+    STUB — No implementado. Existe como esqueleto para futura implementacion. El factory fallara explicitamente si se selecciona este backend.
+    
+    TODO: Implementar los siguientes métodos cuando se decida construir Redis de verdad:
+    - __init__ (conexión a Redis)
+    - push_event
+    - get_batch_ready_for_push
+    - mark_events_as_pushing
+    - mark_events_as_success
+    - mark_events_as_failed
+    - reset_stuck_pushing_events
+    - mark_events_as_ignored
+    - cleanup_old_events
+    
     Implementación base para Cola de Mensajes usando Redis Streams.
     
     ESTRUCTURA PROPUESTA (Para futura migración completa):
