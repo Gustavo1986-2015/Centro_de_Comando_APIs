@@ -32,11 +32,13 @@ class QueueFactory:
                 backend = os.getenv("QUEUE_BACKEND", "sqlite").lower()
 
             if backend == "redis":
-                logger.critical(f"[QueueFactory] ¡ALERTA! RedisQueue está instanciado para {key} pero NO ESTÁ IMPLEMENTADO.")
-                logger.info(f"[QueueFactory] Inicializando REDIS para {key}")
-                cls._instances[key] = RedisQueue()
-            else:
-                logger.info(f"[QueueFactory] Inicializando SQLITE para {key}")
-                cls._instances[key] = SQLiteQueue()
+                raise NotImplementedError(
+                    "Backend Redis no implementado todavia. Use queue_backend='sqlite'. "
+                    "La clase RedisQueue existe como placeholder para futura implementacion."
+                )
+            if backend not in ("sqlite",):
+                raise ValueError(f"Backend de cola no soportado: '{backend}'. Valores validos: sqlite.")
+            logger.info(f"Queue backend en uso: sqlite (provider={provider}, env={env})")
+            cls._instances[key] = SQLiteQueue()
                 
         return cls._instances[key]
