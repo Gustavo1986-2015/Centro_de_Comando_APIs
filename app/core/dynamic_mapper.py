@@ -141,7 +141,7 @@ class DynamicMapper:
                     chassis_number = dict_entry.dict_value
                     logger.debug(f"Inyección al vuelo: {chassis_val} reemplazado por {chassis_number}")
             except Exception as e:
-                logger.warning(f"Excepción silenciada en ejecución: {e}")
+                logger.warning(f"Excepción capturada en dynamic_mapper: {e}")
                 logger.error(f"Error en inyección al vuelo para {provider_name}_{env}: {e}")
             finally:
                 db_global.close()

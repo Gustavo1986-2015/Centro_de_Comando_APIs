@@ -25,7 +25,7 @@ class CircuitBreaker:
               resultado = llamar_rc()
               cb.record_success()
           except Exception as e:
-              logger.warning(f"Excepción silenciada en ejecución: {e}")
+              logger.warning(f"Excepción capturada en processor: {e}")
               cb.record_failure()
       else:
           # RC sigue caído, omitir este ciclo
@@ -130,7 +130,7 @@ def trigger_worker(provider: str, env: str):
             loop = asyncio.get_running_loop()
             loop.call_soon_threadsafe(WORKER_TRIGGERS[key].set)
         except Exception as e:
-            logger.warning(f"Excepción silenciada en ejecución: {e}")
+            logger.warning(f"Excepción capturada en processor: {e}")
             pass
 
 async def send_batch_and_measure(canonical_events, rc_client):
@@ -163,7 +163,7 @@ async def send_batch_and_measure(canonical_events, rc_client):
         # Re-levantar la excepción del circuit breaker (para no sumar fallo doble)
         raise
     except Exception as e:
-        logger.warning(f"Excepción silenciada en ejecución: {e}")
+        logger.warning(f"Excepción capturada en processor: {e}")
         elapsed = time.time() - start_time
         _rc_circuit_breaker.record_failure()
         raise
@@ -253,7 +253,7 @@ async def process_provider_events(provider: str, env: str):
                 metrics["soap_ms"] = elapsed_sec * 1000
                 batch_outcome = (results, elapsed_sec)
             except Exception as e:
-                logger.warning(f"Excepción silenciada en ejecución: {e}")
+                logger.warning(f"Excepción capturada en processor: {e}")
                 batch_outcome = e
             
             # Clasificar resultados
@@ -330,7 +330,7 @@ async def process_provider_events(provider: str, env: str):
                                     "job_id": job_id
                                 })
                     except Exception as inner_e:
-                        logger.warning(f"Excepción silenciada en ejecución: {inner_e}")
+                        logger.warning(f"Excepción capturada en processor: {inner_e}")
                         updates_to_fail.append({
                             "event_id": db_event.id,
                             "elapsed_sec": None,
@@ -459,7 +459,7 @@ def update_daily_stats(provider: str, env: str):
             if p_stats and p_stats.get("avg_ms", 0) > 0:
                 avg_push_ms = p_stats["avg_ms"]
         except Exception as e:
-            logger.warning(f"Excepción silenciada en ejecución: {e}")
+            logger.warning(f"Excepción capturada en processor: {e}")
             pass
 
         

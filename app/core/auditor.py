@@ -33,5 +33,5 @@ def audit_event(provider: str, payload: dict):
         with open(log_file, "a", encoding="utf-8") as f:
             f.write(json_str_strict + "\n")
     except Exception as e:
-        logger.warning(f"Excepción silenciada en ejecución: {e}")
+        logger.warning(f"Excepción capturada en auditor: {e}")
         print(f"Error escribiendo auditoria para {provider}: {e}")

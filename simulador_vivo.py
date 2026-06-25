@@ -212,7 +212,7 @@ def enviar_payload(placa: str) -> tuple:
         ok  = res.status_code in [200, 202]
         return ok, None if ok else f"HTTP {res.status_code}", reason, extra
     except Exception as e:
-        logger.warning(f"Excepción silenciada en ejecución: {e}")
+        logger.warning(f"Excepción capturada en simulador_vivo: {e}")
         return False, str(e), reason, extra
 
 

@@ -105,6 +105,6 @@ async def watch_log_config(env_path=".env"):
         except asyncio.CancelledError:
             break
         except Exception as e:
-            logger.warning(f"Excepción silenciada al recargar config de logs: {e}")
+            logger.warning(f"Excepción capturada en logging_config al recargar: {e}")
             
         await asyncio.sleep(5)

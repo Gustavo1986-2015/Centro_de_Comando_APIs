@@ -80,14 +80,14 @@ def _persist_batch(batch: list):
                 except ValueError as ve:
                     logger.warning(f"Drop and Forget activado: {ve}")
                 except Exception as e:
-                    logger.warning(f"Excepción silenciada en ejecución: {e}")
+                    logger.warning(f"Excepción capturada en schmitz: {e}")
                     logger.error(f"Error procesando payload en batch: {e}")
             
             if events_to_add:
                 db.add_all(events_to_add)
                 db.commit()
         except Exception as e:
-            logger.warning(f"Excepción silenciada en ejecución: {e}")
+            logger.warning(f"Excepción capturada en schmitz: {e}")
             logger.error(f"Error saving batch: {e}")
         finally:
             db.close()
@@ -121,7 +121,7 @@ async def _batch_processor_loop():
                 # Avisar al worker que hay datos listos, el env es el del primer elemento del batch
                 trigger_worker("schmitz", batch[0][1])
             except Exception as e:
-                logger.warning(f"Excepción silenciada en ejecución: {e}")
+                logger.warning(f"Excepción capturada en schmitz: {e}")
                 pass
             
             for _ in range(len(batch)):
@@ -142,13 +142,13 @@ async def schmitz_webhook(
         try:
             payload = await request.json()
         except Exception as e:
-            logger.warning(f"Excepción silenciada en ejecución: {e}")
+            logger.warning(f"Excepción capturada en schmitz: {e}")
             # Schmitz manual dice "always return 200/202"
             return {"status": "accepted"}
 
         _webhook_queue.put_nowait((payload, env))
     except Exception as e:
-        logger.warning(f"Excepción silenciada en ejecución: {e}")
+        logger.warning(f"Excepción capturada en schmitz: {e}")
         logger.error(f"Error inesperado en webhook: {e}")
     
     return {"status": "accepted"}
@@ -174,12 +174,12 @@ async def schmitz_json_data(
         try:
             payload = await request.json()
         except Exception as e:
-            logger.warning(f"Excepción silenciada en ejecución: {e}")
+            logger.warning(f"Excepción capturada en schmitz: {e}")
             return {"status": "accepted"}
 
         _webhook_queue.put_nowait((payload, env))
     except Exception as e:
-        logger.warning(f"Excepción silenciada en ejecución: {e}")
+        logger.warning(f"Excepción capturada en schmitz: {e}")
         logger.error(f"Error inesperado en Json/Data: {e}")
         
     return {"status": "accepted"}
