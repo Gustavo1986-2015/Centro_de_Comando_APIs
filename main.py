@@ -1,4 +1,7 @@
 from fastapi import FastAPI
+from app.core.logging_config import setup_logging, watch_log_config
+setup_logging()
+
 import asyncio
 from contextlib import asynccontextmanager
 import os
@@ -26,6 +29,7 @@ async def lifespan(app: FastAPI):
 
     task_worker = asyncio.create_task(worker_loop())
     task_broadcast = asyncio.create_task(broadcast_loop())
+    task_watch_logs = asyncio.create_task(watch_log_config())
     await start_webhook_batch_processor()
 
     yield
@@ -34,8 +38,9 @@ async def lifespan(app: FastAPI):
     # Cancelar tareas graceful al cerrar la app
     task_worker.cancel()
     task_broadcast.cancel()
+    task_watch_logs.cancel()
     # Esperar cancelación sin bloquear el shutdown
-    for task in (task_worker, task_broadcast):
+    for task in (task_worker, task_broadcast, task_watch_logs):
         try:
             await task
         except asyncio.CancelledError:
