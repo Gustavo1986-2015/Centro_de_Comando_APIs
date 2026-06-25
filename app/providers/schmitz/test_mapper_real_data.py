@@ -49,7 +49,7 @@ def test_real_data():
                     success += 1
                     
                     # Imprimir datos clave para visualizarlos en logs
-                    codes = [m.event_code for m in mapped_list]
+                    codes = [m.code for m in mapped_list]
                     print(f"[OK] {os.path.basename(root)}/{f} -> "
                           f"Chassis: {mapped_data.chassis_number}, "
                           f"Lat: {mapped_data.latitude}, Speed: {mapped_data.speed}, "
