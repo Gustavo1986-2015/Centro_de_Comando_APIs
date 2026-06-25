@@ -47,7 +47,8 @@ async def dynamic_webhook_receive(
     # 2. Atrapar el Payload JSON
     try:
         payload = await request.json()
-    except Exception:
+    except Exception as e:
+        logger.warning(f"Excepción silenciada en ejecución: {e}")
         raise HTTPException(status_code=400, detail="El cuerpo de la petición debe ser un JSON válido.")
 
     # 3. Transformación Dinámica al Modelo Canónico (RC)
@@ -57,6 +58,7 @@ async def dynamic_webhook_receive(
             payload, mapping_schema, provider_name, env
         )
     except Exception as e:
+        logger.warning(f"Excepción silenciada en ejecución: {e}")
         logger.error(f"Error en DynamicMapper para {provider_name}: {e}")
         raise HTTPException(status_code=422, detail=f"Fallo al mapear los datos: {e}")
 
@@ -95,6 +97,7 @@ async def dynamic_webhook_receive(
         db_provider.add_all(new_events)
         db_provider.commit()
     except Exception as e:
+        logger.warning(f"Excepción silenciada en ejecución: {e}")
         db_provider.rollback()
         logger.error(f"Error DB guardando eventos de {provider_name}: {e}")
         raise HTTPException(status_code=500, detail="Error interno al guardar eventos.")

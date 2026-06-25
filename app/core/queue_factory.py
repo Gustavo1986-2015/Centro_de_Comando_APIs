@@ -27,6 +27,7 @@ class QueueFactory:
                     backend = config.queue_backend.lower()
                 db.close()
             except Exception as e:
+                logger.warning(f"Excepción silenciada en ejecución: {e}")
                 logger.error(f"[QueueFactory] No se pudo leer ProviderConfig de la BD para {key}: {e}")
                 backend = os.getenv("QUEUE_BACKEND", "sqlite").lower()
 

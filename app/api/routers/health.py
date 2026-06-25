@@ -33,6 +33,7 @@ async def health_check():
             conn.execute(text("SELECT 1"))
         checks["sqlite_global"] = True
     except Exception as e:
+        logger.warning(f"Excepción silenciada en ejecución: {e}")
         status = "unhealthy"
         
     # Validar soporte Redis
@@ -55,6 +56,7 @@ async def health_check():
         except ImportError:
             checks["redis"] = "module not installed"
         except Exception as e:
+            logger.warning(f"Excepción silenciada en ejecución: {e}")
             checks["redis"] = False
             logger.warning(f"Redis health check failed: {e}")
 

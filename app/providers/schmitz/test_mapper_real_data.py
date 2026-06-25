@@ -2,6 +2,9 @@ import os
 import json
 import traceback
 from app.providers.schmitz.mapper import map_schmitz_payload
+import logging
+logger = logging.getLogger(__name__)
+
 
 def test_real_data():
     base_dir = r"C:\Users\gustavogomez\Downloads\Quickstart_RESTPushAPI_v_1_35_v01_eng\Demo_Payloads"
@@ -31,6 +34,7 @@ def test_real_data():
                           f"Date: {mapped_data.date}")
                           
                 except Exception as e:
+                    logger.warning(f"Error de conversión de tipo: {e}")
                     failures += 1
                     print(f"[ERROR] {os.path.basename(root)}/{f}: {str(e)}")
                     traceback.print_exc()

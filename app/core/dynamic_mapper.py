@@ -96,7 +96,8 @@ class DynamicMapper:
                 if dt.tzinfo is None:
                     dt = dt.replace(tzinfo=timezone.utc)
                 return dt.astimezone(timezone.utc)
-            except Exception:
+            except Exception as e:
+                logger.warning(f"Error de conversión de tipo: {e}")
                 return None
                 
         def parse_float(val: Any) -> Optional[float]:
@@ -104,7 +105,8 @@ class DynamicMapper:
                 return None
             try:
                 return float(val)
-            except Exception:
+            except Exception as e:
+                logger.warning(f"Error de conversión de tipo: {e}")
                 return None
 
         # Buscar imei original para contingencia PULL y preservación
@@ -139,6 +141,7 @@ class DynamicMapper:
                     chassis_number = dict_entry.dict_value
                     logger.debug(f"Inyección al vuelo: {chassis_val} reemplazado por {chassis_number}")
             except Exception as e:
+                logger.warning(f"Excepción silenciada en ejecución: {e}")
                 logger.error(f"Error en inyección al vuelo para {provider_name}_{env}: {e}")
             finally:
                 db_global.close()
