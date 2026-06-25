@@ -34,7 +34,8 @@ def _is_safe_url(url: str) -> bool:
             return False
         ip = ipaddress.ip_address(socket.gethostbyname(host))
         return not (ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved)
-    except Exception:
+    except Exception as e:
+        logger.warning(f"Excepción silenciada en ejecución: {e}")
         return False
 
 @router.post("/catch/{session_id}")
@@ -45,7 +46,8 @@ async def catch_webhook(session_id: str, request: Request, _: None = Depends(ver
     """
     try:
         payload = await request.json()
-    except Exception:
+    except Exception as e:
+        logger.warning(f"Excepción silenciada en ejecución: {e}")
         # Intentar parsear como texto si no es JSON puro
         body_bytes = await request.body()
         payload = {"raw_text": body_bytes.decode('utf-8', errors='replace')}
@@ -135,7 +137,8 @@ async def fetch_api(request_data: dict = Body(...), _: None = Depends(verify_das
         
         try:
             resp_data = response.json()
-        except:
+        except Exception as e:
+            logger.warning(f"Excepción silenciada en ejecución: {e}")
             resp_data = response.text
             
         return {
@@ -149,6 +152,7 @@ async def fetch_api(request_data: dict = Body(...), _: None = Depends(verify_das
     except requests.exceptions.ConnectionError as e:
         raise HTTPException(status_code=502, detail=f"No se pudo conectar: {e}")
     except Exception as e:
+        logger.warning(f"Excepción silenciada en ejecución: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -192,7 +196,8 @@ async def fetch_token(request_data: dict = Body(...), _: None = Depends(verify_d
         
         try:
             resp_data = response.json()
-        except:
+        except Exception as e:
+            logger.warning(f"Excepción silenciada en ejecución: {e}")
             resp_data = {"raw": response.text}
         
         # Intentar extraer el token automáticamente de formatos comunes
@@ -210,5 +215,6 @@ async def fetch_token(request_data: dict = Body(...), _: None = Depends(verify_d
             "extracted_token": extracted_token
         }
     except Exception as e:
+        logger.warning(f"Excepción silenciada en ejecución: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 

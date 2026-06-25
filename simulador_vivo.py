@@ -8,6 +8,9 @@ Apunta al endpoint oficial /Json/Data con header X-Data-Type: Status.
 
 import requests, time, random, datetime, json
 from concurrent.futures import ThreadPoolExecutor
+import logging
+logger = logging.getLogger(__name__)
+
 
 # ==============================================================================
 # ⚙️ CONFIGURACIÓN DEL SIMULADOR (Modificá estos parámetros rápidos)
@@ -207,6 +210,7 @@ def enviar_payload(placa: str) -> tuple:
         ok  = res.status_code in [200, 202]
         return ok, None if ok else f"HTTP {res.status_code}", reason, extra
     except Exception as e:
+        logger.warning(f"Excepción silenciada en ejecución: {e}")
         return False, str(e), reason, extra
 
 

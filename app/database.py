@@ -3,6 +3,9 @@ from sqlalchemy.orm import sessionmaker, declarative_base
 from fastapi import Query
 from contextlib import contextmanager
 import os
+import logging
+logger = logging.getLogger(__name__)
+
 
 Base = declarative_base()
 
@@ -77,7 +80,8 @@ def check_and_migrate_db():
             if "avg_push_latency_ms" not in columns_stats:
                 cursor.execute("ALTER TABLE daily_stats ADD COLUMN avg_push_latency_ms REAL")
                 conn.commit()
-    except Exception:
+    except Exception as e:
+        logger.debug(f"Migración idempotente omitida o error esperado BD: {e}")
         pass
 
 def check_and_migrate_provider_db(provider: str, env: str):
@@ -108,7 +112,8 @@ def check_and_migrate_provider_db(provider: str, env: str):
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_chassis_status ON normalized_rc_events(chassis_number, status)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_updated_processing ON normalized_rc_events(status, updated_at)")
             conn.commit()
-    except Exception:
+    except Exception as e:
+        logger.warning(f"Excepción silenciada en ejecución: {e}")
         pass
 
 def get_engine(provider: str, env: str = "prod"):
@@ -167,7 +172,8 @@ def session_context(provider: str, env: str = "prod"):
     try:
         yield db
         db.commit()
-    except Exception:
+    except Exception as e:
+        logger.warning(f"Excepción silenciada en ejecución: {e}")
         db.rollback()
         raise
     finally:

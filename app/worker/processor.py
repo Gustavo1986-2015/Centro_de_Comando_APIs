@@ -24,7 +24,8 @@ class CircuitBreaker:
           try:
               resultado = llamar_rc()
               cb.record_success()
-          except Exception:
+          except Exception as e:
+              logger.warning(f"Excepción silenciada en ejecución: {e}")
               cb.record_failure()
       else:
           # RC sigue caído, omitir este ciclo
@@ -128,7 +129,8 @@ def trigger_worker(provider: str, env: str):
             import asyncio
             loop = asyncio.get_running_loop()
             loop.call_soon_threadsafe(WORKER_TRIGGERS[key].set)
-        except Exception:
+        except Exception as e:
+            logger.warning(f"Excepción silenciada en ejecución: {e}")
             pass
 
 async def send_batch_and_measure(canonical_events, rc_client):
@@ -161,6 +163,7 @@ async def send_batch_and_measure(canonical_events, rc_client):
         # Re-levantar la excepción del circuit breaker (para no sumar fallo doble)
         raise
     except Exception as e:
+        logger.warning(f"Excepción silenciada en ejecución: {e}")
         elapsed = time.time() - start_time
         _rc_circuit_breaker.record_failure()
         raise
@@ -250,6 +253,7 @@ async def process_provider_events(provider: str, env: str):
                 metrics["soap_ms"] = elapsed_sec * 1000
                 batch_outcome = (results, elapsed_sec)
             except Exception as e:
+                logger.warning(f"Excepción silenciada en ejecución: {e}")
                 batch_outcome = e
             
             # Clasificar resultados
@@ -326,6 +330,7 @@ async def process_provider_events(provider: str, env: str):
                                     "job_id": job_id
                                 })
                     except Exception as inner_e:
+                        logger.warning(f"Excepción silenciada en ejecución: {inner_e}")
                         updates_to_fail.append({
                             "event_id": db_event.id,
                             "elapsed_sec": None,
@@ -453,7 +458,8 @@ def update_daily_stats(provider: str, env: str):
             p_stats = get_push_stats(provider)
             if p_stats and p_stats.get("avg_ms", 0) > 0:
                 avg_push_ms = p_stats["avg_ms"]
-        except Exception:
+        except Exception as e:
+            logger.warning(f"Excepción silenciada en ejecución: {e}")
             pass
 
         
@@ -469,7 +475,8 @@ def update_daily_stats(provider: str, env: str):
         try:
             db_global.execute(text("ALTER TABLE daily_stats ADD COLUMN avg_push_latency_ms REAL DEFAULT NULL"))
             db_global.commit()
-        except Exception:
+        except Exception as e:
+            logger.debug(f"Migración idempotente omitida o error esperado BD: {e}")
             db_global.rollback()
 
         today_date = datetime.now().date()
@@ -622,7 +629,8 @@ async def purge_provider_events(provider: str, env: str):
                                 filepath = os.path.join(root, file)
                                 if os.path.getmtime(filepath) < cutoff:
                                     try: os.remove(filepath)
-                                    except: pass
+                                    except Exception as e:
+                                        logger.debug(f"No se pudo eliminar archivo: {e}")
         await asyncio.to_thread(clean_old_files)
         
     except Exception as e:

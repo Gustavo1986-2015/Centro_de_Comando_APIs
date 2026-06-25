@@ -34,7 +34,8 @@ async def execute_fetch(fetch_config: dict) -> dict | list:
     if fetch_config.get("headers"):
         try:
             headers = json.loads(fetch_config.get("headers"))
-        except Exception:
+        except Exception as e:
+            logger.warning(f"Error al parsear JSON: {e}")
             pass
             
     params = {}
@@ -87,7 +88,8 @@ async def execute_fetch(fetch_config: dict) -> dict | list:
             body = fetch_config.get("body", "{}")
             try:
                 json_body = json.loads(body)
-            except:
+            except Exception as e:
+                logger.warning(f"Error al parsear JSON: {e}")
                 json_body = {}
             resp = await client.post(url, params=params, headers=headers, json=json_body)
             
@@ -249,7 +251,8 @@ async def process_and_enqueue(provider_name: str, env: str, data: dict|list, map
                 # Deduplicación eliminada a petición del usuario:
                 # Ahora se procesará siempre lo que devuelva el API en cada ciclo de sondeo,
                 # incluso si el vehículo está detenido y la fecha/hora es idéntica al ciclo anterior.
-            except Exception:
+            except Exception as e:
+                logger.warning(f"Excepción silenciada en ejecución: {e}")
                 continue
 
             # Agregar todos los eventos generados por este item

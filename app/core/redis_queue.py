@@ -56,6 +56,7 @@ class RedisQueue(MessageQueueInterface):
             logger.critical("[RedisQueue] Librería 'redis' no instalada.")
             raise RuntimeError("RedisQueue requiere: pip install redis")
         except Exception as e:
+            logger.warning(f"Excepción silenciada en ejecución: {e}")
             logger.critical(f"[RedisQueue] Falla crítica de conexión Redis: {e}")
             raise ConnectionError(f"No se pudo conectar a Redis: {e}")
             
@@ -65,6 +66,7 @@ class RedisQueue(MessageQueueInterface):
             is_up = self.client.ping()
             return {"status": "ok" if is_up else "down", "connected": is_up}
         except Exception as e:
+            logger.warning(f"Excepción silenciada en ejecución: {e}")
             return {"status": "error", "error": str(e), "connected": False}
 
     async def get_pending_count(self, provider: str, env: str) -> int:

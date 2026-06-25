@@ -2,6 +2,9 @@ from typing import Any, Dict
 from datetime import datetime, timezone
 import dateutil.parser
 from app.schemas.canonical import RCCanonicalModel
+import logging
+logger = logging.getLogger(__name__)
+
 
 # Cache de estados para deteccion de cambios entre payloads del mismo remolque.
 # Formato: { "chassis_number": { "IsCoupled": True, "IsDoor1Open": False, ... } }
@@ -17,7 +20,8 @@ def parse_date_to_utc0(date_str: str) -> datetime | None:
         if dt.tzinfo is None:
             dt = dt.replace(tzinfo=timezone.utc)
         return dt.astimezone(timezone.utc)
-    except Exception:
+    except Exception as e:
+        logger.warning(f"Excepción silenciada en ejecución: {e}")
         return None
 
 
@@ -83,7 +87,8 @@ def map_schmitz_payload(payload: Dict[str, Any], headers: Dict[str, str] = None)
     speed_raw = unwrap_ex(get_safe(position, ["GPSSpeed"])) or ebs.get("Velocity")
     try:
         speed = float(speed_raw) if speed_raw is not None and str(speed_raw).strip().lower() not in ("", "null", "none") else 0.0
-    except Exception:
+    except Exception as e:
+        logger.warning(f"Error de conversión de tipo: {e}")
         speed = 0.0
 
     # Odometro: EBS.Milage (prioridad) o GPSMilage.Value (fallback)
