@@ -66,6 +66,11 @@ def setup_logging(env_path=".env"):
                 "handlers": ["console", "file"],
                 "level": level_str,
                 "propagate": False
+            },
+            "watchfiles.main": {
+                "handlers": ["console", "file"],
+                "level": "INFO",
+                "propagate": False
             }
         }
     }
