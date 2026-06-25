@@ -1,5 +1,10 @@
 from fastapi import FastAPI
 import asyncio
+from contextlib import asynccontextmanager
+import os
+import logging
+
+logger = logging.getLogger(__name__)
 
 from app.api.routers import schmitz, dashboard, health, inspector, dynamic_webhook
 from app.api.routers.schmitz import start_webhook_batch_processor, router_spec as schmitz_router_spec
@@ -8,7 +13,35 @@ from app.worker.processor import worker_loop
 import time
 from fastapi import Request
 
-app = FastAPI(title="Centro de Comando en Vivo - Telemática")
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # ----- STARTUP -----
+    import concurrent.futures
+    loop = asyncio.get_running_loop()
+    thread_pool_size = int(os.getenv("THREAD_POOL_SIZE", "64"))
+    loop.set_default_executor(
+        concurrent.futures.ThreadPoolExecutor(max_workers=thread_pool_size)
+    )
+    logger.info(f"Thread pool size: {thread_pool_size}")
+
+    task_worker = asyncio.create_task(worker_loop())
+    task_broadcast = asyncio.create_task(broadcast_loop())
+    await start_webhook_batch_processor()
+
+    yield
+
+    # ----- SHUTDOWN -----
+    # Cancelar tareas graceful al cerrar la app
+    task_worker.cancel()
+    task_broadcast.cancel()
+    # Esperar cancelación sin bloquear el shutdown
+    for task in (task_worker, task_broadcast):
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+app = FastAPI(title="Centro de Comando en Vivo - Telemática", lifespan=lifespan)
 
 # Incluir routers
 app.include_router(schmitz.router)
@@ -40,16 +73,7 @@ async def measure_push_latency(request: Request, call_next):
             
     return response
 
-@app.on_event("startup")
-async def startup_event():
-    """Iniciar workers background cuando la API arranca."""
-    import concurrent.futures
-    loop = asyncio.get_running_loop()
-    # Aumentar drásticamente el pool de hilos para que zeep y sqlite no se pongan en cola
-    loop.set_default_executor(concurrent.futures.ThreadPoolExecutor(max_workers=200))
-    asyncio.create_task(worker_loop())
-    asyncio.create_task(broadcast_loop())
-    await start_webhook_batch_processor()
+
 
 if __name__ == "__main__":
     import uvicorn, os
