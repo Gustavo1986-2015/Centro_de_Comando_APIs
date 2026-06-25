@@ -39,14 +39,23 @@ def test_real_data():
                         payload = json.load(file)
                         
                     # Probar mapeo
-                    mapped_data = map_schmitz_payload(payload)
+                    mapped_list = map_schmitz_payload(payload)
+                    if not mapped_list:
+                        print(f"  [WARN] Payload {os.path.basename(root)}/{f} no genero eventos canonicos.")
+                        failures += 1
+                        continue
+                        
+                    mapped_data = mapped_list[0]
                     success += 1
                     
                     # Imprimir datos clave para visualizarlos en logs
+                    codes = [m.event_code for m in mapped_list]
                     print(f"[OK] {os.path.basename(root)}/{f} -> "
                           f"Chassis: {mapped_data.chassis_number}, "
                           f"Lat: {mapped_data.latitude}, Speed: {mapped_data.speed}, "
-                          f"Date: {mapped_data.date}")
+                          f"Date: {mapped_data.date}, "
+                          f"Eventos generados: {len(mapped_list)}, "
+                          f"Codes: {codes}")
                           
                 except Exception as e:
                     logger.warning(f"Error de conversión de tipo: {e}")
