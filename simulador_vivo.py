@@ -9,6 +9,8 @@ Apunta al endpoint oficial /Json/Data con header X-Data-Type: Status.
 import requests, time, random, datetime, json
 from concurrent.futures import ThreadPoolExecutor
 import logging
+from app.core.logging_config import setup_logging
+setup_logging()
 logger = logging.getLogger(__name__)
 
 

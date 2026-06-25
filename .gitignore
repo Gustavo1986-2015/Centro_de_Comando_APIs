@@ -30,3 +30,6 @@ dist/
 
 # Binarios de túnel (no versionar)
 cloudflared.exe
+# Logs
+logs/
+*.log
