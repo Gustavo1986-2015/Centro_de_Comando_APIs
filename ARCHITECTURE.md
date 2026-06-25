@@ -141,3 +141,12 @@ Para las APIs de extracción (PULL, ej. Protrack), el sistema adopta una postura
 
 Actualmente, el sistema utiliza **SQLite** de forma nativa para el manejo de las colas asíncronas (`app/core/sqlite_queue.py`), aprovechando el esquema de Sharding Dinámico detallado en la sección 2.
 **Redis backend:** planeado, no implementado. La clase `RedisQueue` existe como un *stub* (esqueleto) para futura implementación. El factory de colas fallará explícitamente (`NotImplementedError`) en el arranque si se intenta activar el backend `redis`.
+
+---
+
+## 11. Autoconfiguración: Migraciones Idempotentes y Logging
+
+Para sostener la ligereza del sistema y evitar pesadas dependencias de migración (Alembic), la base de datos se rige por **Migraciones Idempotentes por Fuerza Bruta**. 
+En la inicialización del motor, el Hub inyecta en crudo comandos DDL (ej. `ALTER TABLE ADD COLUMN`). Si la estructura ya está actualizada, el motor de SQLite levanta un `OperationalError` que el Hub intercepta proactivamente y cataloga como "éxito esperado", asegurando que el despliegue a nuevos servidores sea inmediato y sin comandos de migración previos.
+
+El sistema también implementa un **Hot-Reload a nivel observabilidad** (`app/core/logging_config.py`). Monitorea pasivamente el archivo `.env` en un hilo de fondo. Al modificarse la variable `LOG_LEVEL` (ej. pasar de `DEBUG` a `INFO`), el sistema purga los niveles de los handlers de red (`uvicorn.error`, `zeep`, `watchfiles`) e inyecta la nueva severidad dinámicamente en menos de 5 segundos. Esto permite depurar problemas críticos en caliente directamente en los servidores de producción sin jamás interrumpir el socket de recepción de payloads ni perder microsegundos de procesamiento Webhook.
