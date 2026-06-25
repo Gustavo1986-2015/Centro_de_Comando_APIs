@@ -82,7 +82,7 @@ class RCSOAPClient:
                     logger.info(f"Token recuperado de caché en disco. Vence el: {self._token_expires_at}")
                     return token
         except Exception as e:
-            logger.warning(f"Excepción silenciada en ejecución: {e}")
+            logger.warning(f"Excepción capturada en rc_soap: {e}")
             logger.warning(f"No se pudo leer el token de la caché en disco: {e}")
         return None
 
@@ -98,7 +98,7 @@ class RCSOAPClient:
                 }, f, indent=4)
             logger.info("Token guardado exitosamente en caché en disco.")
         except Exception as e:
-            logger.warning(f"Excepción silenciada en ejecución: {e}")
+            logger.warning(f"Excepción capturada en rc_soap: {e}")
             logger.warning(f"No se pudo guardar el token en la caché en disco: {e}")
 
     def _clear_token_cache(self):
@@ -139,7 +139,7 @@ class RCSOAPClient:
                             if isinstance(key_vals, list) and len(key_vals) > 0:
                                 exception_msg = ", ".join([f"{kv.get('Key')}: {kv.get('Value')}" for kv in key_vals if isinstance(kv, dict)])
                         except Exception as e:
-                            logger.warning(f"Excepción silenciada en ejecución: {e}")
+                            logger.warning(f"Excepción capturada en rc_soap: {e}")
                             exception_msg = str(res_native["exception"])
                     raise Exception(f"Fallo de autenticación en RC: {exception_msg}")
                     
@@ -153,7 +153,7 @@ class RCSOAPClient:
                 return # Éxito, salir de los reintentos
                 
             except Exception as e:
-                logger.warning(f"Excepción silenciada en ejecución: {e}")
+                logger.warning(f"Excepción capturada en rc_soap: {e}")
                 err_str = str(e)
                 if ("user_token_idx" in err_str or "duplicate key" in err_str.lower()) and attempt < max_retries - 1:
                     logger.warning(f"Colisión de token detectada en el servidor de RC (user_token_idx). Reintentando en 1.5 segundos...")
@@ -253,7 +253,7 @@ class RCSOAPClient:
                         has_exception = True
                         exception_msg = ", ".join([f"{kv.get('Key')}: {kv.get('Value')}" for kv in key_vals if isinstance(kv, dict)])
                 except Exception as e:
-                    logger.warning(f"Excepción silenciada en ejecución: {e}")
+                    logger.warning(f"Excepción capturada en rc_soap: {e}")
                     exception_msg = str(res_item["exception"])
                     if "KeyValueOfstringstring" in exception_msg:
                         has_exception = True
@@ -342,7 +342,7 @@ class RCSOAPClient:
                 return results
                 
         except Exception as e:
-            logger.warning(f"Excepción silenciada en ejecución: {e}")
+            logger.warning(f"Excepción capturada en rc_soap: {e}")
             logger.error(f"Error fatal al enviar lote SOAP a RC: {str(e)}")
             # Si toda la llamada falló (ej. error de conexión o credenciales incorrectas en GetUserToken)
             err_str = str(e)

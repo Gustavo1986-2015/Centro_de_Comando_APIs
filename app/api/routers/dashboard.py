@@ -388,7 +388,7 @@ async def stats_stream(request: Request, _=Depends(verify_dashboard_auth)):
                 payload = await asyncio.wait_for(q.get(), timeout=30)
                 yield payload
         except Exception as e:
-            logger.warning(f"Excepción silenciada en ejecución: {e}")
+            logger.warning(f"Excepción capturada en dashboard: {e}")
             pass
         finally:
             if q in _sse_clients:
@@ -435,7 +435,7 @@ async def create_provider(payload: dict, _: None = Depends(verify_dashboard_auth
         config_db.commit()
         return {"status": "success", "message": "Proveedor creado exitosamente en prod y test."}
     except Exception as e:
-        logger.warning(f"Excepción silenciada en ejecución: {e}")
+        logger.warning(f"Excepción capturada en dashboard: {e}")
         config_db.rollback()
         return {"status": "error", "message": str(e)}
     finally:
@@ -463,7 +463,7 @@ async def save_mapping(provider_name: str, env: str, payload: dict, _: None = De
         config_db.commit()
         return {"status": "success"}
     except Exception as e:
-        logger.warning(f"Excepción silenciada en ejecución: {e}")
+        logger.warning(f"Excepción capturada en dashboard: {e}")
         config_db.rollback()
         return {"status": "error", "message": str(e)}
     finally:
@@ -501,7 +501,7 @@ async def save_enrichment(provider_name: str, env: str, payload: dict, _: None =
         config_db.commit()
         return {"status": "success"}
     except Exception as e:
-        logger.warning(f"Excepción silenciada en ejecución: {e}")
+        logger.warning(f"Excepción capturada en dashboard: {e}")
         config_db.rollback()
         return {"status": "error", "message": str(e)}
     finally:
@@ -596,7 +596,7 @@ async def get_audit_logs(_: None = Depends(verify_dashboard_auth)):
                             "payload": data
                         })
                 except Exception as e:
-                    logger.warning(f"Excepción silenciada en ejecución: {e}")
+                    logger.warning(f"Excepción capturada en dashboard: {e}")
                     pass
 
     # Ordenar por timestamp descendente
@@ -719,7 +719,7 @@ async def get_unique_vehicles(
                 "vehicles": vehicles
             }
         except Exception as e:
-            logger.warning(f"Excepción silenciada en ejecución: {e}")
+            logger.warning(f"Excepción capturada en dashboard: {e}")
             result[key] = {"provider": p.provider_name.upper(), "env": p.env.upper(), "total": 0, "vehicles": [], "error": str(e)}
         finally:
             db.close()
@@ -801,7 +801,7 @@ async def get_tables(db_name: str = Query(...), _: None = Depends(verify_dashboa
         tables = [row[0] for row in cursor.fetchall()]
         return {"tables": tables}
     except Exception as e:
-        logger.warning(f"Excepción silenciada en ejecución: {e}")
+        logger.warning(f"Excepción capturada en dashboard: {e}")
         return {"error": str(e)}
     finally:
         if 'conn' in locals():
@@ -844,7 +844,7 @@ async def execute_query(db_name: str = Query(...), table: str = Query(...), limi
             "editable": table in EDITABLE_TABLES  # El frontend muestra el modo edición solo si es True
         }
     except Exception as e:
-        logger.warning(f"Excepción silenciada en ejecución: {e}")
+        logger.warning(f"Excepción capturada en dashboard: {e}")
         return {"error": str(e)}
     finally:
         if 'conn' in locals():
@@ -908,7 +908,7 @@ async def update_cell(body: CellUpdateRequest, _: None = Depends(verify_dashboar
     except HTTPException:
         raise
     except Exception as e:
-        logger.warning(f"Excepción silenciada en ejecución: {e}")
+        logger.warning(f"Excepción capturada en dashboard: {e}")
         raise HTTPException(status_code=500, detail=str(e))
     finally:
         if 'conn' in locals():

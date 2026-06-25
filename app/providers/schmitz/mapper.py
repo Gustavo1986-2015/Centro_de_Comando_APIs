@@ -21,7 +21,7 @@ def parse_date_to_utc0(date_str: str) -> datetime | None:
             dt = dt.replace(tzinfo=timezone.utc)
         return dt.astimezone(timezone.utc)
     except Exception as e:
-        logger.warning(f"Excepción silenciada en ejecución: {e}")
+        logger.warning(f"Excepción capturada en mapper: {e}")
         return None
 
 

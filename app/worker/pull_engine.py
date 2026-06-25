@@ -252,7 +252,7 @@ async def process_and_enqueue(provider_name: str, env: str, data: dict|list, map
                 # Ahora se procesará siempre lo que devuelva el API en cada ciclo de sondeo,
                 # incluso si el vehículo está detenido y la fecha/hora es idéntica al ciclo anterior.
             except Exception as e:
-                logger.warning(f"Excepción silenciada en ejecución: {e}")
+                logger.warning(f"Excepción capturada en pull_engine: {e}")
                 continue
 
             # Agregar todos los eventos generados por este item

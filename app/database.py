@@ -113,7 +113,7 @@ def check_and_migrate_provider_db(provider: str, env: str):
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_updated_processing ON normalized_rc_events(status, updated_at)")
             conn.commit()
     except Exception as e:
-        logger.warning(f"Excepción silenciada en ejecución: {e}")
+        logger.warning(f"Migracion idempotente omitida: {e}")
         pass
 
 def get_engine(provider: str, env: str = "prod"):
@@ -173,7 +173,7 @@ def session_context(provider: str, env: str = "prod"):
         yield db
         db.commit()
     except Exception as e:
-        logger.warning(f"Excepción silenciada en ejecución: {e}")
+        logger.warning(f"Migracion idempotente omitida: {e}")
         db.rollback()
         raise
     finally:
