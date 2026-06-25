@@ -32,6 +32,10 @@ Para evitar el "Database Locked" característico de SQLite bajo estrés, se impl
 - Todo el entorno de monitoreo web y APIs visualizadoras están protegidas por **HTTP Basic Authentication**.
 - Incorpora un **Inspector de APIs** interno para pruebas técnicas (Postman-like) con un riguroso escudo **Anti-SSRF**, el cual bloquea categóricamente las consultas a redes locales, loopbacks o infraestructuras cloud.
 
+### 6. Autoconfiguración y Observabilidad Avanzada
+- **Migraciones Idempotentes:** Despliegue sin scripts. En el arranque, el motor DDL intenta crear estructuras en crudo; los errores de duplicidad se absorben intencionalmente y certifican el éxito, asegurando portabilidad inmediata.
+- **Hot-Reload Logging:** Nivel de consola ajustable en caliente (DEBUG a INFO) editando el archivo `.env`. El sistema recarga los loggers silenciosamente en fondo sin reiniciar la API, vital para depurar en servidores productivos sin dropear conexiones HTTP.
+
 ---
 
 ## 🛠️ Stack Tecnológico
