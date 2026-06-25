@@ -1,6 +1,10 @@
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 from datetime import datetime, timezone
+import os
+import logging
+
+logger = logging.getLogger(__name__)
 
 from app.database import get_engine
 
@@ -32,11 +36,27 @@ async def health_check():
         status = "unhealthy"
         
     # Validar soporte Redis
-    try:
-        import redis
-        checks["redis"] = True
-    except ImportError:
-        checks["redis"] = False
+    redis_host = os.getenv("REDIS_HOST")
+    if not redis_host:
+        checks["redis"] = "not configured"
+    else:
+        try:
+            import redis
+            client = redis.Redis(
+                host=redis_host,
+                port=int(os.getenv("REDIS_PORT", "6379")),
+                password=os.getenv("REDIS_PASSWORD"),
+                db=int(os.getenv("REDIS_DB", "0")),
+                socket_connect_timeout=2,
+                socket_timeout=2,
+            )
+            client.ping()
+            checks["redis"] = True
+        except ImportError:
+            checks["redis"] = "module not installed"
+        except Exception as e:
+            checks["redis"] = False
+            logger.warning(f"Redis health check failed: {e}")
 
     response = {
         "status": status,
