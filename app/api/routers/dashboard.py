@@ -462,7 +462,9 @@ async def save_mapping(provider_name: str, env: str, payload: dict, _: None = De
         if 'mapping' in payload:
             config.mapping_schema = payload.get('mapping', {})
             if 'fetch' in payload:
-                config.fetch_config = payload.get('fetch', {})
+                from app.core.crypto import encrypt
+                config.fetch_config_enc = encrypt(json.dumps(payload.get('fetch', {})))
+                config.fetch_config = None
         else:
             config.mapping_schema = payload
             
@@ -483,11 +485,21 @@ async def get_mapping(provider_name: str, env: str, _: None = Depends(verify_das
             ProviderConfig.provider_name.ilike(provider_name),
             ProviderConfig.env == env
         ).first()
-        if not config:
-            return {}
+        fetch_c = {}
+        if config.fetch_config_enc:
+            from app.core.crypto import decrypt
+            dec_str = decrypt(config.fetch_config_enc)
+            if dec_str:
+                try:
+                    fetch_c = json.loads(dec_str)
+                except Exception:
+                    pass
+        else:
+            fetch_c = config.fetch_config or {}
+
         return {
             "mapping": config.mapping_schema or {},
-            "fetch": config.fetch_config or {}
+            "fetch": fetch_c
         }
     finally:
         config_db.close()
