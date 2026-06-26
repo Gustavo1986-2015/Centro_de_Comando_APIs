@@ -28,15 +28,19 @@ Para evitar el "Database Locked" característico de SQLite bajo estrés, se impl
 - **Buscador de Vehículos Únicos:** Un monitor forense interno que permite buscar patentes específicas con filtros de fecha y proveedor, y extraer o descargar en formato JSON crudo todo el historial de eventos de un chasis particular en tiempo real.
 - **Filtros contra Outliers:** Matemática defensiva integrada. Si un evento se desconecta de la red y entra como "zombie" días después, su latencia queda aislada del cálculo promedio global mediante un umbral seguro de **300 segundos**, garantizando que los KPIs operativos no se contaminen.
 
-### 5. Seguridad End-to-End
+### 5. Seguridad End-to-End (Hardening Integral)
+El perímetro de seguridad está cerrado de punta a punta:
 - Todo el entorno de monitoreo web y APIs visualizadoras están protegidas por **HTTP Basic Authentication**.
 - Incorpora un **Inspector de APIs** interno para pruebas técnicas (Postman-like) con un riguroso escudo **Anti-SSRF**, el cual:
   - Bloquea categóricamente consultas a redes locales, loopbacks, link-local (incluye metadata de cloud `169.254.169.254`) y rangos reservados.
   - **Mitigación de DNS rebinding:** resuelve el hostname una sola vez, valida la IP y "pinnea" la conexión a esa IP específica (con Host header preservado), evitando que una segunda resolución DNS bypasse el escudo.
-  - Verificación TLS configurable vía `INSPECTOR_ALLOW_INSECURE_TLS` (default False).
-- **Data at Rest Segura:** Los tokens de sesión y credenciales cacheadas en disco duro (ej. Recurso Confiable) se persisten cifrados mediante **algoritmo simétrico AES-128 (Fernet)**. Esto mitiga vulnerabilidades críticas de escalamiento de privilegios por Local File Inclusion (LFI).
+  - Verificación TLS configurable vía `INSPECTOR_ALLOW_INSECURE_TLS` (default False, lo que asegura verificación estricta de certificados).
+- **Data at Rest Segura (Tokens):** Los tokens de sesión y credenciales cacheadas en disco duro (ej. Recurso Confiable) se persisten cifrados mediante **algoritmo simétrico AES-128 (Fernet)**. Esto mitiga vulnerabilidades críticas de escalamiento de privilegios por Local File Inclusion (LFI).
+- **Envelope Encryption (Credenciales):** Las contraseñas de RC, llaves PUSH y secretos de proveedores PULL configurados en la UI se cifran en la base de datos local SQLite utilizando una clave maestra única (`MASTER_ENC_KEY`) que se autogenera y reside únicamente en el archivo `.env`. El descifrado se realiza en memoria mediante **JIT (Just-In-Time) Decryption**, exponiendo el secreto el mínimo tiempo posible.
+- **Fail-closed en Webhooks PUSH:** Utiliza validación estricta de headers y `secrets.compare_digest` para evitar timing attacks. Si un proveedor no envía su token, o falla, aborta inmediatamente (HTTP 401).
+- **Herramientas SysAdmin:** Incluye script de rotación de clave maestra local (`scripts/rotate_master_key.py`) para mantenimiento sin recargar secretos de plano.
 
-> ⚠️ **Caveat conocido — RC sobre HTTP:** Recurso Confiable (RC) actualmente solo expone su endpoint SOAP sobre HTTP (no HTTPS). Esto significa que las credenciales SOAP viajan en claro por la red hacia RC. Esta es una limitación del proveedor que no se puede resolver del lado del cliente. Mitigación recomendada: asegurar que el tráfico hacia RC viaje por un canal cifrado a nivel de red (VPN, túnel IPsec, o proxy que termine TLS hacia RC). Rotar credenciales periódicamente.
+> ⚠️ **Caveat conocido — RC sobre HTTP:** Recurso Confiable (RC) actualmente solo expone su endpoint SOAP sobre HTTP (no HTTPS). Esto significa que las credenciales SOAP viajan en claro por la red hacia RC. Esta es una limitación del proveedor que no se puede resolver del lado del cliente. Mitigaciones: Fail-safe `RC_USE_MOCK` estricto en producción. Recomendación operativa: asegurar que el tráfico hacia RC viaje por un canal cifrado a nivel de red (VPN, túnel IPsec, o proxy que termine TLS hacia RC). Rotar credenciales periódicamente.
 
 ### 6. Autoconfiguración y Observabilidad Avanzada
 - **Migraciones Idempotentes:** Despliegue sin scripts. En el arranque, el motor DDL intenta crear estructuras en crudo; los errores de duplicidad se absorben intencionalmente y certifican el éxito, asegurando portabilidad inmediata.
