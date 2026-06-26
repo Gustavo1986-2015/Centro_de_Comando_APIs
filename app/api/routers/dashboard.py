@@ -81,6 +81,7 @@ def verify_dashboard_auth(credentials: HTTPBasicCredentials = Depends(security))
             detail="Credenciales incorrectas",
             headers={"WWW-Authenticate": "Basic"},
         )
+    return credentials
 
 router = APIRouter(tags=["Dashboard"])
 templates = Jinja2Templates(directory="app/templates")
