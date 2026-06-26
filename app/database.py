@@ -94,6 +94,15 @@ def check_and_migrate_db():
             if "processed_logs_enabled" not in columns_sys:
                 cursor.execute("ALTER TABLE system_settings ADD COLUMN processed_logs_enabled BOOLEAN DEFAULT 1")
                 conn.commit()
+
+            cursor.execute("SELECT COUNT(*) FROM system_settings")
+            if cursor.fetchone()[0] == 0:
+                cursor.execute("""
+                    INSERT INTO system_settings 
+                    (audit_retention_days, processed_retention_days, processed_logs_enabled)
+                    VALUES (30, 30, 1)
+                """)
+                conn.commit()
     except Exception as e:
         logger.debug(f"Migración idempotente omitida o error esperado BD: {e}")
         pass
