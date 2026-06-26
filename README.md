@@ -30,8 +30,13 @@ Para evitar el "Database Locked" característico de SQLite bajo estrés, se impl
 
 ### 5. Seguridad End-to-End
 - Todo el entorno de monitoreo web y APIs visualizadoras están protegidas por **HTTP Basic Authentication**.
-- Incorpora un **Inspector de APIs** interno para pruebas técnicas (Postman-like) con un riguroso escudo **Anti-SSRF**, el cual bloquea categóricamente las consultas a redes locales, loopbacks o infraestructuras cloud.
+- Incorpora un **Inspector de APIs** interno para pruebas técnicas (Postman-like) con un riguroso escudo **Anti-SSRF**, el cual:
+  - Bloquea categóricamente consultas a redes locales, loopbacks, link-local (incluye metadata de cloud `169.254.169.254`) y rangos reservados.
+  - **Mitigación de DNS rebinding:** resuelve el hostname una sola vez, valida la IP y "pinnea" la conexión a esa IP específica (con Host header preservado), evitando que una segunda resolución DNS bypasse el escudo.
+  - Verificación TLS configurable vía `INSPECTOR_ALLOW_INSECURE_TLS` (default False).
 - **Data at Rest Segura:** Los tokens de sesión y credenciales cacheadas en disco duro (ej. Recurso Confiable) se persisten cifrados mediante **algoritmo simétrico AES-128 (Fernet)**. Esto mitiga vulnerabilidades críticas de escalamiento de privilegios por Local File Inclusion (LFI).
+
+> ⚠️ **Caveat conocido — RC sobre HTTP:** Recurso Confiable (RC) actualmente solo expone su endpoint SOAP sobre HTTP (no HTTPS). Esto significa que las credenciales SOAP viajan en claro por la red hacia RC. Esta es una limitación del proveedor que no se puede resolver del lado del cliente. Mitigación recomendada: asegurar que el tráfico hacia RC viaje por un canal cifrado a nivel de red (VPN, túnel IPsec, o proxy que termine TLS hacia RC). Rotar credenciales periódicamente.
 
 ### 6. Autoconfiguración y Observabilidad Avanzada
 - **Migraciones Idempotentes:** Despliegue sin scripts. En el arranque, el motor DDL intenta crear estructuras en crudo; los errores de duplicidad se absorben intencionalmente y certifican el éxito, asegurando portabilidad inmediata.

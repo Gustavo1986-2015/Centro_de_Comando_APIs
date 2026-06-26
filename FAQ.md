@@ -147,7 +147,22 @@ No. Antes siquiera de intentar mapear, validar o guardar en SQLite, la capa HTTP
 
 ### ¿Qué es el Inspector de APIs del Dashboard?
 Es un módulo interno que emula a Postman. Permite a los analistas probar conexiones salientes directamente desde los servidores de Assistcargo en la nube, saltándose problemas locales de VPN corporativas o bloqueos del navegador (CORS).
-Por diseño de seguridad, este inspector cuenta con un **Escudo Anti-SSRF**, que intercepta y bloquea llamadas maliciosas (ej. un usuario intentando que el servidor se consulte a sí mismo en `127.0.0.1` o escanee redes privadas).
+Por diseño de seguridad, este inspector cuenta con un **Escudo Anti-SSRF** multicapa:
+- **Bloqueo de IPs internas:** intercepta y bloquea llamadas a `127.0.0.1`, redes privadas (10.x, 172.16-31.x, 192.168.x), link-local (incluye metadata de cloud AWS/GCP `169.254.169.254`) y rangos reservados.
+- **Mitigación de DNS rebinding:** resuelve el hostname una sola vez, valida la IP resultante, y construye una URL "pinneada" a esa IP para la petición real. Esto evita que un atacante con un servidor DNS malicioso (TTL=0) haga que la validación vea una IP pública pero la conexión real vaya a una IP interna.
+- **Verificación TLS:** por defecto exige certificados válidos. Solo se puede desactivar vía `INSPECTOR_ALLOW_INSECURE_TLS=True` (no recomendado en producción).
+
+### ¿Por qué RC usa HTTP y no HTTPS? ¿Es un riesgo?
+Recurso Confiable (RC), el servicio SOAP que recibe la telemetría de Assistcargo, actualmente solo expone su endpoint sobre HTTP. Esto es una limitación del proveedor, no del Hub.
+
+**Impacto:** las credenciales SOAP (`RC_USERNAME`/`RC_PASSWORD`) viajan en claro por la red entre el servidor de Assistcargo y RC. Un atacante con capacidad de sniffing en la ruta podría capturarlas.
+
+**Mitigaciones implementadas/recomendadas:**
+1. El token de autenticación RC sí está cifrado en disco (Fernet AES, ver `RC_TOKEN_ENC_KEY`).
+2. `RC_USE_MOCK` está blindado: no se puede activar en `APP_ENV=production`.
+3. **Recomendación operativa:** asegurar que el tráfico hacia RC viaje por un canal cifrado a nivel de red (VPN sitio-a-sitio, túnel IPsec, o un proxy reverso que termine TLS hacia RC).
+4. Rotar credenciales RC periódicamente.
+5. Gestionar con el proveedor RC la habilitación de HTTPS como mejora a mediano plazo.
 
 ### ¿Cómo se protegen las contraseñas y tokens cacheados en el disco?
 Para integraciones como Recurso Confiable, el sistema necesita mantener en caché los tokens de sesión. Estos archivos (ej. `db/rc_token_cache_*.json`) nunca se guardan en texto plano. Se emplea **Cifrado Simétrico AES-128 (Fernet)**. Esto garantiza que, incluso si un actor malicioso lograra obtener permisos de lectura sobre la carpeta del servidor (vulnerabilidad de *Local File Inclusion*), le será matemáticamente imposible descifrar los tokens y secuestrar las sesiones sin la clave de cifrado generada por el entorno. Si el token en disco se corrompe o la clave rota, el sistema posee un mecanismo *fail-safe* que purga automáticamente la caché dañada y re-autentica de forma transparente.

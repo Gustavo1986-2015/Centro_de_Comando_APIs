@@ -105,9 +105,12 @@ Para búsquedas profundas e históricas (ej. Buscador de Vehículos Únicos), la
 
 ## 6. Seguridad y Anti-SSRF
 
-Toda interfaz orientada al operador (Dashboard y visualizador DB) está blindada bajo **HTTP Basic Auth** (`verify_dashboard_auth`). 
-Adicionalmente, el proyecto incorpora la herramienta `/inspector`, un proxy inverso (Mini-Postman) para facilitar el debug desde el propio servidor. Para prevenir vulnerabilidades de Server-Side Request Forgery (SSRF) introducidas por esta herramienta de proxy, toda URL objetivo pasa por el helper `_is_safe_url()`, el cual resuelve DNS y bloquea cualquier resolución a los rangos IP:
-- AWS/GCP Meta-data (`169.254.169.254`)
+Toda interfaz orientada al operador (Dashboard y visualizador DB) está blindada bajo **HTTP Basic Auth** (`verify_dashboard_auth` con `secrets.compare_digest`). 
+Adicionalmente, el proyecto incorpora la herramienta `/inspector`, un proxy inverso (Mini-Postman) para facilitar el debug desde el propio servidor. Para prevenir vulnerabilidades de Server-Side Request Forgery (SSRF), el escudo Anti-SSRF implementa 3 capas:
+
+- **Validación de IP:** toda URL objetivo pasa por el helper `_is_safe_url()`, el cual resuelve DNS y bloquea cualquier resolución a los rangos IP: loopback (`127.0.0.0/8`), redes privadas (`10/8`, `172.16/12`, `192.168/16`), link-local (`169.254/16` — incluye metadata de cloud AWS/GCP `169.254.169.254`) y reservadas.
+- **DNS rebinding mitigation:** la IP resuelta en la validación se "pinnea" a la conexión real. Se construye una `pinned_url` que reemplaza el hostname por la IP validada, y se preserva el `Host` header original para que el servidor destino reciba el virtualhost correcto. Esto elimina el race condition TOCTOU entre la validación y la conexión.
+- **TLS verification:** por defecto `verify=True`. Solo desactivable vía `INSPECTOR_ALLOW_INSECURE_TLS=True` (con warning logueado).
 
 ### Cifrado Data at Rest (Tokens RC)
 Los tokens de sesión generados por la API de Recurso Confiable (RC) se almacenan en caché local (`db/rc_token_cache_{username}.json`). Para prevenir exfiltración en escenarios de escalamiento de privilegios o acceso no autorizado al filesystem (ej. LFI), los tokens se **cifran simétricamente en disco usando AES-128 (Fernet)**.
@@ -163,3 +166,16 @@ El Centro de Comando permite administrar la retención y generación de logs dir
 - **Retención configurable:** Control en caliente sobre logs crudos (auditoría PUSH) y procesados (backups_diarios).
 - **Toggle de Procesados:** Es posible apagar por completo el volcado a disco de los eventos procesados para maximizar IOPS y espacio en disco. Los logs crudos se mantienen siempre encendidos para fines de auditoría forense.
 - **Purga de Emergencia:** Dispone de un mecanismo de purga manual protegido mediante validaciones severas (revalidación de password, `window.confirm`, antigüedad mínima obligatoria de 7 días, etc.) para liberar espacio crítico sin riesgos de eliminación accidental.
+
+---
+
+## 13. Caveats de Seguridad Conocidos
+
+El sistema implementa múltiples capas de seguridad (Basic Auth, Anti-SSRF multicapa, cifrado de token en disco, fail-safe guards), pero existen limitaciones que no se pueden resolver del lado del cliente:
+
+### 13.1 RC sobre HTTP (no HTTPS)
+Recurso Confiable (RC) solo expone su endpoint SOAP sobre HTTP. Las credenciales SOAP viajan en claro hacia RC.
+
+- **Mitigación del lado del Hub:** token RC cifrado en disco (Fernet), `RC_USE_MOCK` blindado en producción.
+- **Mitigación del lado de red (responsabilidad operativa):** VPN/túnel cifrado hacia RC, rotación periódica de credenciales.
+- **Resolución a mediano plazo:** gestionar con el proveedor RC la habilitación de HTTPS.
