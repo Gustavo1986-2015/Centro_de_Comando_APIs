@@ -8,7 +8,7 @@ import logging
 from app.database import get_session
 from app.models.db_models import NormalizedRCEvent
 from app.providers.schmitz.mapper import map_schmitz_payload
-from app.core.auditor import audit_event
+from app.core.auditor import log_raw_payload
 
 logger = logging.getLogger(__name__)
 
@@ -110,7 +110,7 @@ async def _batch_processor_loop():
         if batch:
             # 1. Auditoría fire-and-forget asíncrona (DEBT-04)
             for payload, env_val in batch:
-                asyncio.create_task(asyncio.to_thread(audit_event, f"schmitz_{env_val}", payload))
+                asyncio.create_task(asyncio.to_thread(log_raw_payload, "schmitz", env_val, payload))
                 
             # Guardar el lote en un thread aparte para no bloquear el API
             await asyncio.to_thread(_persist_batch, batch)

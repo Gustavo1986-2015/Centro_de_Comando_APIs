@@ -10,6 +10,7 @@ AUDIT_DIR = "audit"
 
 def audit_event(provider: str, payload: dict):
     """
+    [DEPRECATED] Usar log_raw_payload. Mantenida por backward compat con archivos JSONL históricos.
     Guarda el evento crudo entrante en formato estricto (.jsonl) agrupado por mes.
     Ej: audit/schmitz_test/2026-06/crudos_2026-06-23.jsonl
     """
