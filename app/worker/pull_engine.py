@@ -58,7 +58,6 @@ async def execute_fetch(fetch_config: dict) -> dict | list:
         unix_time, signature = dynamic_md5(pwd)
         
         # 1. Obtener Token
-        import httpx
         try:
             async with httpx.AsyncClient(timeout=15) as client:
                 # Extraemos la base url asumiendo que el usuario puso algo como http://api.protrack365.com/api/device/list
