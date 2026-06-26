@@ -31,6 +31,11 @@ def setup_logging(env_path=".env"):
                 "format": "%(asctime)s [%(levelname)s] [%(name)s] %(message)s",
                 "datefmt": "%Y-%m-%d %H:%M:%S"
             },
+            "json": {
+                "class": "pythonjsonlogger.jsonlogger.JsonFormatter",
+                "format": "%(asctime)s %(levelname)s %(name)s %(message)s",
+                "datefmt": "%Y-%m-%dT%H:%M:%S%z"
+            },
             "colored": {
                 "()": "colorlog.ColoredFormatter",
                 "format": "%(log_color)s%(asctime)s [%(levelname)s] [%(name)s] %(message)s",
@@ -52,8 +57,8 @@ def setup_logging(env_path=".env"):
             },
             "file": {
                 "class": "logging.handlers.TimedRotatingFileHandler",
-                "formatter": "standard",
-                "filename": "logs/app.log",
+                "formatter": "json",
+                "filename": "logs/app.jsonl",
                 "when": "midnight",
                 "backupCount": retention_days,
                 "encoding": "utf-8"
@@ -89,7 +94,7 @@ def setup_logging(env_path=".env"):
     
     logging.config.dictConfig(log_config)
     logger = logging.getLogger(__name__)
-    logger.info(f"Logging inicializado: level={level_str}, file=logs/app.log, retention={retention_days}d")
+    logger.info(f"Logging inicializado: level={level_str}, file=logs/app.jsonl, retention={retention_days}d")
 
 
 async def watch_log_config(env_path=".env"):

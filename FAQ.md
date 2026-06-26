@@ -169,7 +169,7 @@ El sistema divide los logs en tres categorías distintas para no mezclar diagnó
 
 | Tipo de Log | Ubicación Física | Propósito | Retención Base |
 |-------------|------------------|-----------|----------------|
-| **1. Transaccionales / Sistema** | `logs/app.log.YYYY-MM-DD` | Errores de código, caídas de red, reinicios de Uvicorn y advertencias. (Los colores se ven en consola, en el archivo se guarda texto plano). | Controlado por `LOG_RETENTION_DAYS` en el `.env` (Default: 7 días). |
+| **1. Transaccionales / Sistema** | `logs/app.jsonl.YYYY-MM-DD` | Errores de código, caídas de red, reinicios de Uvicorn y advertencias. (Los colores se ven en consola, en el archivo se guarda en formato JSONL estructurado). | Controlado por `LOG_RETENTION_DAYS` en el `.env` (Default: 7 días). |
 | **2. Crudos (Auditoría PUSH)** | `audit/{proveedor}/YYYY-MM/crudos_YYYY-MM-DD.jsonl` | Es el JSON original, intacto, tal cual lo mandó el camión/proveedor antes de que nuestro código lo toque. Sirve como prueba legal de qué nos enviaron. | Borrado automático mensual (hardcoded a 30 días para evitar colapso de disco). |
 | **3. Procesados (Historial RC)** | `db/backups_diarios/{prov}_{env}/YYYY-MM/procesados_YYYY-MM-DD.jsonl` | Es el Modelo Canónico que se logró enviar con éxito a Recurso Confiable (o falló definitivamente). Incluye el `jobId` y los timestamps de latencia. | Borrado automático mensual (hardcoded a 30 días). |
 
