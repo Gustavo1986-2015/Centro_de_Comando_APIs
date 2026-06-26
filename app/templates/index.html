@@ -3811,13 +3811,13 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
                     body: JSON.stringify({ audit_retention_days: audit_days, processed_retention_days: processed_days })
                 });
                 if(res.ok) {
-                    showToast('Retención actualizada correctamente', 'success');
+                    alert('Retención actualizada correctamente');
                 } else {
                     const err = await res.json();
-                    showToast('Error: ' + err.detail, 'error');
+                    alert('Error: ' + err.detail);
                 }
             } catch(e) {
-                showToast('Error de conexión', 'error');
+                alert('Error de conexión al guardar retención');
             }
         }
 
@@ -3830,15 +3830,15 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
                 });
                 if(res.ok) {
                     const data = await res.json();
-                    showToast(data.message, 'success');
+                    alert(data.message);
                 } else {
                     const err = await res.json();
-                    showToast('Error: ' + err.detail, 'error');
+                    alert('Error: ' + err.detail);
                     // Revert toggle
                     document.getElementById('processed-logs-toggle').checked = !enabled;
                 }
             } catch(e) {
-                showToast('Error de conexión', 'error');
+                alert('Error de conexión al cambiar el switch');
                 document.getElementById('processed-logs-toggle').checked = !enabled;
             }
         }
@@ -3866,7 +3866,7 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
             const password = document.getElementById('purge-password').value;
             
             if(days < 7) {
-                showToast('El mínimo de días es 7', 'error');
+                alert('El mínimo de días es 7');
                 return;
             }
             
@@ -3889,7 +3889,7 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
                 if(res.ok) {
                     const data = await res.json();
                     const mbytes = (data.freed_bytes / (1024*1024)).toFixed(2);
-                    showToast(`Purgados ${data.deleted_files} archivos, ${mbytes} MB liberados`, 'success');
+                    alert(`Purgados ${data.deleted_files} archivos, ${mbytes} MB liberados`);
                     
                     const auditLog = document.getElementById('purge-audit-log');
                     const now = new Date().toLocaleString();
@@ -3901,10 +3901,10 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
                     validatePurgeForm();
                 } else {
                     const err = await res.json();
-                    showToast('Error: ' + err.detail, 'error');
+                    alert('Error: ' + err.detail);
                 }
             } catch(e) {
-                showToast('Error de conexión', 'error');
+                alert('Error de conexión en purga');
             }
         }
     </script>
