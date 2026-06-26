@@ -212,10 +212,17 @@ async def process_provider_events(provider: str, env: str):
         batch_metrics = []
         
         # Leer credenciales desde config
+        from app.core.crypto import decrypt
         db_conf = get_session("system_config", "global")
         conf = db_conf.query(ProviderConfig).filter_by(provider_name=provider, env=env).first()
         rc_u = conf.rc_user if conf else None
-        rc_p = conf.rc_password if conf else None
+        
+        rc_p = None
+        if conf and conf.rc_password_enc:
+            rc_p = decrypt(conf.rc_password_enc)
+        if not rc_p and conf:
+            rc_p = conf.rc_password
+            
         rc_use_mock = conf.use_mock if conf and hasattr(conf, 'use_mock') else True
         db_conf.close()
         rc_client = get_rc_client(rc_u, rc_p, use_mock=rc_use_mock)

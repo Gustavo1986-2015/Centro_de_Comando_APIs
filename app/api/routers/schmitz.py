@@ -10,10 +10,11 @@ from app.models.db_models import NormalizedRCEvent
 from app.providers.schmitz.mapper import map_schmitz_payload
 from app.core.auditor import log_raw_payload
 
-logger = logging.getLogger(__name__)
+from app.models.config_models import ProviderConfig
+from app.core.crypto import decrypt
+import secrets
 
-REQUIRE_SCHMITZ_AUTH = os.getenv("REQUIRE_SCHMITZ_AUTH", "False").lower() == "true"
-SCHMITZ_API_KEY = os.getenv("SCHMITZ_API_KEY", "")
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/schmitz", tags=["Schmitz"])
 
@@ -25,10 +26,28 @@ router_spec = APIRouter(tags=["Schmitz"])
 _webhook_queue = asyncio.Queue()
 _batch_task = None
 
-async def verify_api_key(x_api_key: str = Header(None)):
-    if REQUIRE_SCHMITZ_AUTH:
-        if not x_api_key or x_api_key != SCHMITZ_API_KEY:
-            raise HTTPException(status_code=401, detail="Invalid API Key")
+async def _validate_schmitz_auth(request: Request, env: str = Query("prod")):
+    """Valida auth del webhook Schmitz contra DB cifrada."""
+    db = get_session("system_config", "global")
+    try:
+        # Buscamos la config global del webhook, o podríamos buscar la config por entorno
+        # En el spec, PUSH webhooks podrían tener configs de test/prod. Buscaremos prod por default.
+        # Schmitz suele ser provider global o por env.
+        provider = db.query(ProviderConfig).filter_by(provider_name="schmitz", env=env).first()
+        if not provider:
+            # Fallback a prod si llega en test pero solo hay config prod
+            provider = db.query(ProviderConfig).filter_by(provider_name="schmitz").first()
+            
+        if not provider or not provider.webhook_auth_secret_enc:
+            raise HTTPException(401, "Schmitz webhook no autenticado. Configure API key en Dashboard.")
+        
+        stored_key = decrypt(provider.webhook_auth_secret_enc)
+        provided_key = request.headers.get("x-api-key", "")
+        
+        if not stored_key or not provided_key or not secrets.compare_digest(provided_key, stored_key):
+            raise HTTPException(401, "API key invalida")
+    finally:
+        db.close()
     return True
 
 def _persist_batch(batch: list):
@@ -136,7 +155,7 @@ async def start_webhook_batch_processor():
 async def schmitz_webhook(
     request: Request,
     env: str = Query("prod", description="Entorno: test o prod"),
-    authorized: bool = Depends(verify_api_key)
+    authorized: bool = Depends(_validate_schmitz_auth)
 ):
     try:
         try:
@@ -158,7 +177,7 @@ async def schmitz_json_data(
     request: Request,
     x_data_type: str = Header(None, alias="X-Data-Type"),
     env: str = Query("prod", description="Entorno: test o prod"),
-    authorized: bool = Depends(verify_api_key)
+    authorized: bool = Depends(_validate_schmitz_auth)
 ):
     """
     Endpoint oficial del spec Schmitz Push API v1.35.

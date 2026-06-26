@@ -58,6 +58,69 @@ def check_and_migrate_db():
                 cursor.execute("ALTER TABLE provider_config ADD COLUMN enrichment_config TEXT DEFAULT '{}'")
                 conn.commit()
             
+            # Nuevas columnas Envelope Encryption
+            if "rc_password_enc" not in columns:
+                cursor.execute("ALTER TABLE provider_config ADD COLUMN rc_password_enc TEXT")
+                conn.commit()
+            if "fetch_config_enc" not in columns:
+                cursor.execute("ALTER TABLE provider_config ADD COLUMN fetch_config_enc TEXT")
+                conn.commit()
+            if "webhook_auth_secret_enc" not in columns:
+                cursor.execute("ALTER TABLE provider_config ADD COLUMN webhook_auth_secret_enc TEXT")
+                conn.commit()
+            if "webhook_auth_header" not in columns:
+                cursor.execute("ALTER TABLE provider_config ADD COLUMN webhook_auth_header TEXT DEFAULT 'x-api-key'")
+                conn.commit()
+                
+            # Migración: cifrar campos legacy plaintext
+            cursor.execute("PRAGMA table_info(provider_config)")
+            updated_columns = [row[1] for row in cursor.fetchall()]
+            
+            if all(col in updated_columns for col in ["rc_password_enc", "fetch_config_enc", "webhook_auth_secret_enc"]):
+                from app.core.crypto import encrypt, is_encrypted
+                
+                rows = cursor.execute("""
+                    SELECT id, rc_password, fetch_config, provider_name 
+                    FROM provider_config
+                """).fetchall()
+                
+                migrated = 0
+                for row_id, rc_pass, fetch_cfg, p_name in rows:
+                    updates = {}
+                    if rc_pass and not is_encrypted(rc_pass):
+                        updates["rc_password_enc"] = encrypt(rc_pass)
+                        updates["rc_password"] = None  # borrar plaintext
+                    if fetch_cfg and not is_encrypted(fetch_cfg):
+                        updates["fetch_config_enc"] = encrypt(fetch_cfg)
+                        updates["fetch_config"] = None
+                    
+                    if updates:
+                        set_clauses = ", ".join([f"{k} = ?" for k in updates])
+                        values = list(updates.values()) + [row_id]
+                        cursor.execute(
+                            f"UPDATE provider_config SET {set_clauses} WHERE id = ?",
+                            values
+                        )
+                        migrated += 1
+                
+                if migrated:
+                    logger.info(f"Migracion cifrado: {migrated} proveedores migrados a ciphertext.")
+                    conn.commit()
+                    
+                # Migración legacy Schmitz (.env -> DB)
+                schmitz_key = os.getenv("SCHMITZ_API_KEY")
+                if schmitz_key:
+                    row = cursor.execute(
+                        "SELECT id, webhook_auth_secret_enc FROM provider_config WHERE provider_name = 'schmitz'"
+                    ).fetchone()
+                    if row and not row[1]:
+                        cursor.execute(
+                            "UPDATE provider_config SET webhook_auth_secret_enc = ? WHERE id = ?",
+                            (encrypt(schmitz_key), row[0])
+                        )
+                        logger.info("Schmitz: SCHMITZ_API_KEY migrada a DB cifrada.")
+                        conn.commit()
+            
             cursor.execute("CREATE TABLE IF NOT EXISTS provider_dictionary (id INTEGER PRIMARY KEY AUTOINCREMENT, provider_name TEXT, env TEXT, dict_key TEXT, dict_value TEXT)")
             cursor.execute("CREATE INDEX IF NOT EXISTS ix_provider_dictionary_provider_name ON provider_dictionary (provider_name)")
             cursor.execute("CREATE INDEX IF NOT EXISTS ix_provider_dictionary_env ON provider_dictionary (env)")

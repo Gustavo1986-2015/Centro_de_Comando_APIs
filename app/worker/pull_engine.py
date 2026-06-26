@@ -9,6 +9,7 @@ from app.database import get_session
 from app.models.config_models import ProviderConfig, ProviderDictionary
 from app.models.db_models import NormalizedRCEvent
 from app.core.dynamic_mapper import DynamicMapper
+from app.core.crypto import decrypt
 
 def dynamic_md5(pwd: str) -> tuple[str, str]:
     import time
@@ -111,7 +112,19 @@ async def dictionary_sync_loop(provider_name: str, env: str):
                 continue
                 
             enrich = config.enrichment_config or {}
-            fetch_c = config.fetch_config or {}
+            
+            fetch_c = {}
+            fetch_cfg_enc = config.fetch_config_enc
+            if fetch_cfg_enc:
+                decrypted_str = decrypt(fetch_cfg_enc)
+                if decrypted_str:
+                    try:
+                        fetch_c = json.loads(decrypted_str)
+                    except json.JSONDecodeError:
+                        fetch_c = config.fetch_config or {}
+            else:
+                fetch_c = config.fetch_config or {}
+                
             db_global.close()
             
             if not enrich.get("enabled") or not enrich.get("url"):
@@ -183,7 +196,18 @@ async def telemetry_poll_loop(provider_name: str, env: str):
                 await asyncio.sleep(10)
                 continue
                 
-            fetch_config = config.fetch_config or {}
+            fetch_config = {}
+            fetch_cfg_enc = config.fetch_config_enc
+            if fetch_cfg_enc:
+                decrypted_str = decrypt(fetch_cfg_enc)
+                if decrypted_str:
+                    try:
+                        fetch_config = json.loads(decrypted_str)
+                    except json.JSONDecodeError:
+                        fetch_config = config.fetch_config or {}
+            else:
+                fetch_config = config.fetch_config or {}
+                
             mapping_schema = config.mapping_schema or {}
             interval_sec = config.run_interval_sec or 30
             db_global.close()

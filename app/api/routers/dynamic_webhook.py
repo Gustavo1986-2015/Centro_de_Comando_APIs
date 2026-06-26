@@ -12,6 +12,8 @@ from app.core.dynamic_mapper import DynamicMapper
 from app.core.queue_factory import QueueFactory
 from app.models.db_models import NormalizedRCEvent
 from app.core.auditor import log_raw_payload
+from app.core.crypto import decrypt
+import secrets
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +41,25 @@ async def dynamic_webhook_receive(
             raise HTTPException(status_code=404, detail=f"Proveedor '{provider_name}' en entorno '{env}' no está registrado.")
         if not config.is_active:
             raise HTTPException(status_code=403, detail=f"El proveedor '{provider_name}' está desactivado temporalmente.")
+            
+        # FAIL-CLOSED: sin auth configurada, rechazar
+        if not config.webhook_auth_secret_enc:
+            raise HTTPException(
+                status_code=401,
+                detail=f"Webhook no autenticado. Configure API key para {provider_name} en el Dashboard."
+            )
+        
+        # Descifrar clave almacenada
+        stored_key = decrypt(config.webhook_auth_secret_enc)
+        if not stored_key:
+            raise HTTPException(status_code=500, detail="Error interno de autenticacion.")
+        
+        # Validar header
+        header_name = config.webhook_auth_header or "x-api-key"
+        provided_key = request.headers.get(header_name, "")
+        
+        if not secrets.compare_digest(provided_key, stored_key):
+            raise HTTPException(status_code=401, detail="API key invalida")
             
         mapping_schema = config.mapping_schema or {}
         if not mapping_schema:

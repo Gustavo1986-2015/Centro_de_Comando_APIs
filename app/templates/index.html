@@ -1107,7 +1107,10 @@
                             <th>Activo (Worker)</th>
                             <th>Envío Simulado a RC</th>
                             <th>RC Usuario</th>
-                            <th>RC Password</th>
+                            <th title="Dejar en blanco para no modificar. (Cifrado en DB)">RC Password</th>
+                            <th title="Dejar en blanco para no modificar. (Cifrado en DB)">PUSH API Key</th>
+                            <th title="Header HTTP esperado para PUSH Webhooks (ej: x-api-key)">PUSH Header</th>
+                            <th title="JSON con configuración PULL. (Cifrado en DB)">PULL JSON</th>
                             <th>Purga (min)</th>
                             <th>Ejecución (seg)</th>
                             <th>Motor Cola</th>
@@ -2758,8 +2761,11 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
                                     </span>
                                 </div>
                             </td>
-                            <td><input class="form-control" type="text" id="user_${c._originalIdx}" value="${c.rc_user}"></td>
-                            <td><input class="form-control" type="password" id="pass_${c._originalIdx}" value="${c.rc_password}"></td>
+                            <td><input class="form-control" type="text" id="user_${c._originalIdx}" value="${c.rc_user || ''}"></td>
+                            <td><input class="form-control" type="password" id="pass_${c._originalIdx}" placeholder="${c.has_rc_password ? '•••••••• (Cifrado)' : ''}" title="Dejar vacío para mantener el actual"></td>
+                            <td><input class="form-control" type="password" id="webhook_auth_${c._originalIdx}" placeholder="${c.has_webhook_auth ? '•••••••• (Cifrado)' : ''}" title="Dejar vacío para mantener el actual"></td>
+                            <td><input class="form-control" type="text" id="webhook_header_${c._originalIdx}" value="${c.webhook_auth_header || 'x-api-key'}" style="width: 100px;"></td>
+                            <td><textarea class="form-control" id="fetch_config_${c._originalIdx}" rows="1" placeholder="${c.has_fetch_config ? 'JSON (Cifrado)' : ''}" title="Dejar vacío para mantener el actual" style="width: 150px;"></textarea></td>
                             <td><input class="form-control" type="number" id="purge_${c._originalIdx}" value="${c.purge_interval_min}" style="width: 80px;"></td>
                             <td><input class="form-control" type="number" id="run_int_${c._originalIdx}" value="${c.run_interval_sec}" style="width: 80px;"></td>
                             <td>
@@ -2785,6 +2791,9 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
                 use_mock: document.getElementById(`mock_${idx}`).checked,
                 rc_user: document.getElementById(`user_${idx}`).value,
                 rc_password: document.getElementById(`pass_${idx}`).value,
+                webhook_auth_secret: document.getElementById(`webhook_auth_${idx}`).value,
+                webhook_auth_header: document.getElementById(`webhook_header_${idx}`).value,
+                fetch_config: document.getElementById(`fetch_config_${idx}`).value,
                 purge_interval_min: parseInt(document.getElementById(`purge_${idx}`).value) || 15,
                 run_interval_sec: parseInt(document.getElementById(`run_int_${idx}`).value) || 5,
                 queue_backend: document.getElementById(`queue_${idx}`).value

@@ -17,6 +17,12 @@ class ProviderConfig(Base):
     mapping_schema = Column(JSON, default={})
     fetch_config = Column(JSON, default={})        # Guarda URL, auth_type, user, pass para extraer telemetría
     enrichment_config = Column(JSON, default={})   # Guarda URL y reglas para extraer el diccionario (IMEI -> Placa)
+    
+    # NUEVOS campos cifrados para Envelope Encryption
+    rc_password_enc = Column(String, nullable=True)
+    fetch_config_enc = Column(String, nullable=True) # Text en el spec, pero String funciona igual o TEXT
+    webhook_auth_secret_enc = Column(String, nullable=True)
+    webhook_auth_header = Column(String, default="x-api-key")
 
 class ProviderDictionary(Base):
     """Almacena pares Key-Value del diccionario de metadatos (Ej. IMEI -> Placa)."""
