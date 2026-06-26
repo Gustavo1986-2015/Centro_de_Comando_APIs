@@ -21,7 +21,7 @@ Para evitar el "Database Locked" característico de SQLite bajo estrés, se impl
 - **Validación Estricta:** Todo dato entrante se filtra mediante `Pydantic` hacia el **Modelo Canónico** de Assistcargo.
 - **Circuit Breaker y Timeouts:** Si un envío a RC falla (ej. timeout de red), el sistema absorbe el impacto. Zeep cuenta con un **timeout granular (5s conexión / 25s lectura)**. Si ocurren 5 fallos consecutivos, el "Circuit Breaker" corta el tráfico hacia RC (estado OPEN) para evitar congestión, hasta que la red se recupere.
 - **Reintentos Inteligentes (Backoff Lineal/Exponencial):** Los eventos fallidos quedan retenidos y se reintentan progresivamente (Ej. +10s, +45s, +120s...). El Worker aísla los eventos fallidos para que el tráfico nuevo fluya inmediatamente.
-- **Respaldo JSONL y Auto-Purga:** Todo payload se guarda en logs rotativos `.jsonl` y los eventos procesados se respaldan en disco agrupados mensualmente. El sistema auto-purga archivos mayores a 30 días para proteger el espacio del servidor y opera la BD SQLite estrictamente como una RAM volátil.
+- **Respaldo JSONL y Auto-Purga:** Todo payload se guarda en logs rotativos `.jsonl` y los eventos procesados se respaldan en disco agrupados mensualmente. Retención configurable + toggle procesados + purga manual. La gestión de logs se realiza desde el Dashboard y la auto-purga dinámica protege el espacio del servidor, operando la BD SQLite estrictamente como una RAM volátil. Los logs crudos son forenses y no pueden desactivarse.
 
 ### 4. Monitoreo Táctico y Dashboard en Tiempo Real
 - **Frontend SSE:** Un Dashboard moderno, estéticamente enriquecido, impulsado por *Server-Sent Events*. Provee telemetría en vivo y trazabilidad sin saturar el servidor mediante técnicas de "Long Polling".
@@ -100,3 +100,11 @@ Para evitar el "Database Locked" característico de SQLite bajo estrés, se impl
 main.py                  # Entrypoint de Uvicorn/FastAPI
 requirements.txt         # Dependencias Python
 ```
+
+---
+
+## 7. Gestión de Logs desde el Dashboard
+El sistema incorpora controles completos de gestión de logs accesibles directamente desde la interfaz de usuario (Dashboard):
+- **Retención Configurable:** Posibilidad de ajustar la vida útil de los logs crudos (7 a 90 días) y logs procesados (7 a 30 días).
+- **Toggle de Procesados:** Permite desactivar los respaldos en disco de eventos ya procesados. *(Nota: Los logs crudos de ingesta son obligatorios por motivos forenses y no pueden apagarse).*
+- **Purga Manual de Emergencia:** Incluye una herramienta protegida por estrictos guardrails (verificación de contraseña, confirmación escrita "PURGAR" y mínimo 7 días de retención obligatoria) para liberar espacio en disco de forma segura e inmediata.
