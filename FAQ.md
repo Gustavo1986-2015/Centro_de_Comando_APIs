@@ -164,5 +164,16 @@ No, es una característica de diseño. El sistema no utiliza pesados frameworks 
 El nivel de detalle de la consola y los archivos físicos está dictado por la variable de entorno `LOG_LEVEL`. Si está en `DEBUG`, el sistema escupirá hasta el último byte de tráfico HTTP saliente (XML de SOAP). Para una operativa normal y limpia, se recomienda `LOG_LEVEL=INFO`.
 El sistema incorpora un motor de **Hot-Reload en Logs**, lo que significa que puedes abrir el archivo `.env`, cambiar el nivel de log, y en menos de 5 segundos la consola se silenciará (o se volverá más ruidosa) sin tener que reiniciar jamás el proceso web.
 
+### ¿Dónde se alojan exactamente los logs y cómo se configuran?
+El sistema divide los logs en tres categorías distintas para no mezclar diagnósticos con telemetría. La configuración base de estos archivos se controla desde el `.env`:
+
+| Tipo de Log | Ubicación Física | Propósito | Retención Base |
+|-------------|------------------|-----------|----------------|
+| **1. Transaccionales / Sistema** | `logs/app.log.YYYY-MM-DD` | Errores de código, caídas de red, reinicios de Uvicorn y advertencias. (Los colores se ven en consola, en el archivo se guarda texto plano). | Controlado por `LOG_RETENTION_DAYS` en el `.env` (Default: 7 días). |
+| **2. Crudos (Auditoría PUSH)** | `audit/{proveedor}/YYYY-MM/crudos_YYYY-MM-DD.jsonl` | Es el JSON original, intacto, tal cual lo mandó el camión/proveedor antes de que nuestro código lo toque. Sirve como prueba legal de qué nos enviaron. | Borrado automático mensual (hardcoded a 30 días para evitar colapso de disco). |
+| **3. Procesados (Historial RC)** | `db/backups_diarios/{prov}_{env}/YYYY-MM/procesados_YYYY-MM-DD.jsonl` | Es el Modelo Canónico que se logró enviar con éxito a Recurso Confiable (o falló definitivamente). Incluye el `jobId` y los timestamps de latencia. | Borrado automático mensual (hardcoded a 30 días). |
+
+*(Nota: Los archivos .jsonl son de texto plano separados por salto de línea. Se pueden abrir con el Bloc de notas o importar directamente a Excel/PowerBI).*
+
 ### ¿Se llenará el disco duro del servidor con todos estos logs?
-No. El Hub posee un recolector de basura automatizado. Transforma los eventos de base de datos a un formato comprimido de texto por líneas (`.jsonl`) agrupado mensualmente. Cada ciclo de procesamiento purga y borra de forma definitiva cualquier archivo de respaldo en crudo (`audit/`), procesado (`db/backups_diarios/`) y logs puramente transaccionales de aplicación (`logs/app.log.YYYY-MM-DD`) que superen sus umbrales de retención (típicamente entre 7 y 30 días de antigüedad), garantizando que el almacenamiento del servidor permanezca estable sin importar el volumen de vehículos traficados.
+No. El Hub posee un recolector de basura automatizado. Transforma los eventos de base de datos a un formato comprimido de texto por líneas (`.jsonl`) agrupado mensualmente. Cada ciclo de procesamiento purga y borra de forma definitiva cualquier archivo de respaldo en crudo, procesado y logs transaccionales que superen sus umbrales de retención mencionados en la tabla anterior, garantizando que el almacenamiento del servidor permanezca estable sin importar el volumen de vehículos traficados.
