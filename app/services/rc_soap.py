@@ -4,10 +4,13 @@ import os
 import json
 import threading
 import time
+import hashlib
+import base64
 from datetime import datetime, timedelta, timezone
 from xml.etree import ElementTree as ET
 from app.schemas.canonical import RCCanonicalModel
 from dotenv import load_dotenv
+from cryptography.fernet import Fernet, InvalidToken
 
 load_dotenv()
 
@@ -63,14 +66,49 @@ class RCSOAPClient:
                 cls._global_zeep_client = Client(wsdl, transport=transport)
         return cls._global_zeep_client
 
+    def _get_fernet(self):
+        enc_key_str = os.getenv("RC_TOKEN_ENC_KEY")
+        if enc_key_str:
+            try:
+                return Fernet(enc_key_str.encode())
+            except Exception as e:
+                logger.warning(f"RC_TOKEN_ENC_KEY es inválido: {e}. Usando fallback a RC_PASSWORD.")
+        
+        # Fallback: derivar clave usando RC_PASSWORD
+        if not self.password:
+            return None
+            
+        key = base64.urlsafe_b64encode(hashlib.sha256(self.password.encode()).digest())
+        return Fernet(key)
+
     def _load_token_from_cache(self):
         """Carga el token desde el archivo de caché en disco si existe y es válido."""
         cache_path = f"./db/rc_token_cache_{self.username}.json"
         if not os.path.exists(cache_path):
             return None
         try:
-            with open(cache_path, "r", encoding="utf-8") as f:
-                data = json.load(f)
+            with open(cache_path, "rb") as f:
+                file_bytes = f.read()
+                
+            fernet = self._get_fernet()
+            if not fernet:
+                logger.warning("No hay clave de cifrado (ni password) para leer el caché.")
+                return None
+                
+            try:
+                decrypted = fernet.decrypt(file_bytes)
+                data = json.loads(decrypted.decode("utf-8"))
+            except InvalidToken:
+                logger.warning(f"Token cache corrupto o clave rotada para {self.username}, purgando y re-autenticando.")
+                try:
+                    os.remove(cache_path)
+                except Exception as e:
+                    logger.debug(f"No se pudo borrar cache corrupto: {e}")
+                return None
+            except json.JSONDecodeError as e:
+                logger.warning(f"Error decodificando JSON del caché cifrado: {e}")
+                return None
+                
             token = data.get("token")
             expires_at_str = data.get("expires_at")
             if token and expires_at_str:
@@ -81,6 +119,8 @@ class RCSOAPClient:
                     self._token_expires_at = expires_at
                     logger.info(f"Token recuperado de caché en disco. Vence el: {self._token_expires_at}")
                     return token
+        except FileNotFoundError:
+            return None
         except Exception as e:
             logger.warning(f"Excepción capturada en rc_soap: {e}")
             logger.warning(f"No se pudo leer el token de la caché en disco: {e}")
@@ -88,15 +128,24 @@ class RCSOAPClient:
 
     def _save_token_to_cache(self, token: str, expires_at: datetime):
         """Guarda el token en el archivo de caché en disco."""
+        fernet = self._get_fernet()
+        if not fernet:
+            logger.info("Modo solo-memoria: No hay clave de cifrado ni password, token no se guardará en disco.")
+            return
+
         cache_path = f"./db/rc_token_cache_{self.username}.json"
         try:
             os.makedirs(os.path.dirname(cache_path), exist_ok=True)
-            with open(cache_path, "w", encoding="utf-8") as f:
-                json.dump({
-                    "token": token,
-                    "expires_at": expires_at.isoformat()
-                }, f, indent=4)
-            logger.info("Token guardado exitosamente en caché en disco.")
+            payload = json.dumps({
+                "token": token,
+                "expires_at": expires_at.isoformat()
+            }).encode("utf-8")
+            
+            ciphertext = fernet.encrypt(payload)
+            
+            with open(cache_path, "wb") as f:
+                f.write(ciphertext)
+            logger.info("Token guardado exitosamente en caché en disco (cifrado AES).")
         except Exception as e:
             logger.warning(f"Excepción capturada en rc_soap: {e}")
             logger.warning(f"No se pudo guardar el token en la caché en disco: {e}")
