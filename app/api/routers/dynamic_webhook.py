@@ -4,12 +4,14 @@ from sqlalchemy.orm import Session
 from datetime import datetime, timezone
 import json
 import logging
+import asyncio
 
 from app.database import get_db_provider, get_session
 from app.models.config_models import ProviderConfig
 from app.core.dynamic_mapper import DynamicMapper
 from app.core.queue_factory import QueueFactory
 from app.models.db_models import NormalizedRCEvent
+from app.core.auditor import log_raw_payload
 
 logger = logging.getLogger(__name__)
 
@@ -50,6 +52,9 @@ async def dynamic_webhook_receive(
     except Exception as e:
         logger.warning(f"Excepción capturada en dynamic_webhook: {e}")
         raise HTTPException(status_code=400, detail="El cuerpo de la petición debe ser un JSON válido.")
+
+    # 2.5 Auditoría cruda (fire-and-forget asíncrona)
+    asyncio.create_task(asyncio.to_thread(log_raw_payload, provider_name, env, payload))
 
     # 3. Transformación Dinámica al Modelo Canónico (RC)
     try:
