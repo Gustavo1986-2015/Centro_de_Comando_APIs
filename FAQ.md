@@ -165,7 +165,11 @@ Recurso Confiable (RC), el servicio SOAP que recibe la telemetría de Assistcarg
 5. Gestionar con el proveedor RC la habilitación de HTTPS como mejora a mediano plazo.
 
 ### ¿Cómo se protegen las contraseñas y tokens cacheados en el disco?
-Para integraciones como Recurso Confiable, el sistema necesita mantener en caché los tokens de sesión. Estos archivos (ej. `db/rc_token_cache_*.json`) nunca se guardan en texto plano. Se emplea **Cifrado Simétrico AES-128 (Fernet)**. Esto garantiza que, incluso si un actor malicioso lograra obtener permisos de lectura sobre la carpeta del servidor (vulnerabilidad de *Local File Inclusion*), le será matemáticamente imposible descifrar los tokens y secuestrar las sesiones sin la clave de cifrado generada por el entorno. Si el token en disco se corrompe o la clave rota, el sistema posee un mecanismo *fail-safe* que purga automáticamente la caché dañada y re-autentica de forma transparente.
+El Centro de Comando emplea **Envelope Encryption** (Cifrado de Sobre) para todas las credenciales persistidas: contraseñas de Recurso Confiable, llaves de Webhooks PUSH y secretos de proveedores PULL.
+- Las credenciales nunca se guardan en texto plano en la base de datos (SQLite). Se almacenan como *ciphertexts* utilizando **AES-128-CBC + HMAC-SHA256 (Fernet)**.
+- El sistema utiliza una única clave criptográfica maestra (`MASTER_ENC_KEY`) que se autogenera en el primer arranque y se guarda localmente en el archivo `.env`.
+- Si un atacante roba la base de datos `system_config_global.db`, los secretos son inútiles sin acceso al archivo `.env` del servidor.
+- Para los tokens temporales en caché (ej. sesión de RC), también se aplica este mecanismo de cifrado, asegurando que un Local File Inclusion (LFI) no comprometa las sesiones activas.
 
 ### ¿Por qué se eliminó la deduplicación de coordenadas en el motor PULL?
 En integraciones pasivas (PUSH), el Hub acepta todo lo que le envíen. Para integraciones activas (PULL como Protrack), originalmente el Hub ignoraba los datos si la fecha y coordenadas eran idénticas a la lectura anterior (ej. camión estacionado). Por requerimiento operativo estricto de Assistcargo: *"Siempre debemos mostrar lo que consumimos"*, se removió ese bloqueo local. Ahora el Hub enviará el dato 20 veces por hora a Recurso Confiable si Protrack lo informa 20 veces, dejando la responsabilidad de deduplicar a la plataforma destino.

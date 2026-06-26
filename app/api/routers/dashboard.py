@@ -90,11 +90,14 @@ class ConfigUpdate(BaseModel):
     id: int
     is_active: bool
     rc_user: str
-    rc_password: str
+    rc_password: str | None = None
     use_mock: bool
     purge_interval_min: int
     run_interval_sec: int
     queue_backend: str
+    webhook_auth_secret: str | None = None
+    webhook_auth_header: str | None = None
+    fetch_config: str | None = None
 
 @router.get("/dashboard", response_class=HTMLResponse)
 async def get_dashboard(request: Request, _: None = Depends(verify_dashboard_auth)):
@@ -524,6 +527,8 @@ async def get_enrichment(provider_name: str, env: str, _: None = Depends(verify_
     finally:
         config_db.close()
 
+from app.core.crypto import encrypt
+
 @router.get("/api/config")
 async def get_all_configs(_: None = Depends(verify_dashboard_auth)):
     db = get_session("system_config", "global")
@@ -543,7 +548,10 @@ async def get_all_configs(_: None = Depends(verify_dashboard_auth)):
             "env": c.env.upper(),
             "is_active": c.is_active,
             "rc_user": c.rc_user,
-            "rc_password": "••••••••" if c.rc_password else "",
+            "has_rc_password": bool(c.rc_password_enc or c.rc_password),
+            "has_webhook_auth": bool(c.webhook_auth_secret_enc),
+            "has_fetch_config": bool(c.fetch_config_enc or c.fetch_config),
+            "webhook_auth_header": c.webhook_auth_header or "x-api-key",
             "use_mock": c.use_mock,
             "purge_interval_min": c.purge_interval_min,
             "run_interval_sec": c.run_interval_sec,
@@ -561,8 +569,23 @@ async def update_configs(updates: List[ConfigUpdate], _: None = Depends(verify_d
             if conf:
                 conf.is_active = u.is_active
                 conf.rc_user = u.rc_user
-                if u.rc_password and u.rc_password != "••••••••":
-                    conf.rc_password = u.rc_password
+                
+                # Se envían desde un nuevo endpoint o modelo extendido. 
+                # El modelo ConfigUpdate necesita soportar estos campos opcionales.
+                if hasattr(u, 'rc_password') and u.rc_password and u.rc_password != "••••••••" and u.rc_password.strip() != "":
+                    conf.rc_password_enc = encrypt(u.rc_password)
+                    conf.rc_password = None # borrar plaintext si existía
+                    
+                if hasattr(u, 'webhook_auth_secret') and u.webhook_auth_secret and u.webhook_auth_secret != "••••••••" and u.webhook_auth_secret.strip() != "":
+                    conf.webhook_auth_secret_enc = encrypt(u.webhook_auth_secret)
+                    
+                if hasattr(u, 'webhook_auth_header') and u.webhook_auth_header:
+                    conf.webhook_auth_header = u.webhook_auth_header
+                    
+                if hasattr(u, 'fetch_config') and u.fetch_config and u.fetch_config != "••••••••" and u.fetch_config.strip() != "":
+                    conf.fetch_config_enc = encrypt(u.fetch_config)
+                    conf.fetch_config = None # borrar plaintext
+                    
                 conf.use_mock = u.use_mock
                 conf.purge_interval_min = u.purge_interval_min
                 conf.run_interval_sec = u.run_interval_sec

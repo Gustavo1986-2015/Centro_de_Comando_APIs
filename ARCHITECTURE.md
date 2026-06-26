@@ -116,6 +116,13 @@ Adicionalmente, el proyecto incorpora la herramienta `/inspector`, un proxy inve
 Los tokens de sesión generados por la API de Recurso Confiable (RC) se almacenan en caché local (`db/rc_token_cache_{username}.json`). Para prevenir exfiltración en escenarios de escalamiento de privilegios o acceso no autorizado al filesystem (ej. LFI), los tokens se **cifran simétricamente en disco usando AES-128 (Fernet)**.
 - **Fail-Safe Cryptográfico:** La clave de cifrado se inyecta por entorno (`RC_TOKEN_ENC_KEY`). Si no existe, se deriva criptográficamente del `RC_PASSWORD` usando SHA256. Si un caché antiguo (texto plano) o corrupto es detectado, la excepción `InvalidToken` purga el archivo obsoleto forzando una re-autenticación limpia sin crashear el worker.
 
+### Envelope Encryption (Credenciales de Proveedores)
+Todas las credenciales de integraciones (contraseñas RC, llaves PUSH y secretos PULL configurados en la UI) se benefician del patrón **Envelope Encryption**:
+- Las contraseñas jamás se guardan en texto plano en la base de datos `system_config_global.db`.
+- Se emplea una única clave maestra autogenerada (`MASTER_ENC_KEY`) alojada en el archivo `.env`.
+- Si un atacante extrae la base de datos (SQLite local), no podrá leer ningún secreto sin obtener primero acceso a las variables de entorno del servidor.
+- Este modelo permite que el Dashboard sea 100% autónomo, cifrando los datos "al vuelo" (`encrypt()`) antes de insertarlos a la DB y descifrándolos mediante Inyección Just-In-Time (`decrypt()`) estrictamente al momento de usarlos en peticiones salientes HTTP o validaciones de Webhooks.
+
 ---
 
 ## 7. Retención, Respaldos y Purga de Datos (Ciclo de Vida)
