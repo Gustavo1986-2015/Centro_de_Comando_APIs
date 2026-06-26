@@ -32,16 +32,30 @@ def get_master_key() -> str:
     return key
 
 def _persist_key_to_env(key: str):
-    """Append la llave al .env (preservando contenido existente)."""
+    """Guarda la llave en .env, reemplazando la entrada vacía si existe, o haciendo append."""
     env_path = Path(".env")
-    marker = "# === Auto-generada por app/core/crypto.py ==="
     
     # Verificar si ya existe (race condition safety)
     if env_path.exists():
         content = env_path.read_text(encoding="utf-8")
-        if "MASTER_ENC_KEY" in content:
-            return
-    
+        if "MASTER_ENC_KEY=" in content:
+            new_lines = []
+            replaced = False
+            for line in content.splitlines():
+                if line.startswith("MASTER_ENC_KEY="):
+                    if line.strip() == "MASTER_ENC_KEY=":
+                        new_lines.append(f"MASTER_ENC_KEY={key}")
+                        replaced = True
+                    else:
+                        return # Ya tiene un valor, no sobreescribir
+                else:
+                    new_lines.append(line)
+            
+            if replaced:
+                env_path.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
+                return
+
+    marker = "# === Auto-generada por app/core/crypto.py ==="
     with open(env_path, "a", encoding="utf-8") as f:
         f.write(f"\n{marker}\n")
         f.write(f"# Llave maestra para cifrar credenciales de proveedores en DB.\n")
