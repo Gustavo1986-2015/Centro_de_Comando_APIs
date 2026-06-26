@@ -222,6 +222,8 @@ async def telemetry_poll_loop(provider_name: str, env: str):
             await asyncio.sleep(60)
 
 async def process_and_enqueue(provider_name: str, env: str, data: dict|list, mapping_schema: dict):
+    from app.core.auditor import log_raw_payload
+    
     items = []
     if isinstance(data, dict):
         for k, v in data.items():
@@ -235,6 +237,10 @@ async def process_and_enqueue(provider_name: str, env: str, data: dict|list, map
 
     if not items:
         return
+
+    # Logueo físico en audit/ como JSONL crudo (requerimiento de auditoría)
+    for item in items:
+        log_raw_payload(provider_name, env, item)
 
     db_provider = get_session(provider_name, env)
     from app.worker.processor import trigger_worker

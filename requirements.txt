@@ -15,3 +15,4 @@ jsonpath_ng>=1.6.0,<2.0.0
 # Dependencias opcionales (ej. importadas dinámicamente en health check y redis queue)
 # redis>=5.0.0
 colorlog>=6.10.1
+python-json-logger>=2.0.0
