@@ -956,14 +956,18 @@ def update_retention_config(
     db = get_session("system_config", "global")
     try:
         settings = db.query(SystemSettings).first()
-        if settings:
-            settings.audit_retention_days = body.audit_retention_days
-            settings.processed_retention_days = body.processed_retention_days
-            db.commit()
-            config_cache.invalidate()
-            log_admin_action("update_retention", body.dict(), request, _auth.username)
-            return {"ok": True, "message": "Retención actualizada correctamente"}
-        raise HTTPException(status_code=500, detail="Configuración no encontrada en base de datos")
+        if not settings:
+            settings = SystemSettings()
+            db.add(settings)
+        settings.audit_retention_days = body.audit_retention_days
+        settings.processed_retention_days = body.processed_retention_days
+        db.commit()
+        config_cache.invalidate()
+        log_admin_action("update_retention", body.dict(), request, _auth.username)
+        return {"ok": True, "message": "Retención actualizada correctamente"}
+    except Exception as e:
+        logger.error(f"Error actualizando retención: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
     finally:
         db.close()
 
@@ -976,13 +980,17 @@ def toggle_processed_logs(
     db = get_session("system_config", "global")
     try:
         settings = db.query(SystemSettings).first()
-        if settings:
-            settings.processed_logs_enabled = body.enabled
-            db.commit()
-            config_cache.invalidate()
-            log_admin_action("toggle_processed_logs", body.dict(), request, _auth.username)
-            return {"ok": True, "message": f"Backups de procesados {'activados' if body.enabled else 'desactivados'}"}
-        raise HTTPException(status_code=500, detail="Configuración no encontrada en base de datos")
+        if not settings:
+            settings = SystemSettings()
+            db.add(settings)
+        settings.processed_logs_enabled = body.enabled
+        db.commit()
+        config_cache.invalidate()
+        log_admin_action("toggle_processed_logs", body.dict(), request, _auth.username)
+        return {"ok": True, "message": f"Backups de procesados {'activados' if body.enabled else 'desactivados'}"}
+    except Exception as e:
+        logger.error(f"Error en toggle_processed_logs: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
     finally:
         db.close()
 
