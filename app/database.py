@@ -80,6 +80,20 @@ def check_and_migrate_db():
             if "avg_push_latency_ms" not in columns_stats:
                 cursor.execute("ALTER TABLE daily_stats ADD COLUMN avg_push_latency_ms REAL")
                 conn.commit()
+                
+        # 3. Migración para system_settings
+        cursor.execute("PRAGMA table_info(system_settings)")
+        columns_sys = [row[1] for row in cursor.fetchall()]
+        if columns_sys:
+            if "audit_retention_days" not in columns_sys:
+                cursor.execute("ALTER TABLE system_settings ADD COLUMN audit_retention_days INTEGER DEFAULT 30")
+                conn.commit()
+            if "processed_retention_days" not in columns_sys:
+                cursor.execute("ALTER TABLE system_settings ADD COLUMN processed_retention_days INTEGER DEFAULT 30")
+                conn.commit()
+            if "processed_logs_enabled" not in columns_sys:
+                cursor.execute("ALTER TABLE system_settings ADD COLUMN processed_logs_enabled BOOLEAN DEFAULT 1")
+                conn.commit()
     except Exception as e:
         logger.debug(f"Migración idempotente omitida o error esperado BD: {e}")
         pass
