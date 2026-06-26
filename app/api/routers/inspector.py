@@ -26,17 +26,31 @@ router = APIRouter(prefix="/inspector", tags=["API Inspector"])
 CACHED_PAYLOADS: Dict[str, Any] = {}
 
 
-def _is_safe_url(url: str) -> bool:
-    """Bloquea URLs que apunten a IPs privadas, loopback o metadata de cloud (anti-SSRF)."""
+def _is_safe_url(url: str) -> tuple[bool, str | None, str | None, str | None]:
+    """Valida la URL y retorna (safe, resolved_ip, pinned_url, original_host)."""
+    parsed = urllib.parse.urlparse(url)
+    host = parsed.hostname
+    if not host:
+        return False, None, None, None
     try:
-        host = urllib.parse.urlparse(url).hostname
-        if not host:
-            return False
         ip = ipaddress.ip_address(socket.gethostbyname(host))
-        return not (ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved)
-    except Exception as e:
-        logger.warning(f"Excepción capturada en inspector: {e}")
-        return False
+    except (socket.gaierror, ValueError) as e:
+        logger.warning(f"Anti-SSRF: no se pudo resolver {host}: {e}")
+        return False, None, None, None
+    
+    if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved:
+        logger.warning(f"Anti-SSRF: IP bloqueada {host} -> {ip}")
+        return False, None, None, None
+    
+    # Construir URL pinned a la IP validada (preservar puerto si existe)
+    if parsed.port:
+        netloc = f"{ip.compressed}:{parsed.port}"
+    else:
+        netloc = ip.compressed
+    pinned_url = parsed._replace(netloc=netloc).geturl()
+    
+    logger.info(f"Anti-SSRF: {host} -> {ip}, URL pinned")
+    return True, str(ip), pinned_url, host
 
 @router.post("/catch/{session_id}")
 async def catch_webhook(session_id: str, request: Request, _: None = Depends(verify_dashboard_auth)):
@@ -118,14 +132,18 @@ async def fetch_api(request_data: dict = Body(...), _: None = Depends(verify_das
     if not url:
         raise HTTPException(status_code=400, detail="La URL es requerida")
 
-    if not _is_safe_url(url):
-        raise HTTPException(status_code=400, detail="URL no permitida: apunta a un host interno o reservado.")
+    safe, resolved_ip, pinned_url, original_host = _is_safe_url(url)
+    if not safe:
+        raise HTTPException(status_code=403, detail="URL bloqueada por Anti-SSRF")
+        
+    if "Host" not in headers:
+        headers["Host"] = original_host
         
     try:
         start = time.perf_counter()
         response = requests.request(
             method=method,
-            url=url,
+            url=pinned_url,
             headers=headers,
             auth=auth_tuple,
             json=body if isinstance(body, (dict, list)) else None,
@@ -174,8 +192,12 @@ async def fetch_token(request_data: dict = Body(...), _: None = Depends(verify_d
     if not token_url:
         raise HTTPException(status_code=400, detail="La URL del token es requerida")
 
-    if not _is_safe_url(token_url):
-        raise HTTPException(status_code=400, detail="URL no permitida: apunta a un host interno o reservado.")
+    safe, resolved_ip, pinned_url, original_host = _is_safe_url(token_url)
+    if not safe:
+        raise HTTPException(status_code=403, detail="URL bloqueada por Anti-SSRF")
+    
+    if "Host" not in token_headers:
+        token_headers["Host"] = original_host
     
     auth_tuple = None
     if auth_user and auth_pass:
@@ -185,7 +207,7 @@ async def fetch_token(request_data: dict = Body(...), _: None = Depends(verify_d
         start = time.perf_counter()
         response = requests.request(
             method=token_method,
-            url=token_url,
+            url=pinned_url,
             headers=token_headers,
             auth=auth_tuple,
             data=token_body if isinstance(token_body, (dict, str)) else None,
