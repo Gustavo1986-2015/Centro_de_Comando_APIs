@@ -117,7 +117,7 @@ Para prevenir el colapso del almacenamiento y mantener la RAM optimizada, el sis
 
 1. **Ingesta Cruda (JSONL):** Todo payload entrante se guarda inmediatamente en texto plano, agregando líneas a `audit/{proveedor}/YYYY-MM/crudos_YYYY-MM-DD.jsonl`.
 2. **Backups de Procesados:** Cuando los eventos finalizan su ciclo (enviados exitosamente o fallidos definitivamente), son extraídos de SQLite y resguardados en `db/backups_diarios/{proveedor}_{env}/YYYY-MM/procesados_YYYY-MM-DD.jsonl` usando cursores `.yield_per()` para evitar desbordar la memoria RAM durante purgas masivas.
-3. **Purga Automática:** Los archivos físicos `.jsonl` más antiguos a 30 días se eliminan del disco duro de forma automática.
+3. **Purga Automática:** Retención configurable desde el Dashboard (7-90 días crudos, 7-30 días procesados). Existe la opción de una purga manual de emergencia protegida por guardrails (mínimo 7 días, requiere escribir "PURGAR" y revalidación de contraseña). Los logs crudos no pueden apagarse por propósitos forenses.
 4. **SQLite Volátil:** Las bases `.db` se mantienen extremadamente livianas alojando únicamente el tráfico "en vuelo" (pendientes, reintentos y las últimas horas de enviados).
 
 ---
@@ -150,3 +150,12 @@ Para sostener la ligereza del sistema y evitar pesadas dependencias de migració
 En la inicialización del motor, el Hub inyecta en crudo comandos DDL (ej. `ALTER TABLE ADD COLUMN`). Si la estructura ya está actualizada, el motor de SQLite levanta un `OperationalError` que el Hub intercepta proactivamente y cataloga como "éxito esperado", asegurando que el despliegue a nuevos servidores sea inmediato y sin comandos de migración previos.
 
 El sistema también implementa un **Hot-Reload a nivel observabilidad** (`app/core/logging_config.py`). Monitorea pasivamente el archivo `.env` en un hilo de fondo. Al modificarse la variable `LOG_LEVEL` (ej. pasar de `DEBUG` a `INFO`), el sistema purga los niveles de los handlers de red (`uvicorn.error`, `zeep`, `watchfiles`) e inyecta la nueva severidad dinámicamente en menos de 5 segundos. Esto permite depurar problemas críticos en caliente directamente en los servidores de producción sin jamás interrumpir el socket de recepción de payloads ni perder microsegundos de procesamiento Webhook.
+
+---
+
+## 12. Gestión de Logs y Retención Dinámica
+
+El Centro de Comando permite administrar la retención y generación de logs directamente desde el Dashboard:
+- **Retención configurable:** Control en caliente sobre logs crudos (auditoría PUSH) y procesados (backups_diarios).
+- **Toggle de Procesados:** Es posible apagar por completo el volcado a disco de los eventos procesados para maximizar IOPS y espacio en disco. Los logs crudos se mantienen siempre encendidos para fines de auditoría forense.
+- **Purga de Emergencia:** Dispone de un mecanismo de purga manual protegido mediante validaciones severas (revalidación de password, `window.confirm`, antigüedad mínima obligatoria de 7 días, etc.) para liberar espacio crítico sin riesgos de eliminación accidental.
