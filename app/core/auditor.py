@@ -35,3 +35,29 @@ def audit_event(provider: str, payload: dict):
     except Exception as e:
         logger.warning(f"Excepción capturada en auditor: {e}")
         print(f"Error escribiendo auditoria para {provider}: {e}")
+
+def log_raw_payload(provider: str, env: str, payload: dict):
+    """
+    Guarda evento crudo PULL en audit/{provider}_{env}/{YYYY-MM}/crudos_{YYYY-MM-DD}.jsonl
+    Variante de audit_event que incluye entorno (para flujos PULL como Protrack).
+    """
+    now = datetime.now()
+    audit_record = {
+        "timestamp": now.astimezone(timezone.utc).isoformat(),
+        "provider": provider,
+        "env": env,
+        "payload": payload
+    }
+    month_str = now.strftime("%Y-%m")
+    day_str = now.strftime("%Y-%m-%d")
+    provider_env = f"{provider}_{env}"
+    month_dir = os.path.join(AUDIT_DIR, provider_env, month_str)
+    os.makedirs(month_dir, exist_ok=True)
+    log_file = os.path.join(month_dir, f"crudos_{day_str}.jsonl")
+    json_str_strict = json.dumps(audit_record, ensure_ascii=False)
+    try:
+        with open(log_file, "a", encoding="utf-8") as f:
+            f.write(json_str_strict + "\n")
+    except Exception as e:
+        logger.warning(f"Excepción capturada en auditor (log_raw_payload): {e}")
+        print(f"Error escribiendo auditoria para {provider}_{env}: {e}")
