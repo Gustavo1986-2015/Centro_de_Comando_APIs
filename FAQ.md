@@ -149,6 +149,9 @@ No. Antes siquiera de intentar mapear, validar o guardar en SQLite, la capa HTTP
 Es un módulo interno que emula a Postman. Permite a los analistas probar conexiones salientes directamente desde los servidores de Assistcargo en la nube, saltándose problemas locales de VPN corporativas o bloqueos del navegador (CORS).
 Por diseño de seguridad, este inspector cuenta con un **Escudo Anti-SSRF**, que intercepta y bloquea llamadas maliciosas (ej. un usuario intentando que el servidor se consulte a sí mismo en `127.0.0.1` o escanee redes privadas).
 
+### ¿Cómo se protegen las contraseñas y tokens cacheados en el disco?
+Para integraciones como Recurso Confiable, el sistema necesita mantener en caché los tokens de sesión. Estos archivos (ej. `db/rc_token_cache_*.json`) nunca se guardan en texto plano. Se emplea **Cifrado Simétrico AES-128 (Fernet)**. Esto garantiza que, incluso si un actor malicioso lograra obtener permisos de lectura sobre la carpeta del servidor (vulnerabilidad de *Local File Inclusion*), le será matemáticamente imposible descifrar los tokens y secuestrar las sesiones sin la clave de cifrado generada por el entorno. Si el token en disco se corrompe o la clave rota, el sistema posee un mecanismo *fail-safe* que purga automáticamente la caché dañada y re-autentica de forma transparente.
+
 ### ¿Por qué se eliminó la deduplicación de coordenadas en el motor PULL?
 En integraciones pasivas (PUSH), el Hub acepta todo lo que le envíen. Para integraciones activas (PULL como Protrack), originalmente el Hub ignoraba los datos si la fecha y coordenadas eran idénticas a la lectura anterior (ej. camión estacionado). Por requerimiento operativo estricto de Assistcargo: *"Siempre debemos mostrar lo que consumimos"*, se removió ese bloqueo local. Ahora el Hub enviará el dato 20 veces por hora a Recurso Confiable si Protrack lo informa 20 veces, dejando la responsabilidad de deduplicar a la plataforma destino.
 

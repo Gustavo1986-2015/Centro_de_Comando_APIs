@@ -109,6 +109,10 @@ Toda interfaz orientada al operador (Dashboard y visualizador DB) está blindada
 Adicionalmente, el proyecto incorpora la herramienta `/inspector`, un proxy inverso (Mini-Postman) para facilitar el debug desde el propio servidor. Para prevenir vulnerabilidades de Server-Side Request Forgery (SSRF) introducidas por esta herramienta de proxy, toda URL objetivo pasa por el helper `_is_safe_url()`, el cual resuelve DNS y bloquea cualquier resolución a los rangos IP:
 - AWS/GCP Meta-data (`169.254.169.254`)
 
+### Cifrado Data at Rest (Tokens RC)
+Los tokens de sesión generados por la API de Recurso Confiable (RC) se almacenan en caché local (`db/rc_token_cache_{username}.json`). Para prevenir exfiltración en escenarios de escalamiento de privilegios o acceso no autorizado al filesystem (ej. LFI), los tokens se **cifran simétricamente en disco usando AES-128 (Fernet)**.
+- **Fail-Safe Cryptográfico:** La clave de cifrado se inyecta por entorno (`RC_TOKEN_ENC_KEY`). Si no existe, se deriva criptográficamente del `RC_PASSWORD` usando SHA256. Si un caché antiguo (texto plano) o corrupto es detectado, la excepción `InvalidToken` purga el archivo obsoleto forzando una re-autenticación limpia sin crashear el worker.
+
 ---
 
 ## 7. Retención, Respaldos y Purga de Datos (Ciclo de Vida)

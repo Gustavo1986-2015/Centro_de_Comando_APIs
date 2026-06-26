@@ -31,6 +31,7 @@ Para evitar el "Database Locked" característico de SQLite bajo estrés, se impl
 ### 5. Seguridad End-to-End
 - Todo el entorno de monitoreo web y APIs visualizadoras están protegidas por **HTTP Basic Authentication**.
 - Incorpora un **Inspector de APIs** interno para pruebas técnicas (Postman-like) con un riguroso escudo **Anti-SSRF**, el cual bloquea categóricamente las consultas a redes locales, loopbacks o infraestructuras cloud.
+- **Data at Rest Segura:** Los tokens de sesión y credenciales cacheadas en disco duro (ej. Recurso Confiable) se persisten cifrados mediante **algoritmo simétrico AES-128 (Fernet)**. Esto mitiga vulnerabilidades críticas de escalamiento de privilegios por Local File Inclusion (LFI).
 
 ### 6. Autoconfiguración y Observabilidad Avanzada
 - **Migraciones Idempotentes:** Despliegue sin scripts. En el arranque, el motor DDL intenta crear estructuras en crudo; los errores de duplicidad se absorben intencionalmente y certifican el éxito, asegurando portabilidad inmediata.
