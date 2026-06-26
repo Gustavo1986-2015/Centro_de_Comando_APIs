@@ -33,3 +33,6 @@ cloudflared.exe
 # Logs
 logs/
 *.log
+
+# Scripts locales de mantenimiento (no subir a git)
+scripts/
