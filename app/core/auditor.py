@@ -62,3 +62,16 @@ def log_raw_payload(provider: str, env: str, payload: dict):
     except Exception as e:
         logger.warning(f"Excepción capturada en auditor (log_raw_payload): {e}")
         print(f"Error escribiendo auditoria para {provider}_{env}: {e}")
+
+def log_admin_action(action: str, params: dict, request, user: str):
+    """
+    Registra una acción administrativa en el log general del sistema.
+    """
+    # Obtener IP (considerando X-Forwarded-For si está tras proxy)
+    ip = request.client.host if request.client else "unknown"
+    x_forwarded = request.headers.get("x-forwarded-for")
+    if x_forwarded:
+        ip = x_forwarded.split(",")[0].strip()
+        
+    logger.info(f"Admin Action | user={user} | ip={ip} | action={action} | params={json.dumps(params, ensure_ascii=False)}")
+

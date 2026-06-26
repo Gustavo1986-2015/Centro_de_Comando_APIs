@@ -112,10 +112,14 @@ _rc_circuit_breaker = CircuitBreaker(
 )
 
 from app.services.rc_soap import get_rc_client
-
+from app.models.db_models import NormalizedRCEvent
 from app.models.config_models import ProviderConfig, DailyStat
+from app.core.config_cache import get_settings
+import logging
 
 logger = logging.getLogger(__name__)
+
+# =====================================================================
 
 
 # Registro global de eventos para despertar a los workers de forma instantánea
@@ -585,8 +589,14 @@ async def purge_provider_events(provider: str, env: str):
         backup_file = os.path.join(backup_dir, f"procesados_{day_str}.jsonl")
         
         deleted_count = 0
+        settings = get_settings()
+        
         def write_backup():
             nonlocal deleted_count
+            if not settings.processed_logs_enabled:
+                deleted_count = query.count()
+                return
+
             with open(backup_file, "a", encoding="utf-8") as f:
                 for r in query.yield_per(500):
                     deleted_count += 1
@@ -614,14 +624,17 @@ async def purge_provider_events(provider: str, env: str):
             db.commit()
             logger.info(f"Purga Automática completada para {provider}_{env}: {deleted_count} respaldados y eliminados.")
             
-        # Limpieza automatica > 30 dias (1 mes)
+        # Limpieza automatica > X dias
         def clean_old_files():
-            cutoff = time.time() - (30 * 24 * 60 * 60)
+            s = get_settings()
+            processed_cutoff = time.time() - (s.processed_retention_days * 24 * 60 * 60)
+            audit_cutoff = time.time() - (s.audit_retention_days * 24 * 60 * 60)
+            
             dirs_to_clean = [
-                os.path.join("db", "backups_diarios", f"{provider}_{env}"),
-                os.path.join("audit", provider)
+                (os.path.join("db", "backups_diarios", f"{provider}_{env}"), processed_cutoff),
+                (os.path.join("audit", provider), audit_cutoff)
             ]
-            for d in dirs_to_clean:
+            for d, cutoff in dirs_to_clean:
                 if os.path.exists(d):
                     for root, dirs, files in os.walk(d):
                         for file in files:

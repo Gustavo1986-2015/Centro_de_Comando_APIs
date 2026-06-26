@@ -16,8 +16,10 @@ logger = logging.getLogger(__name__)
 
 from app.database import get_session
 from app.models.db_models import NormalizedRCEvent
-from app.models.config_models import ProviderConfig, DailyStat
+from app.models.config_models import ProviderConfig, DailyStat, SystemSettings
 from app.worker.processor import _rc_circuit_breaker
+from app.core import config_cache
+from app.core.auditor import log_admin_action
 from pydantic import BaseModel
 from typing import List, Optional
 from datetime import datetime, timezone, timedelta
@@ -913,3 +915,138 @@ async def update_cell(body: CellUpdateRequest, _: None = Depends(verify_dashboar
     finally:
         if 'conn' in locals():
             conn.close()
+
+# =====================================================================
+# ENDPOINTS DE CONFIGURACIÓN Y PURGA DE LOGS (Feature A, B, C)
+# =====================================================================
+
+class RetentionUpdateModel(BaseModel):
+    audit_retention_days: int
+    processed_retention_days: int
+
+class ProcessedLogsToggleModel(BaseModel):
+    enabled: bool
+
+class PurgeLogsModel(BaseModel):
+    category: str  # "crudos" | "procesados" | "ambos"
+    days: int
+    confirm_text: str
+    admin_password: str
+
+@router.get("/api/config/retention")
+def get_retention_config(request: Request, _auth: HTTPBasicCredentials = Depends(verify_dashboard_auth)):
+    settings = config_cache.get_settings()
+    return {
+        "audit_retention_days": settings.audit_retention_days,
+        "processed_retention_days": settings.processed_retention_days,
+        "processed_logs_enabled": settings.processed_logs_enabled
+    }
+
+@router.put("/api/config/retention")
+def update_retention_config(
+    body: RetentionUpdateModel,
+    request: Request,
+    _auth: HTTPBasicCredentials = Depends(verify_dashboard_auth)
+):
+    if not (7 <= body.audit_retention_days <= 90):
+        raise HTTPException(status_code=400, detail="Retención de auditoría debe estar entre 7 y 90 días")
+    if not (7 <= body.processed_retention_days <= 30):
+        raise HTTPException(status_code=400, detail="Retención de procesados debe estar entre 7 y 30 días")
+        
+    db = get_session("system_config", "global")
+    try:
+        settings = db.query(SystemSettings).first()
+        if settings:
+            settings.audit_retention_days = body.audit_retention_days
+            settings.processed_retention_days = body.processed_retention_days
+            db.commit()
+            config_cache.invalidate()
+            log_admin_action("update_retention", body.dict(), request, _auth.username)
+            return {"ok": True, "message": "Retención actualizada correctamente"}
+        raise HTTPException(status_code=500, detail="Configuración no encontrada en base de datos")
+    finally:
+        db.close()
+
+@router.put("/api/config/processed-logs-toggle")
+def toggle_processed_logs(
+    body: ProcessedLogsToggleModel,
+    request: Request,
+    _auth: HTTPBasicCredentials = Depends(verify_dashboard_auth)
+):
+    db = get_session("system_config", "global")
+    try:
+        settings = db.query(SystemSettings).first()
+        if settings:
+            settings.processed_logs_enabled = body.enabled
+            db.commit()
+            config_cache.invalidate()
+            log_admin_action("toggle_processed_logs", body.dict(), request, _auth.username)
+            return {"ok": True, "message": f"Backups de procesados {'activados' if body.enabled else 'desactivados'}"}
+        raise HTTPException(status_code=500, detail="Configuración no encontrada en base de datos")
+    finally:
+        db.close()
+
+@router.post("/api/config/purge-logs")
+def manual_purge_logs(
+    body: PurgeLogsModel,
+    request: Request,
+    _auth: HTTPBasicCredentials = Depends(verify_dashboard_auth)
+):
+    expected_password = os.getenv("DASHBOARD_PASSWORD", "admin")
+    if body.admin_password != expected_password:
+        raise HTTPException(status_code=401, detail="Contraseña incorrecta")
+        
+    if body.days < 7:
+        raise HTTPException(status_code=400, detail="Mínimo de purga es 7 días")
+        
+    if body.confirm_text != "PURGAR":
+        raise HTTPException(status_code=400, detail="Texto de confirmación inválido")
+        
+    if body.category not in ("crudos", "procesados", "ambos"):
+        raise HTTPException(status_code=400, detail="Categoría inválida")
+
+    now = datetime.now(timezone.utc)
+    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    cutoff = now - timedelta(days=body.days)
+    
+    today_start_ts = today_start.timestamp()
+    cutoff_ts = cutoff.timestamp()
+    
+    dirs_to_clean = []
+    if body.category in ("crudos", "ambos"):
+        dirs_to_clean.append("audit")
+    if body.category in ("procesados", "ambos"):
+        dirs_to_clean.append(os.path.join("db", "backups_diarios"))
+        
+    deleted_files = 0
+    freed_bytes = 0
+    
+    for d in dirs_to_clean:
+        if os.path.exists(d):
+            for root, dirs, files in os.walk(d):
+                for file in files:
+                    if file.endswith(".json") or file.endswith(".jsonl"):
+                        filepath = os.path.join(root, file)
+                        try:
+                            mtime = os.path.getmtime(filepath)
+                            if mtime < cutoff_ts and mtime < today_start_ts:
+                                size = os.path.getsize(filepath)
+                                os.remove(filepath)
+                                deleted_files += 1
+                                freed_bytes += size
+                        except Exception as e:
+                            logger.warning(f"No se pudo eliminar {filepath}: {e}")
+                            
+    log_admin_action(
+        "manual_purge", 
+        {"category": body.category, "days": body.days, "deleted_files": deleted_files, "freed_bytes": freed_bytes}, 
+        request, 
+        _auth.username
+    )
+    
+    return {
+        "ok": True,
+        "deleted_files": deleted_files,
+        "freed_bytes": freed_bytes,
+        "cutoff_date": cutoff.isoformat()
+    }

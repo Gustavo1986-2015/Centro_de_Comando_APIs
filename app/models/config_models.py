@@ -46,3 +46,6 @@ class SystemSettings(Base):
     __tablename__ = "system_settings"
     id = Column(Integer, primary_key=True, index=True)
     active_queue_backend = Column(String, default="sqlite") # 'sqlite', 'redis' o 'postgres'
+    audit_retention_days = Column(Integer, default=30)
+    processed_retention_days = Column(Integer, default=30)
+    processed_logs_enabled = Column(Boolean, default=True)
