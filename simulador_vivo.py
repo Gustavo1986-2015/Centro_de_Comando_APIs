@@ -206,7 +206,7 @@ def enviar_payload(placa: str) -> tuple:
     payload = generar_payload(placa)
     reason  = payload["Reason"]["ItemElementName"]
     extra   = len([e for e in payload.get("Events", []) if e.get("Type") != reason])
-    headers = {"X-Data-Type": "Status", "Content-Type": "application/json"}
+    headers = {"X-Data-Type": "Status", "Content-Type": "application/json", "x-api-key": "simulador123"}
     try:
         res = requests.post(WEBHOOK_URL, json=payload, headers=headers, timeout=5)
         ok  = res.status_code in [200, 202]
