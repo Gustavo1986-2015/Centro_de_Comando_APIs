@@ -9,7 +9,7 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-from app.api.routers import schmitz, dashboard, health, inspector, dynamic_webhook
+from app.api.routers import schmitz, dashboard, health, inspector, dynamic_webhook, db_viewer, vehicles, audit_logs, admin_config
 from app.api.routers.schmitz import start_webhook_batch_processor, router_spec as schmitz_router_spec
 from app.api.routers.dashboard import broadcast_loop, record_push_latency
 from app.worker.processor import worker_loop
@@ -52,6 +52,10 @@ app = FastAPI(title="Centro de Comando en Vivo - Telemática", lifespan=lifespan
 app.include_router(schmitz.router)
 app.include_router(schmitz_router_spec)
 app.include_router(dashboard.router)
+app.include_router(db_viewer.router)
+app.include_router(vehicles.router)
+app.include_router(audit_logs.router)
+app.include_router(admin_config.router)
 app.include_router(health.router)
 app.include_router(inspector.router)
 app.include_router(dynamic_webhook.router)
