@@ -1,4 +1,5 @@
 from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
 from app.core.logging_config import setup_logging, watch_log_config
 setup_logging()
 
@@ -59,6 +60,8 @@ app.include_router(admin_config.router)
 app.include_router(health.router)
 app.include_router(inspector.router)
 app.include_router(dynamic_webhook.router)
+
+app.mount("/static", StaticFiles(directory="app/static"), name="static")
 
 @app.middleware("http")
 async def measure_push_latency(request: Request, call_next):
