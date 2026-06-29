@@ -97,17 +97,43 @@ El perímetro de seguridad está cerrado de punta a punta:
 
 ```text
 /app
- ├── /api
- │    └── /routers       # Endpoints HTTP: webhooks (schmitz, protrack), dashboard, inspector
- ├── /core               # Configuración global, logger, auditoría, base de datos
- ├── /providers          # Lógica específica de cada proveedor (Mappers, Pullers)
- ├── /schemas            # Pydantic (Modelo Canónico)
- ├── /services           # SOAP Client (Zeep) hacia RC
- ├── /templates          # HTML/CSS del Dashboard
- └── /worker             # Background task dispatcher (processor.py)
-/db                      # (Auto-generado) Bases de datos SQLite fragmentadas
-/audit                   # (Auto-generado) Logs en bruto JSONL
-main.py                  # Entrypoint de Uvicorn/FastAPI
+├── /api
+│    └── /routers       # Endpoints HTTP modulares
+│         ├── dashboard.py       # /dashboard (HTML) + /api/stats + SSE
+│         ├── admin_config.py    # /api/config* (proveedores, retención, purga)
+│         ├── db_viewer.py       # /api/db-viewer/* (visor SQLite)
+│         ├── vehicles.py        # /api/vehicles/* (buscador por patente)
+│         ├── audit_logs.py      # /api/logs + /api/history
+│         ├── schmitz.py         # Webhook Schmitz (/Json/Data)
+│         ├── dynamic_webhook.py # iPaaS universal
+│         ├── inspector.py       # Mini-Postman con Anti-SSRF
+│         └── health.py          # Liveness/readiness
+├── /core               # Lógica transversal
+│         ├── auth.py            # verify_dashboard_auth (compartido)
+│         ├── crypto.py          # Envelope Encryption (Fernet)
+│         ├── config_cache.py    # Cache TTL 60s de SystemSettings
+│         ├── auditor.py         # log_raw_payload + log_admin_action
+│         ├── logging_config.py  # JSONL + hot-reload
+│         ├── queue_factory.py   # Factory (SQLite/Redis stub)
+│         ├── sqlite_queue.py    # Implementación real
+│         └── dynamic_mapper.py  # Mapper JSONPath universal
+├── /models             # SQLAlchemy (ProviderConfig, NormalizedRCEvent, etc.)
+├── /providers          # Mappers específicos por proveedor
+│         └── /schmitz/mapper.py
+├── /schemas            # Pydantic (Modelo Canónico RCCanonicalModel)
+├── /services           # SOAP Client (Zeep) hacia RC
+├── /static             # Assets del dashboard (B6)
+│         ├── dashboard.css      # CSS extraído (~935 líneas)
+│         └── dashboard.js       # JS extraído (~2232 líneas)
+├── /templates          # HTML del dashboard (solo estructura, ~747 líneas)
+└── /worker             # Background tasks
+         ├── processor.py        # Dispatcher + Circuit Breaker + Purga
+         └── pull_engine.py      # Motor PULL (Protrack, etc.)
+/db                      # (Auto-generado) Bases SQLite fragmentadas (sharding)
+/audit                   # (Auto-generado) Logs crudos JSONL
+/logs                    # (Auto-generado) Logs transaccionales JSONL
+/scripts                 # (NO en git) Herramientas sysadmin locales
+main.py                  # Entrypoint Uvicorn/FastAPI
 requirements.txt         # Dependencias Python
 ```
 

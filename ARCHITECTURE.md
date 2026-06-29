@@ -186,3 +186,35 @@ Recurso Confiable (RC) solo expone su endpoint SOAP sobre HTTP. Las credenciales
 - **Mitigación del lado del Hub:** token RC cifrado en disco (Fernet), `RC_USE_MOCK` blindado en producción.
 - **Mitigación del lado de red (responsabilidad operativa):** VPN/túnel cifrado hacia RC, rotación periódica de credenciales.
 - **Resolución a mediano plazo:** gestionar con el proveedor RC la habilitación de HTTPS.
+
+---
+
+## 14. Arquitectura Modular de Routers (M4) y Frontend (B6)
+
+### Backend: Routers cohesivos
+El backend está dividido en routers especializados por responsabilidad, todos compartiendo `verify_dashboard_auth` desde `app/core/auth.py`:
+
+| Router | Endpoints | Responsabilidad |
+|--------|-----------|-----------------|
+| `dashboard.py` | 3 | Render HTML `/dashboard`, KPIs `/api/stats`, SSE `/api/stats/stream` |
+| `admin_config.py` | 12 | CRUD proveedores, retención, toggle procesados, purga manual |
+| `db_viewer.py` | 4 | Visor SQLite con whitelist + revalidación password |
+| `vehicles.py` | 2 | Buscador de vehículos por patente |
+| `audit_logs.py` | 3 | Logs crudos + historial diario |
+| `schmitz.py` | 1 | Webhook Schmitz dedicado (`/Json/Data`) |
+| `dynamic_webhook.py` | 1 | iPaaS universal para proveedores futuros |
+| `inspector.py` | 4 | Mini-Postman con Anti-SSRF (DNS rebinding mitigation) |
+| `health.py` | 1 | Liveness/readiness con ping Redis real |
+
+**Beneficio:** cada router puede modificarse sin afectar otros. El God module original (1094 LOC) quedó en 367 LOC.
+
+### Frontend: Assets separados (B6)
+El dashboard (antes 3918 líneas en un solo HTML) se divide en:
+
+| Archivo | Líneas | Contenido |
+|---------|--------|-----------|
+| `app/templates/index.html` | ~747 | HTML estructural (navbar, views, modals) |
+| `app/static/dashboard.css` | ~935 | CSS extraído |
+| `app/static/dashboard.js` | ~2232 | JS extraído (Fetch API, EventSource/SSE, DOM) |
+
+Montado vía `StaticFiles` en `/static`. Cache busting con `?v=1` para evitar cache del navegador en deploys nuevos.
