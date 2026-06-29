@@ -118,3 +118,10 @@ El sistema incorpora controles completos de gestión de logs accesibles directam
 - **Retención Configurable:** Posibilidad de ajustar la vida útil de los logs crudos (7 a 90 días) y logs procesados (7 a 30 días).
 - **Toggle de Procesados:** Permite desactivar los respaldos en disco de eventos ya procesados. *(Nota: Los logs crudos de ingesta son obligatorios por motivos forenses y no pueden apagarse).*
 - **Purga Manual de Emergencia:** Incluye una herramienta protegida por estrictos guardrails (verificación de contraseña, confirmación escrita "PURGAR" y mínimo 7 días de retención obligatoria) para liberar espacio en disco de forma segura e inmediata.
+
+---
+
+## 8. Documentación y Preguntas Frecuentes (FAQs)
+Para detalles profundos sobre la arquitectura interna, cifrado y qué hacer en caso de desastres (ej. pérdida de la llave maestra), consulta la documentación oficial:
+- [Arquitectura (Envelope Encryption)](docs/arquitectura.md)
+- [Preguntas Frecuentes (FAQ) y Disaster Recovery](docs/faqs.md)
