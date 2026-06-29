@@ -2760,8 +2760,8 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
                                     </span>
                                 </div>
                             </td>
-                            <td><input class="form-control" type="text" id="webhook_header_${c._originalIdx}" value="${c.webhook_auth_header || 'x-api-key'}" style="width: 100px;"></td>
-                            <td><input class="form-control" type="password" id="webhook_auth_${c._originalIdx}" placeholder="${c.has_webhook_auth ? '•••••••• (Cifrado)' : ''}" title="Dejar vacío para mantener el actual"></td>
+                            <td>${c.provider_name.toLowerCase() === 'protrack' ? '<input class="form-control" type="text" disabled value="--- N/A ---" style="width: 100px; color: #777; background: #222; text-align: center; border: 1px dashed #444;" title="No aplica para proveedores PULL">' : `<input class="form-control" type="text" id="webhook_header_${c._originalIdx}" value="${c.webhook_auth_header || 'x-api-key'}" style="width: 100px;">`}</td>
+                            <td>${c.provider_name.toLowerCase() === 'protrack' ? '<input class="form-control" type="text" disabled value="--- N/A (Es PULL) ---" style="color: #777; background: #222; font-style: italic; border: 1px dashed #444;" title="No aplica para proveedores PULL">' : `<input class="form-control" type="password" id="webhook_auth_${c._originalIdx}" placeholder="${c.has_webhook_auth ? '•••••••• (Cifrado)' : ''}" title="Dejar vacío para mantener el actual">`}</td>
                             <td><input class="form-control" type="text" id="user_${c._originalIdx}" value="${c.rc_user || ''}"></td>
                             <td><input class="form-control" type="password" id="pass_${c._originalIdx}" placeholder="${c.has_rc_password ? '•••••••• (Cifrado)' : ''}" title="Dejar vacío para mantener el actual"></td>
                             <td><input class="form-control" type="number" id="purge_${c._originalIdx}" value="${c.purge_interval_min}" style="width: 80px;"></td>
@@ -2789,8 +2789,8 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
                 use_mock: document.getElementById(`mock_${idx}`).checked,
                 rc_user: document.getElementById(`user_${idx}`).value,
                 rc_password: document.getElementById(`pass_${idx}`).value,
-                webhook_auth_secret: document.getElementById(`webhook_auth_${idx}`).value,
-                webhook_auth_header: document.getElementById(`webhook_header_${idx}`).value,
+                webhook_auth_secret: document.getElementById(`webhook_auth_${idx}`) ? document.getElementById(`webhook_auth_${idx}`).value : null,
+                webhook_auth_header: document.getElementById(`webhook_header_${idx}`) ? document.getElementById(`webhook_header_${idx}`).value : null,
                 purge_interval_min: parseInt(document.getElementById(`purge_${idx}`).value) || 15,
                 run_interval_sec: parseInt(document.getElementById(`run_int_${idx}`).value) || 5,
                 queue_backend: document.getElementById(`queue_${idx}`).value
