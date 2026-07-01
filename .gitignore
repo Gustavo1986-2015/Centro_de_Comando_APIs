@@ -48,3 +48,4 @@ Dockerfile
 docker-compose.yml
 .dockerignore
 configuracion_Tunnel_Cloudflare.md
+docs/
