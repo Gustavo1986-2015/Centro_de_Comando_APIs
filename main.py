@@ -31,6 +31,11 @@ async def lifespan(app: FastAPI):
     task_worker = asyncio.create_task(worker_loop())
     task_broadcast = asyncio.create_task(broadcast_loop())
     task_watch_logs = asyncio.create_task(watch_log_config())
+    
+    # Hilo fantasma de métricas internas (Kill Switch)
+    from app.core.health_metrics import telemetry_daemon_loop
+    task_telemetry = asyncio.create_task(telemetry_daemon_loop())
+    
     await start_webhook_batch_processor()
 
     yield
@@ -40,8 +45,9 @@ async def lifespan(app: FastAPI):
     task_worker.cancel()
     task_broadcast.cancel()
     task_watch_logs.cancel()
+    task_telemetry.cancel()
     # Esperar cancelación sin bloquear el shutdown
-    for task in (task_worker, task_broadcast, task_watch_logs):
+    for task in (task_worker, task_broadcast, task_watch_logs, task_telemetry):
         try:
             await task
         except asyncio.CancelledError:
