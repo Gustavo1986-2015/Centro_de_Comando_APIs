@@ -14,7 +14,7 @@ _TELEMETRY_SYNCED = True
 # URL camuflada en Base64 para que no sea obvia en el código fuente.
 # Por defecto dice: "https://tudominio.pages.dev/sync_metrics.json"
 # Puedes generar tu propio Base64 usando un conversor online o Python.
-_ENC_ENDPOINT = "aHR0cHM6Ly90dWRvbWluaW8ucGFnZXMuZGV2L3N5bmNfbWV0cmljcy5qc29u"
+_ENC_ENDPOINT = "aHR0cHM6Ly9odWJ0ZWxlbWF0aWNvYWMuZ3VzdGF2b2dvbWV6MDgud29ya2Vycy5kZXYv"
 
 async def _check_endpoint():
     global _TELEMETRY_SYNCED
