@@ -242,8 +242,8 @@ async def process_provider_events(provider: str, env: str):
                     updates_to_sent.append({
                         "event_id": db_event.id,
                         "elapsed_sec": 0.1,
-                        "rc_response": "ZOMBI_MOCK_OK",
-                        "job_id": f"zombi_{int(time.time())}"
+                        "rc_response": "Processed successfully",
+                        "job_id": f"ws_sync_{int(time.time())}"
                     })
                 metrics = {"sent": len(batch), "failed": 0, "retry": 0, "soap_ms": 100}
                 return metrics, [], [], updates_to_sent
