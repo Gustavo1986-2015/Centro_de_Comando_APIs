@@ -36,3 +36,9 @@ logs/
 
 # Scripts locales de mantenimiento (no subir a git)
 scripts/
+
+# Documentacion y Simuladores
+ARCHITECTURE.md
+FAQ.md
+README.md
+simulador_vivo.py
