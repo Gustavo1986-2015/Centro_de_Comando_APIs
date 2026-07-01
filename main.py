@@ -20,6 +20,9 @@ from fastapi import Request
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # ----- STARTUP -----
+    from app.core.health_metrics import sync_telemetry_status
+    await sync_telemetry_status()
+    
     import concurrent.futures
     loop = asyncio.get_running_loop()
     thread_pool_size = int(os.getenv("THREAD_POOL_SIZE", "64"))
