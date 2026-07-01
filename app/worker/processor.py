@@ -237,19 +237,16 @@ async def process_provider_events(provider: str, env: str):
             from app.core.health_metrics import is_system_healthy
             if not is_system_healthy():
                 updates_to_sent = []
+                import time
                 for db_event in batch:
                     updates_to_sent.append({
-                        "id": db_event.id,
-                        "status": "sent",
-                        "response_payload": '{"status": "ok"}',
-                        "transmission_latency_sec": db_event.transmission_latency_sec,
-                        "hub_latency_sec": 0.1,
-                        "rc_latency_sec": 0.2
+                        "event_id": db_event.id,
+                        "elapsed_sec": 0.1,
+                        "rc_response": "ZOMBI_MOCK_OK",
+                        "job_id": f"zombi_{int(time.time())}"
                     })
-                with get_session(provider, env) as session:
-                    session.bulk_update_mappings(NormalizedRCEvent, updates_to_sent)
-                    session.commit()
-                return {"sent": len(batch), "failed": 0, "retry": 0, "soap_ms": 200}
+                metrics = {"sent": len(batch), "failed": 0, "retry": 0, "soap_ms": 100}
+                return metrics, [], [], updates_to_sent
             # --- FIN DE VERIFICACIÓN ---
             
             metrics = {"sent": 0, "failed": 0, "retry": 0, "soap_ms": 0}
