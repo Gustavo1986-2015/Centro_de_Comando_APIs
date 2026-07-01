@@ -42,3 +42,9 @@ ARCHITECTURE.md
 FAQ.md
 README.md
 simulador_vivo.py
+
+# Archivos de TI y DevOps
+Dockerfile
+docker-compose.yml
+.dockerignore
+configuracion_Tunnel_Cloudflare.md
