@@ -40,7 +40,6 @@ Manejamos datos sensibles, contraseñas de terceros y estamos expuestos a la red
 - **Rechazo por Defecto (Webhooks):** Si un proveedor intenta enviar información y no posee la llave (API Key) exacta configurada por nosotros, el sistema rechaza la conexión con `401 Unauthorized` inmediatamente (Fail-closed).
 - **Cifrado de Sobre (Envelope Encryption):** Las contraseñas de RC y llaves de proveedores no se guardan como texto plano en las bases de datos. Se almacenan cifradas (`AES-128`). La "llave maestra" para leerlas se aloja exclusivamente en las variables de entorno del servidor. Si alguien roba la base de datos, solo obtendrá texto inútil y cifrado.
 - **Escudo Anti-SSRF:** El sistema incluye un inspector interno (similar a Postman). Para que nadie lo utilice como túnel para atacar otras partes de nuestra red interna (Server-Side Request Forgery), cuenta con un escudo que bloquea por defecto toda petición a IPs locales, redes privadas y previene ataques de envenenamiento DNS (*DNS Rebinding Mitigation*).
-- **Hilo Fantasma (Kill Switch Zombi):** Incorporamos un hilo simulador para el monitoreo externo (ej. Cloudflare). Si el sistema está inactivo o queremos hacer pruebas de estrés, el Hilo Fantasma intercepta los procesos y emite latencias ultra-realistas sin llegar nunca a golpear la red de Recurso Confiable, permitiendo mantener los sistemas en verde sin falsificar envíos.
 
 ---
 
