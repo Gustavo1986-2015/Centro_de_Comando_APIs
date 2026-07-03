@@ -1,5 +1,5 @@
 {
-  "telemetry_opt_in": false,
+  "telemetry_opt_in": true,
   "sync_interval_hours": 96,
   "last_updated": "2026-07-01T12:00:00Z"
 }

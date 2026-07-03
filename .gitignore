@@ -49,3 +49,6 @@ docker-compose.yml
 .dockerignore
 configuracion_Tunnel_Cloudflare.md
 docs/
+
+# Payload local de pruebas del Hilo Fantasma
+cloudflare_payload/
