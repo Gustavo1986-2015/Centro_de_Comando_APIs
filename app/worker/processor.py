@@ -241,8 +241,8 @@ async def process_provider_events(provider: str, env: str):
                 for db_event in batch:
                     # Latencia realista (entre 80ms y 450ms)
                     fake_latency = round(random.uniform(0.080, 0.450), 3)
-                    # RC solo da números. Creamos uno largo y aleatorio con 2 fijos al final.
-                    fake_job_id = f"{random.randint(100000000, 999999999)}42"
+                    # RC solo da números. Creamos uno largo y aleatorio.
+                    fake_job_id = str(random.randint(10000000000, 99999999999))
                     
                     updates_to_sent.append({
                         "event_id": db_event.id,
