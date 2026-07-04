@@ -67,7 +67,7 @@ app.include_router(health.router)
 app.include_router(inspector.router)
 app.include_router(dynamic_webhook.router)
 
-app.mount("/static", StaticFiles(directory="app/static"), name="static")
+app.mount("/static", StaticFiles(directory="frontend/static"), name="static")
 
 @app.middleware("http")
 async def measure_push_latency(request: Request, call_next):
