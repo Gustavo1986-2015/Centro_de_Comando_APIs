@@ -1,15 +1,21 @@
         :root {
+            /* Colores Base */
             --color-black: #0F1115;
             --color-bg: #1A1D24;
-            --color-green-bright: #00FF66;
-            --color-green-vibrant: #10B981;
+            /* Assistcargo Green Palette */
+            --color-green-bright: #35E172;
+            --color-green-vibrant: #14A751;
+            
             --color-white: #FFFFFF;
+            --color-text: #FFFFFF;
             --color-gray: #8F95B2;
             --color-yellow: #FBBF24;
             --color-orange: #F97316;
             --color-red: #EF4444;
+            
             --card-bg: rgba(255, 255, 255, 0.03);
             --card-border: rgba(255, 255, 255, 0.08);
+            
             /* --- Elevación por nivel --- */
             --level-0: #0F1115;
             --level-1: #1A1D24;
@@ -17,6 +23,25 @@
             --level-3: #252830;
             /* --- Gris legible WCAG AA sobre --level-1 --- */
             --color-gray-label: #A8AFCC;
+        }
+
+        [data-theme="light"] {
+            --color-black: #F9FAFB;
+            --color-bg: #E5E7EB;
+            
+            --color-white: #FFFFFF;
+            --color-text: #000000;
+            --color-gray: #374151;
+            
+            --card-bg: #FFFFFF;
+            --card-border: #9CA3AF;
+            
+            /* Elevación (modo claro) */
+            --level-0: #E5E7EB;
+            --level-1: #F3F4F6;
+            --level-2: #F9FAFB;
+            --level-3: #FFFFFF;
+            --color-gray-label: #111827;
         }
 
         * {
@@ -28,7 +53,7 @@
 
         body {
             background-color: var(--color-bg);
-            color: var(--color-white);
+            color: var(--color-text);
             min-height: 100vh;
             display: flex;
             flex-direction: column;
@@ -46,6 +71,10 @@
             z-index: 100;
         }
 
+        .sql-keyword {
+            color: var(--color-green-bright);
+        }
+
         .hamburger {
             color: var(--color-green-bright);
             font-size: 1.8rem;
@@ -56,6 +85,20 @@
         
         .hamburger:hover {
             transform: scale(1.1);
+        }
+
+        .theme-toggle-btn {
+            background: none;
+            border: none;
+            font-size: 1.5rem;
+            cursor: pointer;
+            transition: transform 0.3s ease;
+            margin-left: 15px;
+            color: var(--color-text);
+        }
+        
+        .theme-toggle-btn:hover {
+            transform: rotate(20deg) scale(1.1);
         }
 
         .title {
@@ -84,6 +127,15 @@
             padding: 8px 16px;
             border-radius: 8px;
             border: 1px solid rgba(16, 185, 129, 0.3);
+        }
+
+        .config-textarea {
+            width: 100%;
+            height: 250px;
+            background-color: var(--level-0);
+            color: var(--color-text);
+            border: 1px solid #1E2229;
+            border-radius: 8px;
         }
 
         .pulse {
@@ -191,8 +243,8 @@
             width: 100%;
             height: 450px;
             resize: vertical;
-            background: #0D0F12;
-            color: #A0AEC0;
+            background: var(--level-0);
+            color: var(--color-text);
             border: 1px solid #1E2229;
             border-radius: 8px;
             padding: 1rem;
@@ -208,7 +260,7 @@
         .card-value {
             font-size: 2.8rem;
             font-weight: 700;
-            color: var(--color-white);
+            color: var(--color-text);
             line-height: 1;
             transition: color 0.3s;
         }
@@ -224,7 +276,7 @@
         .recent-section h2 {
             font-size: 1.2rem;
             margin-bottom: 1rem;
-            color: var(--color-white);
+            color: var(--color-text);
             font-weight: 600;
         }
 
@@ -247,7 +299,7 @@
             letter-spacing: 1px;
             position: sticky;
             top: 0;
-            background-color: #1A1D24; /* Color de fondo sólido para que los datos no se traslapen al hacer scroll */
+            background-color: var(--level-1); /* Color de fondo sólido para que los datos no se traslapen al hacer scroll */
             z-index: 10;
         }
 
@@ -309,20 +361,20 @@
 
         @keyframes highlight {
             0% { color: var(--color-green-bright); transform: scale(1.05); }
-            100% { color: var(--color-white); transform: scale(1); }
+            100% { color: var(--color-text); transform: scale(1); }
         }
 
         /* --- JSON Tree Visual Mapper --- */
         .json-tree {
             font-family: 'Courier New', Courier, monospace;
             font-size: 0.8rem;
-            color: #a5b4fc;
+            color: var(--color-text);
             padding-left: 1rem;
             list-style-type: none;
             margin: 0;
         }
         .json-tree-container {
-            background-color: #0b0d14;
+            background-color: var(--level-0);
             padding: 1rem 1rem 1rem 0;
             border-radius: 6px;
             border: 1px solid var(--card-border);
@@ -385,7 +437,7 @@
         .sidebar ul li {
             padding: 1.2rem 2rem;
             border-bottom: 1px solid var(--card-border);
-            color: var(--color-white);
+            color: var(--color-text);
             cursor: pointer;
             transition: background-color 0.2s, color 0.2s;
             font-weight: 600;
@@ -431,11 +483,15 @@
         .form-control {
             width: 100%;
             padding: 0.75rem;
-            background: rgba(255, 255, 255, 0.05);
+            background: var(--level-0);
             border: 1px solid var(--card-border);
             border-radius: 6px;
-            color: white;
+            color: var(--color-text);
             font-family: inherit;
+        }
+        .form-control::placeholder {
+            color: var(--color-gray-label);
+            opacity: 0.7;
         }
         .form-control:focus {
             outline: none;
@@ -497,33 +553,34 @@
         .logo-area h1 {
             font-size: 1.25rem;
             font-weight: 700;
-            background: linear-gradient(135deg, #fff, #a5b4fc);
+            background: linear-gradient(135deg, var(--color-text), var(--color-green-vibrant));
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
         }
 
         .nav-links a {
-            color: var(--text-muted);
+            color: var(--color-gray);
             text-decoration: none;
             margin-left: 1.5rem;
             font-weight: 500;
             transition: color 0.2s;
         }
         .nav-links a:hover, .nav-links a.active {
-            color: var(--primary);
+            color: var(--color-green-vibrant);
         }
 
         /* Layout Principal */
         
 
         .panel {
-            background-color: var(--bg-card);
-            border: 1px solid var(--border);
+            background: var(--card-bg);
+            border: 1px solid var(--card-border);
             border-radius: 12px;
             padding: 1.5rem;
             display: flex;
             flex-direction: column;
-            gap: 1rem;
+            position: relative;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
         }
 
         .panel-title {
@@ -536,31 +593,31 @@
 
         /* Controles de Formulario */
         #view-integrations label {
-            font-size: 0.85rem;
-            color: var(--text-muted);
-            margin-bottom: 0.25rem;
+            font-size: 0.8rem;
+            color: var(--color-gray);
+            margin-bottom: 0.5rem;
             display: block;
         }
 
         #view-integrations select, #view-integrations input[type="text"], #view-integrations input[type="password"] {
             width: 100%;
             padding: 0.6rem;
-            background-color: #0b0d14;
-            border: 1px solid var(--border);
+            background-color: var(--level-0);
+            border: 1px solid var(--card-border);
             border-radius: 6px;
-            color: var(--text-main);
+            color: var(--color-text);
             font-family: inherit;
             margin-bottom: 1rem;
         }
 
         #view-integrations select:focus, #view-integrations input[type="text"]:focus, #view-integrations input[type="password"]:focus {
             outline: none;
-            border-color: var(--primary);
+            border-color: var(--color-green-vibrant);
         }
 
         #view-integrations button {
-            background-color: var(--primary);
-            color: white;
+            background-color: var(--color-green-vibrant);
+            color: var(--color-black);
             border: none;
             padding: 0.6rem 1.2rem;
             border-radius: 6px;
@@ -571,7 +628,7 @@
         }
 
         #view-integrations button:hover {
-            background-color: var(--primary-hover);
+            background-color: #0d9668;
         }
 
         #view-integrations button.btn-secondary {
@@ -618,16 +675,26 @@
         .tab {
             padding: 0.5rem 1rem;
             background: transparent;
-            border: 1px solid var(--border);
-            color: var(--text-muted);
+            border: 1px solid var(--card-border);
+            color: var(--color-gray);
             border-radius: 6px;
             cursor: pointer;
             font-size: 0.85rem;
         }
         .tab.active {
-            background: var(--primary);
-            color: white;
-            border-color: var(--primary);
+            background: var(--color-green-vibrant);
+            color: var(--color-black);
+            border-color: var(--color-green-vibrant);
+        }
+
+        .query-btn {
+            background: var(--color-green-vibrant);
+            color: var(--color-black);
+            border: 1px solid var(--color-green-vibrant);
+            padding: 0.5rem 1rem;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: bold;
         }
 
         .tab-content {
@@ -639,28 +706,28 @@
 
         /* JSON Display */
         pre {
-            background-color: #0b0d14;
+            background-color: var(--level-0);
             padding: 1rem;
             border-radius: 6px;
-            border: 1px solid var(--border);
+            border: 1px solid var(--card-border);
             overflow-x: auto;
             font-family: 'Courier New', Courier, monospace;
             font-size: 0.85rem;
-            color: #a5b4fc;
+            color: var(--color-text);
             max-height: 400px;
             overflow-y: auto;
             white-space: pre-wrap;
         }
 
         .code-url {
-            background: rgba(74, 110, 224, 0.1);
-            color: #a5b4fc;
+            background: rgba(16, 185, 129, 0.1);
+            color: var(--color-green-vibrant);
             padding: 0.5rem;
             border-radius: 4px;
             font-size: 0.8rem;
             word-break: break-all;
             margin-bottom: 1rem;
-            border: 1px dashed var(--primary);
+            border: 1px dashed var(--color-green-vibrant);
         }
 
         /* Editor de Mapeo */
@@ -690,7 +757,7 @@
 
         .hint {
             font-size: 0.75rem;
-            color: var(--text-muted);
+            color: var(--color-gray);
             margin-top: 0.25rem;
             display: block;
         }
@@ -755,8 +822,8 @@
             letter-spacing: 0.5px;
             transition: border-color 0.3s;
         }
-        .provider-pill.active    { border-color: var(--color-green-vibrant); color: var(--color-white); }
-        .provider-pill.has-failed { border-color: var(--color-red); color: var(--color-white); }
+        .provider-pill.active    { border-color: var(--color-green-vibrant); color: var(--color-text); }
+        .provider-pill.has-failed { border-color: var(--color-red); color: var(--color-text); }
         .provider-pill.inactive  { opacity: 0.45; }
         .pill-dot {
             width: 8px; height: 8px;
@@ -848,7 +915,7 @@
             transition: all 0.2s;
             white-space: nowrap;
         }
-        .studio-tab:hover { color: var(--color-white); }
+        .studio-tab:hover { color: var(--color-text); }
         .studio-tab.active {
             color: var(--color-green-vibrant);
             border-bottom-color: var(--color-green-vibrant);
