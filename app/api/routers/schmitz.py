@@ -26,7 +26,7 @@ router_spec = APIRouter(tags=["Schmitz"])
 _webhook_queue = asyncio.Queue()
 _batch_task = None
 
-async def _validate_schmitz_auth(request: Request, env: str = Query("prod")):
+def _validate_schmitz_auth(request: Request, env: str = Query("prod")):
     """Valida auth del webhook Schmitz contra DB cifrada."""
     db = get_session("system_config", "global")
     try:
