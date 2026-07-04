@@ -1045,7 +1045,7 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
                         
                         let providerCell = '';
                         if (i === 0) {
-                            providerCell = `<td rowspan="${envs.length}" style="font-weight:bold; color:var(--color-white); vertical-align: middle;">${c.provider_name}</td>`;
+                            providerCell = `<td rowspan="${envs.length}" style="font-weight:bold; color:var(--color-text); vertical-align: middle;">${c.provider_name}</td>`;
                         }
 
                         tr.innerHTML = `
@@ -1077,14 +1077,14 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
                                     </span>
                                 </div>
                             </td>
-                            <td>${c.provider_name.toLowerCase() === 'protrack' ? '<input class="form-control" type="text" disabled value="--- N/A ---" style="width: 100px; color: #777; background: #222; text-align: center; border: 1px dashed #444;" title="No aplica para proveedores PULL">' : `<input class="form-control" type="text" id="webhook_header_${c._originalIdx}" value="${c.webhook_auth_header || 'x-api-key'}" style="width: 100px;">`}</td>
-                            <td>${c.provider_name.toLowerCase() === 'protrack' ? '<input class="form-control" type="text" disabled value="--- N/A (Es PULL) ---" style="color: #777; background: #222; font-style: italic; border: 1px dashed #444;" title="No aplica para proveedores PULL">' : `<input class="form-control" type="password" id="webhook_auth_${c._originalIdx}" placeholder="${c.has_webhook_auth ? '•••••••• (Cifrado)' : ''}" title="Dejar vacío para mantener el actual">`}</td>
+                            <td>${c.provider_name.toLowerCase() === 'protrack' ? '<input class="form-control" type="text" disabled value="--- N/A ---" style="width: 100px; color: var(--color-gray); background: var(--level-1); text-align: center; border: 1px dashed var(--card-border);" title="No aplica para proveedores PULL">' : `<input class="form-control" type="text" id="webhook_header_${c._originalIdx}" value="${c.webhook_auth_header || 'x-api-key'}" style="width: 100px;">`}</td>
+                            <td>${c.provider_name.toLowerCase() === 'protrack' ? '<input class="form-control" type="text" disabled value="--- N/A (Es PULL) ---" style="color: var(--color-gray); background: var(--level-1); font-style: italic; border: 1px dashed var(--card-border);" title="No aplica para proveedores PULL">' : `<input class="form-control" type="password" id="webhook_auth_${c._originalIdx}" placeholder="${c.has_webhook_auth ? '•••••••• (Cifrado)' : ''}" title="Dejar vacío para mantener el actual">`}</td>
                             <td><input class="form-control" type="text" id="user_${c._originalIdx}" value="${c.rc_user || ''}"></td>
                             <td><input class="form-control" type="password" id="pass_${c._originalIdx}" placeholder="${c.has_rc_password ? '•••••••• (Cifrado)' : ''}" title="Dejar vacío para mantener el actual"></td>
                             <td><input class="form-control" type="number" id="purge_${c._originalIdx}" value="${c.purge_interval_min}" style="width: 80px;"></td>
                             <td><input class="form-control" type="number" id="run_int_${c._originalIdx}" value="${c.run_interval_sec}" style="width: 80px;"></td>
                             <td>
-                                <select id="queue_${c._originalIdx}" class="form-control" style="width: 100px; background-color: var(--color-black); cursor: pointer;">
+                                <select id="queue_${c._originalIdx}" class="form-control" style="width: 100px; background-color: var(--level-0); color: var(--color-text); cursor: pointer;">
                                     <option value="sqlite" ${c.queue_backend === 'sqlite' ? 'selected' : ''}>SQLite</option>
                                     <option value="postgres" ${c.queue_backend === 'postgres' ? 'selected' : ''}>PostgreSQL</option>
                                     <option value="redis" ${c.queue_backend === 'redis' ? 'selected' : ''}>Redis</option>

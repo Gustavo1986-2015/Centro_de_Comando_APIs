@@ -3,10 +3,19 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Centro de Comando APIs | Assistcargo</title>
+    <title>HUB Telematico Assistcargo | Centro de API's</title>
     <!-- Fuente limpia y moderna -->
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="/static/dashboard.css?v=1">
+    <link rel="stylesheet" href="/static/dashboard.css?v=2">
+    <!-- Theme setup to prevent FOUC -->
+    <script>
+        (function() {
+            var theme = localStorage.getItem('ac-theme');
+            if (theme) {
+                document.documentElement.setAttribute('data-theme', theme);
+            }
+        })();
+    </script>
 </head>
 <body>
 
@@ -32,10 +41,15 @@
     </nav>
 
     <header>
-        <div class="hamburger" title="Menú de Opciones" onclick="toggleMenu()">☰</div>
-        <div class="title" title="Panel principal del Hub Telemático">Centro de Comando APIs | Assistcargo</div>
+        <div style="display: flex; align-items: center; justify-self: start;">
+            <div class="hamburger" title="Menú de Opciones" onclick="toggleMenu()" style="justify-self: auto;">☰</div>
+            <button id="theme-toggle" class="theme-toggle-btn" title="Alternar Modo Oscuro/Claro" onclick="toggleTheme()">
+                <span id="theme-icon">🌙</span>
+            </button>
+        </div>
+        <div class="title" title="Panel principal del Hub Telemático">HUB Telematico Assistcargo | Centro de API's</div>
         
-        <div style="margin-left: auto; display: flex; flex-direction: column; align-items: flex-end; gap: 0.5rem;">
+        <div style="margin-left: auto; display: flex; flex-direction: column; align-items: flex-end; gap: 0.5rem; justify-self: end;">
             <div style="display: flex; align-items: center; gap: 1.5rem;">
                 <div id="rc-circuit-container" class="status-indicator" title="Estado del Circuit Breaker de Recurso Confiable" style="padding: 8px 16px; margin-right: -0.5rem; transition: all 0.3s; display: flex; flex-direction: column; align-items: center; gap: 4px;">
                     <div style="display: flex; align-items: center; gap: 0.5rem;">
@@ -112,8 +126,8 @@
             </div>
         </div>
         
-        <div style="font-size: 0.8rem; color: var(--color-gray); padding: 0.4rem 1rem; margin-top: -1.2rem; margin-bottom: -1rem; background: rgba(255, 255, 255, 0.02); border-radius: 6px; border: 1px solid var(--card-border); display: flex; align-items: center; gap: 0.5rem;">
-            <span style="color: #8b5cf6; font-size: 1rem;">ⓘ</span>
+        <div style="font-size: 0.8rem; color: var(--color-gray); padding: 0.4rem 1rem; margin-top: -1.2rem; margin-bottom: -1rem; background: var(--level-1); border-radius: 6px; border: 1px solid var(--card-border); display: flex; align-items: center; gap: 0.5rem;">
+            <svg style="width: 14px; height: 14px;" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
             <span><strong>Nota:</strong> La Latencia del Hub posee un estándar seguro de <strong>1.0s</strong> (Micro-Batching) para agrupar ráfagas y evitar saturación externa.</span>
         </div>
 
@@ -131,7 +145,7 @@
                         <option value="medium" style="color: black; background: white;">Media (3-9s)</option>
                         <option value="high" style="color: black; background: white;">Alta (≥ 10s)</option>
                     </select>
-                    <button class="btn-save" onclick="resetFilters()" style="background: rgba(255,255,255,0.1); color: white; padding: 4px 8px;">Quitar Filtros</button>
+                    <button class="btn-save" onclick="resetFilters()" style="background: var(--level-2); color: var(--color-text); border: 1px solid var(--card-border); padding: 4px 8px;">Quitar Filtros</button>
                     <button class="btn-save" onclick="downloadExcel()" style="background: #10B981; color: white; padding: 4px 8px;" title="Descargar registros filtrados en formato Excel (CSV)">📥 Descargar Excel</button>
                 </div>
             </div>
@@ -330,7 +344,7 @@
 
             <div style="display: flex; gap: 1rem; align-items: center;">
                 <button class="btn-save" onclick="sendSimulation()" title="Disparar la petición contra tu servidor como si fueras el proveedor externo">🚀 Disparar Webhook</button>
-                <button class="btn-save" style="background: rgba(255,255,255,0.1); color: var(--color-white);" onclick="document.getElementById('sim-payload').value=''" title="Limpiar la caja de texto">🧹 Limpiar JSON</button>
+                <button class="btn-save" style="background: var(--level-2); color: var(--color-text); border: 1px solid var(--card-border);" onclick="document.getElementById('sim-payload').value=''" title="Limpiar la caja de texto">🧹 Limpiar JSON</button>
             </div>
             <div id="sim-result" style="margin-top: 1rem; font-weight: 600;"></div>
         </div>
@@ -377,16 +391,16 @@
 
             <!-- Modal de confirmación de contraseña para edición -->
             <div id="db-edit-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.7); z-index:9999; align-items:center; justify-content:center;">
-                <div style="background:#1a1d23; border:1px solid rgba(16,185,129,0.4); border-radius:14px; padding:2rem; min-width:340px; box-shadow: 0 20px 60px rgba(0,0,0,0.6);">
-                    <h3 style="color:#10B981; margin:0 0 0.5rem;">🔐 Confirmar Edición</h3>
-                    <p style="color:#9ca3af; font-size:0.85rem; margin:0 0 1.2rem;">Ingresa la contraseña de administrador para guardar el cambio en <strong id="db-edit-modal-target" style="color:#fff;"></strong>.</p>
-                    <div style="margin-bottom:0.5rem; font-size:0.8rem; color:#6b7280;">Campo: <span id="db-edit-modal-col" style="color:#e5e7eb;"></span></div>
-                    <div style="margin-bottom:1.2rem; font-size:0.8rem; color:#6b7280;">Valor nuevo: <span id="db-edit-modal-val" style="color:#10B981; word-break:break-all;"></span></div>
+                <div style="background:var(--level-1); border:1px solid var(--color-green-vibrant); border-radius:14px; padding:2rem; min-width:340px; box-shadow: 0 20px 60px rgba(0,0,0,0.6);">
+                    <h3 style="color:var(--color-green-vibrant); margin:0 0 0.5rem;">🔐 Confirmar Edición</h3>
+                    <p style="color:var(--color-gray); font-size:0.85rem; margin:0 0 1.2rem;">Ingresa la contraseña de administrador para guardar el cambio en <strong id="db-edit-modal-target" style="color:var(--color-text);"></strong>.</p>
+                    <div style="margin-bottom:0.5rem; font-size:0.8rem; color:var(--color-gray);">Campo: <span id="db-edit-modal-col" style="color:var(--color-text);"></span></div>
+                    <div style="margin-bottom:1.2rem; font-size:0.8rem; color:var(--color-gray);">Valor nuevo: <span id="db-edit-modal-val" style="color:var(--color-green-vibrant); word-break:break-all;"></span></div>
                     <input type="password" id="db-edit-password" placeholder="Contraseña de administrador" autocomplete="current-password"
-                        style="width:100%; padding:0.7rem; border-radius:8px; border:1px solid rgba(255,255,255,0.1); background:#0f1115; color:#fff; font-size:0.9rem; box-sizing:border-box; margin-bottom:1rem;">
+                        style="width:100%; padding:0.7rem; border-radius:8px; border:1px solid var(--card-border); background:var(--level-0); color:var(--color-text); font-size:0.9rem; box-sizing:border-box; margin-bottom:1rem;">
                     <div style="display:flex; gap:0.75rem; justify-content:flex-end;">
-                        <button onclick="closeEditModal()" style="padding:0.6rem 1.2rem; border-radius:8px; border:1px solid rgba(255,255,255,0.1); background:transparent; color:#9ca3af; cursor:pointer;">Cancelar</button>
-                        <button onclick="confirmCellEdit()" style="padding:0.6rem 1.4rem; border-radius:8px; border:none; background:#10B981; color:#000; font-weight:700; cursor:pointer;">Confirmar Cambio</button>
+                        <button onclick="closeEditModal()" style="padding:0.6rem 1.2rem; border-radius:8px; border:1px solid var(--card-border); background:var(--level-1); color:var(--color-text); cursor:pointer;">Cancelar</button>
+                        <button onclick="confirmCellEdit()" style="padding:0.6rem 1.4rem; border-radius:8px; border:none; background:var(--color-green-vibrant); color:var(--color-black); font-weight:700; cursor:pointer;">Confirmar Cambio</button>
                     </div>
                     <p id="db-edit-error" style="color:#f87171; font-size:0.8rem; margin:0.8rem 0 0; display:none;"></p>
                 </div>
@@ -405,7 +419,7 @@
             </div>
             
             <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(400px, 1fr)); gap: 1.5rem;">
-                <div style="grid-column: 1 / -1; background: rgba(15, 17, 21, 0.4); border: 1px solid rgba(255,255,255,0.05); border-radius: 12px; padding: 1.5rem; backdrop-filter: blur(10px);">
+                <div style="grid-column: 1 / -1; background: var(--level-1); border: 1px solid var(--card-border); border-radius: 12px; padding: 1.5rem; backdrop-filter: blur(10px);">
                     <h3 style="color: var(--color-green-bright); margin-bottom: 1.2rem; font-size: 1.1rem; display: flex; align-items: center; gap: 10px; font-weight: 600;">
                         <span style="font-size: 1.3rem;">📊</span> Throughput en Vivo
                     </h3>
@@ -635,7 +649,7 @@
                         <div id="inspector-tab-push">
                             <p style="font-size: 0.75rem; color: var(--color-gray-label);">Enviá un JSON de prueba a esta URL:</p>
                             <div id="webhookUrlInspector" style="background: rgba(74,110,224,0.1); color: #a5b4fc; padding: 0.5rem; border-radius: 4px; font-size: 0.75rem; word-break: break-all; margin: 0.5rem 0 1rem 0; border: 1px dashed #4a6ee0;">Generando...</div>
-                            <button onclick="startListening()" id="btnListen" style="width:100%; background: transparent; border: 1px solid var(--card-border); color: var(--color-white); padding: 0.6rem; border-radius: 6px; cursor: pointer; font-size: 0.8rem;">Comenzar a Escuchar</button>
+                            <button onclick="startListening()" id="btnListen" style="width:100%; background: var(--level-2); border: 1px solid var(--card-border); color: var(--color-text); padding: 0.6rem; border-radius: 6px; cursor: pointer; font-size: 0.8rem;">Comenzar a Escuchar</button>
                             <div id="listenStatus" style="margin-top:0.5rem; text-align:center; color: var(--color-yellow); font-size: 0.75rem;"></div>
                         </div>
 
@@ -738,10 +752,25 @@
         </div>
     </main>
 
-    <footer style="position: fixed; bottom: 0; width: 100%; background: var(--color-black); text-align: center; padding: 0.6rem; border-top: 1px solid var(--card-border); color: var(--color-gray); font-size: 0.8rem; font-weight: 300; z-index: 1000;">
-        Desarrollado por Area de Integraciones GPS Assistcargo | Gustavo Gómez & Roberto Herrera &reg;
+    <footer style="position: fixed; bottom: 0; width: 100%; background: var(--color-black); text-align: center; padding: 0.6rem; border-top: 1px solid var(--card-border); color: var(--color-gray); font-size: 0.8rem; font-weight: bold; z-index: 1000;">
+        Desarrollado por Area de Integraciones GPS Assistcargo | Gustavo Gómez &reg;
     </footer>
 
-    <script src="/static/dashboard.js?v=1"></script>
+    <script src="/static/dashboard.js?v=2"></script>
+    <script>
+        function toggleTheme() {
+            const currentTheme = document.documentElement.getAttribute('data-theme') || 'dark';
+            const newTheme = currentTheme === 'dark' ? 'light' : 'dark';
+            document.documentElement.setAttribute('data-theme', newTheme);
+            localStorage.setItem('ac-theme', newTheme);
+            document.getElementById('theme-icon').textContent = newTheme === 'light' ? '☀️' : '🌙';
+        }
+
+        // Initialize toggle button icon
+        window.addEventListener('DOMContentLoaded', () => {
+            const currentTheme = document.documentElement.getAttribute('data-theme') || 'dark';
+            document.getElementById('theme-icon').textContent = currentTheme === 'light' ? '☀️' : '🌙';
+        });
+    </script>
 </body>
 </html>
