@@ -60,9 +60,10 @@ A continuación se detallan todos los endpoints HTTP del sistema, agrupados por 
 🔐 Autenticación
 HTTP Basic Auth protege: Dashboard, Admin Config, DB Viewer, Vehicles, Audit Logs e Inspector.
 Credenciales: variables de entorno DASHBOARD_USER y DASHBOARD_PASSWORD.
-Sin auth (públicos): Webhooks de ingesta (Schmitz, dynamic) y Health check.
+Machine-to-Machine (API Key): Webhooks de ingesta (Schmitz, dynamic).
+Sin auth (público): Health check.
 
-1. Ingesta — Webhooks PUSH (PÚBLICOS, sin Basic Auth)
+1. Ingesta — Webhooks PUSH (Machine-to-Machine, requiere API Key)
 Reciben telemetría de proveedores externos. Responden HTTP 202 inmediato (Drop and Forget).
 
 | Método | Path | Para qué sirve | Archivo |
