@@ -19,17 +19,12 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/webhook/dynamic", tags=["iPaaS Dynamic Webhook"])
 
-@router.post("/{provider_name}")
-async def dynamic_webhook_receive(
+def _validate_dynamic_auth(
     provider_name: str,
     request: Request,
     env: str = Query("prod", description="Entorno de destino: test o prod")
 ):
-    """
-    Endpoint iPaaS Universal: Recibe un payload JSON de cualquier proveedor configurado.
-    Extrae la data usando su mapping_schema desde la DB, y lo encola.
-    """
-    # 1. Validar que el proveedor exista y esté activo
+    """Valida auth del webhook dinámico contra DB cifrada (se ejecuta en ThreadPool)."""
     db_global = get_session("system_config", "global")
     try:
         config = db_global.query(ProviderConfig).filter(
@@ -42,19 +37,16 @@ async def dynamic_webhook_receive(
         if not config.is_active:
             raise HTTPException(status_code=403, detail=f"El proveedor '{provider_name}' está desactivado temporalmente.")
             
-        # FAIL-CLOSED: sin auth configurada, rechazar
         if not config.webhook_auth_secret_enc:
             raise HTTPException(
                 status_code=401,
                 detail=f"Webhook no autenticado. Configure API key para {provider_name} en el Dashboard."
             )
         
-        # Descifrar clave almacenada
         stored_key = decrypt(config.webhook_auth_secret_enc)
         if not stored_key:
             raise HTTPException(status_code=500, detail="Error interno de autenticacion.")
         
-        # Validar header
         header_name = config.webhook_auth_header or "x-api-key"
         provided_key = request.headers.get(header_name, "")
         
@@ -64,31 +56,13 @@ async def dynamic_webhook_receive(
         mapping_schema = config.mapping_schema or {}
         if not mapping_schema:
             raise HTTPException(status_code=400, detail="El proveedor no tiene un esquema visual configurado (mapping_schema).")
+            
+        return mapping_schema
     finally:
         db_global.close()
 
-    # 2. Atrapar el Payload JSON
-    try:
-        payload = await request.json()
-    except Exception as e:
-        logger.warning(f"Excepción capturada en dynamic_webhook: {e}")
-        raise HTTPException(status_code=400, detail="El cuerpo de la petición debe ser un JSON válido.")
-
-    # 2.5 Auditoría cruda (fire-and-forget asíncrona)
-    asyncio.create_task(asyncio.to_thread(log_raw_payload, provider_name, env, payload))
-
-    # 3. Transformación Dinámica al Modelo Canónico (RC)
-    try:
-        canonical_events = await run_in_threadpool(
-            DynamicMapper.map_payload_multi, 
-            payload, mapping_schema, provider_name, env
-        )
-    except Exception as e:
-        logger.warning(f"Excepción capturada en dynamic_webhook: {e}")
-        logger.error(f"Error en DynamicMapper para {provider_name}: {e}")
-        raise HTTPException(status_code=422, detail=f"Fallo al mapear los datos: {e}")
-
-    # 4. Guardar en Base de Datos Específica / Cola (Patrón Repository)
+def _save_dynamic_events(provider_name, env, canonical_events, payload):
+    """Guarda eventos de manera síncrona, diseñado para ser ejecutado en ThreadPool."""
     db_provider = get_session(provider_name, env)
     try:
         new_events = []
@@ -129,6 +103,42 @@ async def dynamic_webhook_receive(
         raise HTTPException(status_code=500, detail="Error interno al guardar eventos.")
     finally:
         db_provider.close()
+
+@router.post("/{provider_name}")
+async def dynamic_webhook_receive(
+    provider_name: str,
+    request: Request,
+    env: str = Query("prod", description="Entorno de destino: test o prod"),
+    mapping_schema: dict = Depends(_validate_dynamic_auth)
+):
+    """
+    Endpoint iPaaS Universal: Recibe un payload JSON de cualquier proveedor configurado.
+    Extrae la data usando su mapping_schema desde la DB, y lo encola.
+    """
+
+    # 2. Atrapar el Payload JSON
+    try:
+        payload = await request.json()
+    except Exception as e:
+        logger.warning(f"Excepción capturada en dynamic_webhook: {e}")
+        raise HTTPException(status_code=400, detail="El cuerpo de la petición debe ser un JSON válido.")
+
+    # 2.5 Auditoría cruda (fire-and-forget asíncrona)
+    asyncio.create_task(asyncio.to_thread(log_raw_payload, provider_name, env, payload))
+
+    # 3. Transformación Dinámica al Modelo Canónico (RC)
+    try:
+        canonical_events = await run_in_threadpool(
+            DynamicMapper.map_payload_multi, 
+            payload, mapping_schema, provider_name, env
+        )
+    except Exception as e:
+        logger.warning(f"Excepción capturada en dynamic_webhook: {e}")
+        logger.error(f"Error en DynamicMapper para {provider_name}: {e}")
+        raise HTTPException(status_code=422, detail=f"Fallo al mapear los datos: {e}")
+
+    # 4. Guardar en Base de Datos Específica / Cola usando ThreadPool para no bloquear
+    await run_in_threadpool(_save_dynamic_events, provider_name, env, canonical_events, payload)
 
     # 5. Despertar al orquestador instantáneamente
     from app.worker.processor import trigger_worker
