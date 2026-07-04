@@ -1,6 +1,6 @@
 # Resumen del Proyecto: Centro de Comando (Hub Telemático)
 
-Hola equipo, les preparé un resumen de la arquitectura y capacidades técnicas del nuevo Centro de Comando que armamos y, sobre todo, cómo nos aseguramos de que sea seguro, escalable y resiliente ante miles de peticiones.
+Preparé un resumen de la arquitectura y capacidades técnicas del nuevo Centro de Comando que armamos y, sobre todo, cómo nos aseguramos de que sea seguro, escalable y resiliente ante miles de peticiones.
 
 ## ¿Qué hace exactamente este sistema?
 
@@ -53,3 +53,94 @@ Si el día de mañana hay un problema legal, un error rarísimo, o un proveedor 
 ---
 
 Cualquier duda técnica más profunda de la arquitectura me avisan y lo revisamos en código, pero el flujo está contenido, paralelizado y totalmente blindado.
+
+📋 Listado completo de endpoints (31 endpoints)
+A continuación se detallan todos los endpoints HTTP del sistema, agrupados por función.
+
+🔐 Autenticación
+HTTP Basic Auth protege: Dashboard, Admin Config, DB Viewer, Vehicles, Audit Logs e Inspector.
+Credenciales: variables de entorno DASHBOARD_USER y DASHBOARD_PASSWORD.
+Sin auth (públicos): Webhooks de ingesta (Schmitz, dynamic) y Health check.
+
+1. Ingesta — Webhooks PUSH (PÚBLICOS, sin Basic Auth)
+Reciben telemetría de proveedores externos. Responden HTTP 202 inmediato (Drop and Forget).
+
+Método	Path	Para qué sirve	Archivo
+POST	/schmitz/webhook?env={test|prod}	Webhook Schmitz (alias genérico)	app/api/routers/schmitz.py
+POST	/Json/Data?env={test|prod}	Webhook Schmitz oficial (hardcodeado por el proveedor, no negociable)	app/api/routers/schmitz.py
+POST	/webhook/dynamic/{provider_name}?env={test|prod}	Webhook iPaaS universal para proveedores futuros (Samsara, Geotab, etc.)	app/api/routers/dynamic_webhook.py
+
+Notas:
+Validan API key (fail-closed: sin key configurada → 401).
+Persisten directo a SQLite (sharded por provider/env).
+Responder HTTP 202 inmediato para no bloquear al proveedor.
+
+2. Dashboard — UI y métricas (Basic Auth)
+Método	Path	Para qué sirve	Archivo
+GET	/dashboard	Render HTML del dashboard (Jinja2) — la UI que ve el operador	app/api/routers/dashboard.py
+GET	/api/stats?status=&provider=	KPIs consolidados de todas las BDs (pending/sent/failed/retries, latencias, throughput, top 200 eventos)	app/api/routers/dashboard.py
+GET	/api/stats/stream	SSE — telemetría en tiempo real (push cada 2s a todas las pantallas conectadas)	app/api/routers/dashboard.py
+
+3. Admin Config — Gestión de proveedores (Basic Auth)
+Método	Path	Para qué sirve	Archivo
+GET	/api/config/providers	Lista proveedores configurados con sus credenciales (enmascaradas)	app/api/routers/admin_config.py
+POST	/api/config/providers	Crear nuevo proveedor (PUSH o PULL)	app/api/routers/admin_config.py
+GET	/api/config	Lista entornos disponibles (test/prod)	app/api/routers/admin_config.py
+POST	/api/config	Crear entorno nuevo	app/api/routers/admin_config.py
+GET	/api/config/{provider_name}/{env}/mapping	Obtener mapping JSONPath del proveedor (cómo traducir su JSON al Modelo Canónico)	app/api/routers/admin_config.py
+POST	/api/config/{provider_name}/{env}/mapping	Guardar mapping JSONPath	app/api/routers/admin_config.py
+GET	/api/config/{provider_name}/{env}/enrichment	Obtener config de enriquecimiento (URL diccionario IMEI→Placa)	app/api/routers/admin_config.py
+POST	/api/config/{provider_name}/{env}/enrichment	Guardar config de enriquecimiento	app/api/routers/admin_config.py
+GET	/api/config/retention	Obtener retención de logs configurada (crudos y procesados)	app/api/routers/admin_config.py
+PUT	/api/config/retention	Actualizar retención (crudos 7-90 días, procesados 7-30 días)	app/api/routers/admin_config.py
+PUT	/api/config/processed-logs-toggle	Activar/desactivar backups de eventos procesados a disco	app/api/routers/admin_config.py
+POST	/api/config/purge-logs	Purga manual con guardrails (min 7 días, escribir "PURGAR", revalidar password)	app/api/routers/admin_config.py
+
+4. DB Viewer — Visor SQLite (Basic Auth + revalidación password)
+Método	Path	Para qué sirve	Archivo
+GET	/api/db-viewer/databases	Lista archivos .db disponibles en el servidor	app/api/routers/db_viewer.py
+GET	/api/db-viewer/tables?db_name=	Lista tablas de una BD (con protección anti path-traversal)	app/api/routers/db_viewer.py
+GET	/api/db-viewer/query?db_name=&table=&limit=&offset=	SELECT rowid, * — explora datos (solo tablas whitelist editables)	app/api/routers/db_viewer.py
+POST	/api/db-viewer/update_cell	Editar celda de tablas whitelist (revalida DASHBOARD_PASSWORD, SQL parametrizado)	app/api/routers/db_viewer.py
+
+5. Vehicles — Buscador de vehículos (Basic Auth)
+Método	Path	Para qué sirve	Archivo
+GET	/api/vehicles/unique?date=&provider=&search=	Buscar patentes (DISTINCT chassis_number, LIKE %search%) — monitor forense	app/api/routers/vehicles.py
+GET	/api/vehicles/data?provider=&env=&chassis=&date=	Historial JSON crudo de un chasis particular (hasta 500 eventos)	app/api/routers/vehicles.py
+
+6. Audit Logs — Auditoría e historial (Basic Auth)
+Método	Path	Para qué sirve	Archivo
+GET	/api/logs	Últimos 50 registros de auditoría JSONL crudos	app/api/routers/audit_logs.py
+DELETE	/api/logs	Borrar todos los archivos .jsonl (operación destructiva)	app/api/routers/audit_logs.py
+GET	/api/history	Estadísticas diarias consolidadas (últimos 200 DailyStat)	app/api/routers/audit_logs.py
+
+7. Inspector — Mini-Postman con Anti-SSRF (Basic Auth)
+Método	Path	Para qué sirve	Archivo
+POST	/inspector/catch/{session_id}	Capturar payload de un webhook temporal (modo PUSH)	app/api/routers/inspector.py
+GET	/inspector/catch/{session_id}/latest	Sondear el payload capturado	app/api/routers/inspector.py
+POST	/inspector/fetch	HTTP request a URL arbitraria (Anti-SSRF + DNS rebinding mitigation + TLS verification)	app/api/routers/inspector.py
+POST	/inspector/fetch-token	OAuth flow — extrae access_token automáticamente de formatos comunes	app/api/routers/inspector.py
+
+8. Health — Liveness (PÚBLICO, sin auth)
+Método	Path	Para qué sirve	Archivo
+GET	/health	Liveness check (SELECT 1 SQLite + ping Redis si está configurado) — para load balancers	app/api/routers/health.py
+
+📊 Resumen por categorías
+Categoría	Endpoints	Auth	Función principal
+Ingesta PUSH	3	API key (fail-closed)	Recibir telemetría de proveedores
+Dashboard	3	Basic Auth	UI + KPIs + SSE
+Admin Config	12	Basic Auth	CRUD proveedores + retención + purga
+DB Viewer	4	Basic Auth + revalidación	Visor SQLite con edición limitada
+Vehicles	2	Basic Auth	Búsqueda por patente
+Audit Logs	3	Basic Auth	Logs + historial diario
+Inspector	4	Basic Auth	Mini-Postman con Anti-SSRF
+Health	1	Público	Liveness para load balancers
+Total	31		
+
+🛡️ Seguridad por endpoint
+Endpoint	Protección
+Webhooks PUSH	API key (fail-closed, secrets.compare_digest) — sin key configurada → 401
+Dashboard / Admin / DB Viewer / Vehicles / Audit Logs / Inspector	HTTP Basic Auth (secrets.compare_digest)
+DB Viewer update_cell	Revalidación de DASHBOARD_PASSWORD en el body + whitelist de tablas editables
+Inspector /fetch y /fetch-token	Anti-SSRF (bloquea loopback/privadas/metadata cloud) + DNS rebinding mitigation (pin IP + Host header) + TLS verification configurable
+Health	Sin auth (público, para load balancers)

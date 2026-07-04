@@ -65,7 +65,7 @@ def get_push_stats(provider_key: str | None = None) -> dict:
 from app.core.auth import verify_dashboard_auth, security
 
 router = APIRouter(tags=["Dashboard"])
-templates = Jinja2Templates(directory="app/templates")
+templates = Jinja2Templates(directory="frontend/templates")
 
 
 
