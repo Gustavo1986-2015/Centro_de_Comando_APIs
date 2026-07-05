@@ -164,3 +164,20 @@ Responder HTTP 202 inmediato para no bloquear al proveedor.
 | DB Viewer update_cell | Revalidación de DASHBOARD_PASSWORD en el body + whitelist de tablas editables |
 | Inspector /fetch y /fetch-token | Anti-SSRF (bloquea loopback/privadas/metadata cloud) + DNS rebinding mitigation (pin IP + Host header) + TLS verification configurable |
 | Health | Sin auth (público, para load balancers) |
+
+---
+
+🧪 Tests Automatizados (pytest)
+
+Suite de 25 tests que protege contra regresiones al integrar nuevas APIs.
+
+```bash
+# Instalar dependencias de test (si no están instaladas)
+pip install pytest pytest-asyncio
+
+# Ejecutar suite completa
+pytest tests/
+# Output esperado: 25 passed in ~3s
+```
+
+Ver `TESTING.md` para detalles de aislamiento y cómo agregar tests para APIs nuevas.
