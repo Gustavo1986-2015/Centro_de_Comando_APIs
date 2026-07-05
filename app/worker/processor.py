@@ -211,20 +211,8 @@ async def process_provider_events(provider: str, env: str):
         # Contadores compartidos (se acumulan al final)
         batch_metrics = []
         
-        # Leer credenciales desde config
-        from app.core.crypto import decrypt
-        db_conf = get_session("system_config", "global")
-        conf = db_conf.query(ProviderConfig).filter_by(provider_name=provider, env=env).first()
-        rc_u = conf.rc_user if conf else None
-        
-        rc_p = None
-        if conf and conf.rc_password_enc:
-            rc_p = decrypt(conf.rc_password_enc)
-        if not rc_p and conf:
-            rc_p = conf.rc_password
-            
-        rc_use_mock = conf.use_mock if conf and hasattr(conf, 'use_mock') else True
-        db_conf.close()
+        # Leer credenciales desde config — operación bloqueante, se despacha al ThreadPool
+        rc_u, rc_p, rc_use_mock = await asyncio.to_thread(_get_rc_credentials_sync, provider, env)
         rc_client = get_rc_client(rc_u, rc_p, use_mock=rc_use_mock)
         
         # Semáforo para limitar concurrencia a RC y prevenir saturación por ráfagas (burst)
@@ -646,13 +634,8 @@ async def purge_provider_events(provider: str, env: str):
         await asyncio.to_thread(write_backup)
         
         if deleted_count > 0:
-            # Ejecutar el borrado en SQLite
-            db.query(NormalizedRCEvent).filter(
-                NormalizedRCEvent.status.in_(["sent", "failed"]),
-                NormalizedRCEvent.created_at < today_start
-            ).delete(synchronize_session=False)
-            
-            db.commit()
+            # DELETE + COMMIT bloqueante — se despacha al ThreadPool
+            await asyncio.to_thread(_delete_purged_sync, db, today_start)
             logger.info(f"Purga Automática completada para {provider}_{env}: {deleted_count} respaldados y eliminados.")
             
         # Limpieza automatica > X dias
@@ -686,7 +669,8 @@ async def purge_provider_events(provider: str, env: str):
 async def purge_processed_events():
     """Ejecuta la purga concurrente de todas las APIs."""
     tasks = []
-    active = get_active_providers()
+    # get_active_providers es bloqueante — se despacha al ThreadPool
+    active = await asyncio.to_thread(get_active_providers)
     for p in active:
         tasks.append(purge_provider_events(p["name"], p["env"]))
         
@@ -783,14 +767,36 @@ async def api_worker_loop(provider: str, env: str):
         except asyncio.TimeoutError:
             pass
 
-async def worker_loop():
-    """Inicia y gestiona las corrutinas independientes para cada proveedor registrado."""
-    logger.info("Iniciando Worker Background de Telemática (Modo Multitarea Dinámico)...")
-    
+def _get_rc_credentials_sync(provider: str, env: str):
+    """Lee credenciales RC desde DB y las descifra. Bloqueante — llamar con asyncio.to_thread."""
+    from app.core.crypto import decrypt
+    db_conf = get_session("system_config", "global")
+    try:
+        conf = db_conf.query(ProviderConfig).filter_by(provider_name=provider, env=env).first()
+        rc_u = conf.rc_user if conf else None
+        rc_p = None
+        if conf and conf.rc_password_enc:
+            rc_p = decrypt(conf.rc_password_enc)
+        if not rc_p and conf:
+            rc_p = conf.rc_password
+        rc_use_mock = conf.use_mock if conf and hasattr(conf, 'use_mock') else True
+        return rc_u, rc_p, rc_use_mock
+    finally:
+        db_conf.close()
+
+def _delete_purged_sync(db_session, today_start):
+    """Ejecuta DELETE + COMMIT de eventos purgados. Bloqueante — llamar con asyncio.to_thread."""
+    db_session.query(NormalizedRCEvent).filter(
+        NormalizedRCEvent.status.in_(["sent", "failed"]),
+        NormalizedRCEvent.created_at < today_start
+    ).delete(synchronize_session=False)
+    db_session.commit()
+
+def _initialize_providers_sync():
+    """Setup inicial: lee/crea proveedores en DB y recupera eventos atascados. Bloqueante — llamar con asyncio.to_thread."""
     db = get_session("system_config", "global")
     try:
         configs = db.query(ProviderConfig).all()
-        # Si está vacío (primer inicio), poblar con los registros predeterminados
         if not configs:
             c1 = ProviderConfig(provider_name="schmitz", env="prod")
             c2 = ProviderConfig(provider_name="schmitz", env="test")
@@ -800,11 +806,9 @@ async def worker_loop():
             db.commit()
             configs = db.query(ProviderConfig).all()
         else:
-            # Agregar registros de Protrack si aún no existen (migración incremental)
             existing_names = {(c.provider_name, c.env) for c in configs}
             to_add = []
             if ("protrack", "prod") not in existing_names:
-                # prod inactivo por defecto hasta tener credenciales reales
                 to_add.append(ProviderConfig(provider_name="protrack", env="prod", is_active=False))
             if ("protrack", "test") not in existing_names:
                 to_add.append(ProviderConfig(provider_name="protrack", env="test"))
@@ -812,57 +816,70 @@ async def worker_loop():
                 db.add_all(to_add)
                 db.commit()
                 configs = db.query(ProviderConfig).all()
-        
+
         providers = [(c.provider_name, c.env) for c in configs]
-        
+
         # Recuperación de Desastres: Revertir 'processing' a 'pending' tras reinicio brusco
         for provider, env in providers:
             try:
                 db_prov = get_session(provider, env)
-                from app.models.db_models import NormalizedRCEvent
-                recovered = db_prov.query(NormalizedRCEvent).filter(NormalizedRCEvent.status == "processing").update(
-                    {"status": "pending"}, synchronize_session=False
-                )
+                recovered = db_prov.query(NormalizedRCEvent).filter(
+                    NormalizedRCEvent.status == "processing"
+                ).update({"status": "pending"}, synchronize_session=False)
                 if recovered > 0:
                     logger.warning(f"Recuperación: {recovered} eventos atascados revertidos a 'pending' en {provider}_{env}")
                 db_prov.commit()
                 db_prov.close()
             except Exception as rec_err:
                 logger.error(f"Error recuperando eventos atascados para {provider}_{env}: {rec_err}")
-                
+
+        return providers
     except Exception as e:
         logger.error(f"Error inicializando proveedores en worker_loop: {e}")
-        providers = [("schmitz", "prod"), ("schmitz", "test")]
+        return [("schmitz", "prod"), ("schmitz", "test")]
     finally:
         db.close()
-        
-    logger.info(f"Escuchando nuevas integraciones (Worker Watchdog)...")
-    
+
+def _get_all_providers_sync():
+    """Lee todos los proveedores desde DB. Bloqueante — llamar con asyncio.to_thread (watchdog)."""
+    db = get_session("system_config", "global")
+    try:
+        configs = db.query(ProviderConfig).all()
+        return [(c.provider_name, c.env) for c in configs]
+    except Exception as e:
+        logger.error(f"Error leyendo proveedores en watchdog: {e}")
+        return []
+    finally:
+        db.close()
+
+async def worker_loop():
+    """Inicia y gestiona las corrutinas independientes para cada proveedor registrado."""
+    logger.info("Iniciando Worker Background de Telemática (Modo Multitarea Dinámico)...")
+
+    # Setup inicial en ThreadPool — operaciones DB bloqueantes
+    providers = await asyncio.to_thread(_initialize_providers_sync)
+
+    logger.info("Escuchando nuevas integraciones (Worker Watchdog)...")
+
     running_providers = set()
     active_tasks = []
-    
+
     while True:
-        db = get_session("system_config", "global")
         try:
-            configs = db.query(ProviderConfig).all()
-            for c in configs:
-                prov_tuple = (c.provider_name, c.env)
+            # Lectura del watchdog en ThreadPool — se ejecuta cada 15s, no bloquea el event loop
+            configs = await asyncio.to_thread(_get_all_providers_sync)
+            for prov_tuple in configs:
                 if prov_tuple not in running_providers:
-                    logger.info(f"Lanzando workers para nuevo proveedor detectado: {c.provider_name.upper()} ({c.env.upper()})")
+                    provider_name, env = prov_tuple
+                    logger.info(f"Lanzando workers para nuevo proveedor detectado: {provider_name.upper()} ({env.upper()})")
                     running_providers.add(prov_tuple)
-                    
-                    active_tasks.append(asyncio.create_task(api_worker_loop(c.provider_name, c.env)))
-                    
+
+                    active_tasks.append(asyncio.create_task(api_worker_loop(provider_name, env)))
+
                     from app.worker.pull_engine import dictionary_sync_loop, telemetry_poll_loop
-                    active_tasks.append(asyncio.create_task(dictionary_sync_loop(c.provider_name, c.env)))
-                    active_tasks.append(asyncio.create_task(telemetry_poll_loop(c.provider_name, c.env)))
+                    active_tasks.append(asyncio.create_task(dictionary_sync_loop(provider_name, env)))
+                    active_tasks.append(asyncio.create_task(telemetry_poll_loop(provider_name, env)))
         except Exception as e:
             logger.error(f"Error en el watchdog de workers: {e}")
-        finally:
-            db.close()
-            
+
         await asyncio.sleep(15)
-
-
-
-
