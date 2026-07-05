@@ -81,6 +81,51 @@ async def get_dashboard(request: Request, _: None = Depends(verify_dashboard_aut
     response.headers["Expires"] = "0"
     return response
 
+def _fetch_providers_sync() -> list:
+    """Carga proveedores desde la BD de configuración. Sync, para ejecutar en ThreadPool."""
+    config_db = get_session("system_config", "global")
+    try:
+        providers = config_db.query(ProviderConfig).all()
+        if not providers:
+            return [
+                ProviderConfig(provider_name="schmitz", env="prod"),
+                ProviderConfig(provider_name="schmitz", env="test")
+            ]
+        return providers
+    finally:
+        config_db.close()
+
+def _fetch_events_for_provider_sync(provider_name, provider_env, status_filter, today_start, thirty_secs_ago):
+    """Queries SQLite de un proveedor específico. Sync, para ejecutar en ThreadPool."""
+    db = get_session(provider_name, provider_env)
+    try:
+        stats = db.query(
+            func.sum(case((NormalizedRCEvent.status == "pending", 1), else_=0)).label("pending"),
+            func.sum(case((
+                (NormalizedRCEvent.status == "pending") & (NormalizedRCEvent.retry_count > 0), 1
+            ), else_=0)).label("retries"),
+            func.sum(case((
+                (NormalizedRCEvent.status == "sent") & (NormalizedRCEvent.created_at >= today_start), 1
+            ), else_=0)).label("sent"),
+            func.sum(case((
+                (NormalizedRCEvent.status == "failed") & (NormalizedRCEvent.created_at >= today_start), 1
+            ), else_=0)).label("failed"),
+            func.sum(case((
+                NormalizedRCEvent.created_at >= thirty_secs_ago, 1
+            ), else_=0)).label("throughput")
+        ).first()
+
+        query = db.query(NormalizedRCEvent)
+        if status_filter and status_filter != 'all':
+            query = query.filter(NormalizedRCEvent.status == status_filter)
+        recent = query.order_by(NormalizedRCEvent.id.desc()).limit(200).all()
+        for r in recent:
+            r.provider_name = provider_name
+            r.env = provider_env
+        return stats, recent
+    finally:
+        db.close()
+
 async def get_stats_data(
     status_filter: str = None,
     provider_filter: str = None
@@ -88,6 +133,7 @@ async def get_stats_data(
     """
     Retorna las estadísticas en tiempo real sumando los datos de
     TODAS las bases de datos SQLite de los distintos proveedores.
+    Las operaciones bloqueantes de SQLite se despachan al ThreadPool vía asyncio.to_thread.
     """
     local_now = datetime.now().astimezone()
     today_start_local = datetime.combine(local_now.date(), datetime.min.time()).replace(tzinfo=local_now.tzinfo)
@@ -103,28 +149,16 @@ async def get_stats_data(
     provider_tz_offsets = {}
     thirty_secs_ago = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(seconds=30)
 
-    # Obtener proveedores directamente desde la BD de configuración
-    config_db = get_session("system_config", "global")
-    try:
-        providers = config_db.query(ProviderConfig).all()
-        # Si aún no hay configuraciones (primer arranque), usar los predeterminados
-        if not providers:
-            providers = [
-                ProviderConfig(provider_name="schmitz", env="prod"),
-                ProviderConfig(provider_name="schmitz", env="test")
-            ]
-    finally:
-        config_db.close()
+    # Obtener proveedores desde ThreadPool (operación bloqueante)
+    providers = await asyncio.to_thread(_fetch_providers_sync)
 
     for p in providers:
         provider_name = p.provider_name
         provider_env = p.env
         
-        # Filtrar si se solicitó un proveedor específico
         if provider_filter and provider_filter.lower() != 'all' and provider_name.lower() != provider_filter.lower():
             continue
             
-        # Extraer offset horario del proveedor
         tz_offset = 0
         try:
             if p.enrichment_config:
@@ -134,52 +168,20 @@ async def get_stats_data(
             logger.warning(f"Error al parsear JSON: {e}")
             pass
         provider_tz_offsets[f"{provider_name}_{provider_env}"] = tz_offset
-            
-        db = get_session(provider_name, provider_env)
-        try:
-            # DEBT-05: Consolidar las 5 consultas en una sola
-            stats = db.query(
-                func.sum(case((NormalizedRCEvent.status == "pending", 1), else_=0)).label("pending"),
-                func.sum(case((
-                    (NormalizedRCEvent.status == "pending") & (NormalizedRCEvent.retry_count > 0), 1
-                ), else_=0)).label("retries"),
-                func.sum(case((
-                    (NormalizedRCEvent.status == "sent") & (NormalizedRCEvent.created_at >= today_start), 1
-                ), else_=0)).label("sent"),
-                func.sum(case((
-                    (NormalizedRCEvent.status == "failed") & (NormalizedRCEvent.created_at >= today_start), 1
-                ), else_=0)).label("failed"),
-                func.sum(case((
-                    NormalizedRCEvent.created_at >= thirty_secs_ago, 1
-                ), else_=0)).label("throughput")
-            ).first()
 
-            total_pending += int(stats.pending or 0)
-            total_retries += int(stats.retries or 0)
-            total_sent += int(stats.sent or 0)
-            total_failed += int(stats.failed or 0)
-            throughput_count = int(stats.throughput or 0)
-            throughput_per_provider[f"{provider_name}_{provider_env}"] = throughput_count
+        # Query por proveedor en ThreadPool (operación bloqueante)
+        stats, recent = await asyncio.to_thread(
+            _fetch_events_for_provider_sync,
+            provider_name, provider_env, status_filter, today_start, thirty_secs_ago
+        )
 
-            # Base query
-            query = db.query(NormalizedRCEvent)
-            
-            if status_filter and status_filter != 'all':
-                query = query.filter(NormalizedRCEvent.status == status_filter)
-
-            # Obtener los 200 más recientes de esta BD particular
-            recent = query.order_by(
-                NormalizedRCEvent.id.desc()
-            ).limit(200).all()
-            
-            for r in recent:
-                # Inyectar dinámicamente estos atributos para la lectura posterior
-                r.provider_name = provider_name
-                r.env = provider_env
-                
-            recent_events_global.extend(recent)
-        finally:
-            db.close()
+        total_pending += int(stats.pending or 0)
+        total_retries += int(stats.retries or 0)
+        total_sent += int(stats.sent or 0)
+        total_failed += int(stats.failed or 0)
+        throughput_count = int(stats.throughput or 0)
+        throughput_per_provider[f"{provider_name}_{provider_env}"] = throughput_count
+        recent_events_global.extend(recent)
 
     # Ordenar los recientes de todas las BDs y quedarnos con los 200 últimos absolutos
     recent_events_global.sort(key=lambda x: x.updated_at or x.created_at, reverse=True)

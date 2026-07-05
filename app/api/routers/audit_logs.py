@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["Audit Logs"])
 
 @router.get("/api/logs")
-async def get_audit_logs(_: None = Depends(verify_dashboard_auth)):
+def get_audit_logs(_: None = Depends(verify_dashboard_auth)):
     """Devuelve los últimos 50 registros de auditoría de los archivos .jsonl"""
     audit_dir = "audit"
     if not os.path.exists(audit_dir):
@@ -47,7 +47,7 @@ async def get_audit_logs(_: None = Depends(verify_dashboard_auth)):
     return all_lines[:50]
 
 @router.delete("/api/logs")
-async def clear_audit_logs(_: None = Depends(verify_dashboard_auth)):
+def clear_audit_logs(_: None = Depends(verify_dashboard_auth)):
     """Borra todos los archivos de auditoría jsonl"""
     audit_dir = "audit"
     if not os.path.exists(audit_dir):
@@ -63,7 +63,7 @@ async def clear_audit_logs(_: None = Depends(verify_dashboard_auth)):
     return {"status": "ok"}
 
 @router.get("/api/history")
-async def get_daily_history(_: None = Depends(verify_dashboard_auth)):
+def get_daily_history(_: None = Depends(verify_dashboard_auth)):
     """Devuelve los registros históricos de estadísticas diarias consolidando los últimos 30 días."""
     db = get_session("system_config", "global")
     try:
