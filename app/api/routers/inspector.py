@@ -2,6 +2,7 @@ from fastapi import APIRouter, Request, Body, HTTPException, Depends
 from app.api.routers.dashboard import verify_dashboard_auth
 from typing import Dict, Any, Optional
 from datetime import datetime, timezone
+import asyncio
 import requests
 import uuid
 import ipaddress
@@ -85,7 +86,7 @@ async def get_latest_catch(session_id: str, _: None = Depends(verify_dashboard_a
     return {"has_data": False}
 
 @router.post("/fetch")
-async def fetch_api(request_data: dict = Body(...), _: None = Depends(verify_dashboard_auth)):
+async def fetch_api(request_data: dict = Body(...), _: None = Depends(verify_dashboard_auth)):  # async necesario: await asyncio.to_thread para requests bloqueante
     """
     Modo PULL (Mini-Postman):
     Realiza una solicitud HTTP a nombre del cliente para evitar problemas de CORS del navegador.
@@ -141,7 +142,9 @@ async def fetch_api(request_data: dict = Body(...), _: None = Depends(verify_das
         
     try:
         start = time.perf_counter()
-        response = requests.request(
+        # requests.request es bloqueante (hasta 30s) — se despacha al ThreadPool
+        response = await asyncio.to_thread(
+            requests.request,
             method=method,
             url=pinned_url,
             headers=headers,
@@ -205,7 +208,9 @@ async def fetch_token(request_data: dict = Body(...), _: None = Depends(verify_d
     
     try:
         start = time.perf_counter()
-        response = requests.request(
+        # requests.request es bloqueante (hasta 15s) — se despacha al ThreadPool
+        response = await asyncio.to_thread(
+            requests.request,
             method=token_method,
             url=pinned_url,
             headers=token_headers,

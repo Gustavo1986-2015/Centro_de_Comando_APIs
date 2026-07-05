@@ -51,7 +51,7 @@ class PurgeLogsModel(BaseModel):
 # =====================================================================
 
 @router.get("/api/config/providers")
-async def get_providers(_: None = Depends(verify_dashboard_auth)):
+def get_providers(_: None = Depends(verify_dashboard_auth)):
     config_db = get_session("system_config", "global")
     try:
         providers = config_db.query(ProviderConfig).all()
@@ -60,7 +60,7 @@ async def get_providers(_: None = Depends(verify_dashboard_auth)):
         config_db.close()
 
 @router.post("/api/config/providers")
-async def create_provider(payload: dict, _: None = Depends(verify_dashboard_auth)):
+def create_provider(payload: dict, _: None = Depends(verify_dashboard_auth)):
     provider_name = payload.get("provider_name")
     if not provider_name:
         return {"status": "error", "message": "Falta el nombre del proveedor."}
@@ -104,7 +104,7 @@ async def create_provider(payload: dict, _: None = Depends(verify_dashboard_auth
         config_db.close()
 
 @router.post("/api/config/{provider_name}/{env}/mapping")
-async def save_mapping(provider_name: str, env: str, payload: dict, _: None = Depends(verify_dashboard_auth)):
+def save_mapping(provider_name: str, env: str, payload: dict, _: None = Depends(verify_dashboard_auth)):
     config_db = get_session("system_config", "global")
     try:
         config = config_db.query(ProviderConfig).filter(
@@ -133,7 +133,7 @@ async def save_mapping(provider_name: str, env: str, payload: dict, _: None = De
         config_db.close()
         
 @router.get("/api/config/{provider_name}/{env}/mapping")
-async def get_mapping(provider_name: str, env: str, _: None = Depends(verify_dashboard_auth)):
+def get_mapping(provider_name: str, env: str, _: None = Depends(verify_dashboard_auth)):
     config_db = get_session("system_config", "global")
     try:
         config = config_db.query(ProviderConfig).filter(
@@ -159,7 +159,7 @@ async def get_mapping(provider_name: str, env: str, _: None = Depends(verify_das
         config_db.close()
 
 @router.post("/api/config/{provider_name}/{env}/enrichment")
-async def save_enrichment(provider_name: str, env: str, payload: dict, _: None = Depends(verify_dashboard_auth)):
+def save_enrichment(provider_name: str, env: str, payload: dict, _: None = Depends(verify_dashboard_auth)):
     config_db = get_session("system_config", "global")
     try:
         config = config_db.query(ProviderConfig).filter(
@@ -180,7 +180,7 @@ async def save_enrichment(provider_name: str, env: str, payload: dict, _: None =
         config_db.close()
         
 @router.get("/api/config/{provider_name}/{env}/enrichment")
-async def get_enrichment(provider_name: str, env: str, _: None = Depends(verify_dashboard_auth)):
+def get_enrichment(provider_name: str, env: str, _: None = Depends(verify_dashboard_auth)):
     config_db = get_session("system_config", "global")
     try:
         config = config_db.query(ProviderConfig).filter(
@@ -194,7 +194,7 @@ async def get_enrichment(provider_name: str, env: str, _: None = Depends(verify_
         config_db.close()
 
 @router.get("/api/config")
-async def get_all_configs(_: None = Depends(verify_dashboard_auth)):
+def get_all_configs(_: None = Depends(verify_dashboard_auth)):
     db = get_session("system_config", "global")
     try:
         configs = db.query(ProviderConfig).all()
@@ -225,7 +225,7 @@ async def get_all_configs(_: None = Depends(verify_dashboard_auth)):
         db.close()
 
 @router.post("/api/config")
-async def update_configs(updates: List[ConfigUpdate], _: None = Depends(verify_dashboard_auth)):
+def update_configs(updates: List[ConfigUpdate], _: None = Depends(verify_dashboard_auth)):
     db = get_session("system_config", "global")
     try:
         for u in updates:

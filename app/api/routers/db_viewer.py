@@ -47,7 +47,7 @@ def _resolve_db_path(db_name: str) -> str | None:
     return candidate
 
 @router.get("/api/db-viewer/databases")
-async def get_databases(_: None = Depends(verify_dashboard_auth)):
+def get_databases(_: None = Depends(verify_dashboard_auth)):
     """Lista todas las bases de datos SQLite: raíz + subcarpetas por AVL."""
     db_dir = "./db"
     if not os.path.exists(db_dir):
@@ -61,7 +61,7 @@ async def get_databases(_: None = Depends(verify_dashboard_auth)):
     return result
 
 @router.get("/api/db-viewer/tables")
-async def get_tables(db_name: str = Query(...), _: None = Depends(verify_dashboard_auth)):
+def get_tables(db_name: str = Query(...), _: None = Depends(verify_dashboard_auth)):
     """Lista las tablas de una base de datos específica."""
     db_path = _resolve_db_path(db_name)
     if not db_path:
@@ -83,7 +83,7 @@ async def get_tables(db_name: str = Query(...), _: None = Depends(verify_dashboa
             conn.close()
 
 @router.get("/api/db-viewer/query")
-async def execute_query(db_name: str = Query(...), table: str = Query(...), limit: int = 50, offset: int = 0, _: None = Depends(verify_dashboard_auth)):
+def execute_query(db_name: str = Query(...), table: str = Query(...), limit: int = 50, offset: int = 0, _: None = Depends(verify_dashboard_auth)):
     """Retorna los datos y las columnas de una tabla seleccionada. Incluye rowid para edición."""
     db_path = _resolve_db_path(db_name)
     if not db_path:
@@ -126,7 +126,7 @@ async def execute_query(db_name: str = Query(...), table: str = Query(...), limi
             conn.close()
 
 @router.post("/api/db-viewer/update_cell")
-async def update_cell(body: CellUpdateRequest, _: None = Depends(verify_dashboard_auth)):
+def update_cell(body: CellUpdateRequest, _: None = Depends(verify_dashboard_auth)):
     """
     Edita una celda específica de una tabla permitida.
     Requiere revalidar DASHBOARD_PASSWORD para confirmar la operación.

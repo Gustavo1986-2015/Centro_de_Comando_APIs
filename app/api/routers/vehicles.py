@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["Vehicles"])
 
 @router.get("/api/vehicles/unique")
-async def get_unique_vehicles(
+def get_unique_vehicles(
     date: str = Query(None, description="Fecha en formato YYYY-MM-DD. Por defecto: hoy."),
     provider: str = Query(None, description="Filtrar por proveedor específico. Por defecto: todos."),
     search: str = Query(None, description="Búsqueda libre por texto en la patente/chasis."),
@@ -82,7 +82,7 @@ async def get_unique_vehicles(
     return result
 
 @router.get("/api/vehicles/data")
-async def get_vehicle_data(
+def get_vehicle_data(
     provider: str = Query(...),
     env: str = Query(...),
     chassis: str = Query(...),
