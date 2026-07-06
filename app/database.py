@@ -1,6 +1,5 @@
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker, declarative_base
-from sqlalchemy.pool import NullPool
 from fastapi import Query
 from contextlib import contextmanager
 import os
@@ -206,10 +205,10 @@ def check_and_migrate_provider_db(provider: str, env: str):
 def get_engine(provider: str, env: str = "prod"):
     """Devuelve (y crea si no existe) el motor SQLite para el proveedor y entorno dados."""
     key = f"{provider}_{env}"
+
     if key not in _engines:
         url = get_db_url(provider, env)
-        # Usamos NullPool para asegurar lecturas frescas de SQLite (evita stale WAL snapshots en workers)
-        engine = create_engine(url, connect_args={"check_same_thread": False}, poolclass=NullPool)
+        engine = create_engine(url, connect_args={"check_same_thread": False})
         
         # Habilitar SQLite WAL Mode (Write-Ahead Logging) nativo por conexión
         @event.listens_for(engine, "connect")
@@ -246,7 +245,10 @@ def get_session(provider: str, env: str = "prod"):
     """Devuelve una nueva sesión para la BD del proveedor/entorno."""
     key = f"{provider}_{env}"
     get_engine(provider, env)
-    return _sessions[key]()
+    session = _sessions[key]()
+    # Forzar el reinicio de la transacción para evitar snapshots viejos en SQLite WAL
+    session.rollback()
+    return session
 
 @contextmanager
 def session_context(provider: str, env: str = "prod"):
