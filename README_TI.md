@@ -63,19 +63,27 @@ Credenciales: variables de entorno DASHBOARD_USER y DASHBOARD_PASSWORD.
 Machine-to-Machine (API Key): Webhooks de ingesta (Schmitz, dynamic).
 Sin auth (público): Health check.
 
-1. Ingesta — Webhooks PUSH (Machine-to-Machine, requiere API Key)
+## 1. Ingesta — Webhooks PUSH (Machine-to-Machine, requiere API Key)
 Reciben telemetría de proveedores externos. Responden HTTP 202 inmediato (Drop and Forget).
 
-| Método | Path | Para qué sirve | Archivo |
-|--------|------|----------------|---------|
-| POST | `/schmitz/webhook?env={test\|prod}` | Webhook Schmitz (alias genérico) | `app/api/routers/schmitz.py` |
-| POST | `/Json/Data?env={test\|prod}` | Webhook Schmitz oficial (hardcodeado por el proveedor, no negociable) | `app/api/routers/schmitz.py` |
-| POST | `/webhook/dynamic/{provider_name}?env={test\|prod}` | Webhook iPaaS universal para proveedores futuros (Samsara, Geotab, etc.) | `app/api/routers/dynamic_webhook.py` |
+### 🚨 IMPORTANTE: Endpoint Productivo SCHMITZ
+Por requerimiento estricto y no negociable del proveedor, Schmitz debe apuntar a la siguiente URL exacta para producción:
+👉 **`https://api.telemetria.assistcargo.com/Json/Data`** *(Método: POST)*
 
-Notas:
-Validan API key (fail-closed: sin key configurada → 401).
-Persisten directo a SQLite (sharded por provider/env).
-Responder HTTP 202 inmediato para no bloquear al proveedor.
+*(Nota técnica: internamente esto asume `env=prod` por defecto si no se especifica).*
+
+### Endpoints Generales del iPaaS
+
+| Método | Path | Para qué sirve |
+|--------|------|----------------|
+| POST | `/Json/Data?env={test\|prod}` | Webhook oficial para Schmitz (Legacy/Hardcodeado). |
+| POST | `/schmitz/webhook?env={test\|prod}` | Alias genérico alternativo para Schmitz. |
+| POST | `/webhook/dynamic/{provider_name}?env={test\|prod}` | Webhook Universal para TODAS las nuevas integraciones (ej. `/webhook/dynamic/geotab`). |
+
+**Reglas para estos endpoints:**
+* Validan API key mediante la cabecera `x-api-key` (fail-closed: sin key configurada → HTTP 401).
+* Persisten directo a la base de datos SQLite correspondiente (fragmentada por provider/env).
+* Responden HTTP 202 inmediato para jamás frenar la cola del proveedor.
 
 2. Dashboard — UI y métricas (Basic Auth)
 
@@ -180,4 +188,4 @@ pytest tests/
 # Output esperado: 25 passed in ~3s
 ```
 
-Ver `TESTING.md` para detalles de aislamiento y cómo agregar tests para APIs nuevas.
+Ver `docs/TESTING.md` para detalles de aislamiento y cómo agregar tests para APIs nuevas.
