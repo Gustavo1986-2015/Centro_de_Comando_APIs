@@ -1,5 +1,6 @@
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker, declarative_base
+from sqlalchemy.pool import NullPool
 from fastapi import Query
 from contextlib import contextmanager
 import os
@@ -207,7 +208,8 @@ def get_engine(provider: str, env: str = "prod"):
     key = f"{provider}_{env}"
     if key not in _engines:
         url = get_db_url(provider, env)
-        engine = create_engine(url, connect_args={"check_same_thread": False})
+        # Usamos NullPool para asegurar lecturas frescas de SQLite (evita stale WAL snapshots en workers)
+        engine = create_engine(url, connect_args={"check_same_thread": False}, poolclass=NullPool)
         
         # Habilitar SQLite WAL Mode (Write-Ahead Logging) nativo por conexión
         @event.listens_for(engine, "connect")
