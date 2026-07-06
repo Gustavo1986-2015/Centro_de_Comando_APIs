@@ -41,17 +41,56 @@ scripts/
 ARCHITECTURE.md
 FAQ.md
 README.md
+# Entornos Virtuales
+venv/
+env/
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Bases de Datos locales
+db/
+*.db
+*.sqlite3
+
+# Auditoría y Logs
+audit/
+*.log
+*.jsonl
+
+# IDEs
+.vscode/
+.idea/
+
+# PyInstaller
+build/
+dist/
+*.spec
+
+# Binarios de túnel (no versionar)
+cloudflared.exe
+# Logs
+logs/
+*.log
+
+# Scripts locales de mantenimiento (no subir a git)
+scripts/
+
+# Documentacion y Simuladores
+ARCHITECTURE.md
+FAQ.md
+README.md
 simulador_vivo.py
 
 # Archivos de TI y DevOps
 Dockerfile
 docker-compose.yml
 .dockerignore
-configuracion_Tunnel_Cloudflare.md
 docs/
-
-# Payload local de pruebas del Hilo Fantasma
-cloudflare_payload/
 
 # Configuración local de LLM / Agentes
 .agents/
