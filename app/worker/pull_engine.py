@@ -83,7 +83,14 @@ async def execute_fetch(fetch_config: dict) -> dict | list:
         
     async with httpx.AsyncClient(timeout=30) as client:
         if method == "GET":
-            resp = await client.get(url, params=params, headers=headers)
+            from urllib.parse import urlparse, parse_qsl, urlencode, urlunparse
+            parsed = urlparse(url)
+            query_params = dict(parse_qsl(parsed.query))
+            if params:
+                query_params.update(params)
+            new_query = urlencode(query_params)
+            new_url = urlunparse((parsed.scheme, parsed.netloc, parsed.path, parsed.params, new_query, parsed.fragment))
+            resp = await client.get(new_url, headers=headers)
         else:
             body = fetch_config.get("body", "{}")
             try:
