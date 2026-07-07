@@ -22,9 +22,12 @@ graph TD
 
     %% Bloque Ingesta (PULL)
     subgraph 1b. Ingesta Activa (PULL)
-        H[Timer Asíncrono] -->|Cron| I[Puller: app/providers/protrack/puller.py]
+        H[Timer Asíncrono] -->|Cron| I[Puller: app/worker/pull_engine.py]
         I -->|HTTP GET dinámico| J[API Externa Protrack]
         J -->|JSON Response| E
+        E -->|Motor Dedup: state_dedup.py| E2{Transición de estado?}
+        E2 -->|Sí - pasa| F
+        E2 -->|No - descarta| DISCARD[Event descartado - solo auditado]
     end
 
     %% Bloque Despacho (WORKER)
@@ -235,7 +238,7 @@ Montado vía `StaticFiles` en `/static`. Cache busting con `?v=1` para evitar ca
 
 ## 15. Testing Automatizado (pytest)
 
-Suite de 25 tests en `tests/` que protege contra regresiones al integrar nuevas APIs.
+Suite de 34 tests en `tests/` que protege contra regresiones al integrar nuevas APIs.
 
 | Categoría | Archivo | Tests | Qué protege |
 |-----------|---------|-------|-------------|
@@ -245,6 +248,7 @@ Suite de 25 tests en `tests/` que protege contra regresiones al integrar nuevas 
 | Anti-regresión | `test_anti_regression.py` | 5 | Bugs M5b, dce0758, L2, M3, C3 |
 | Mapper Schmitz | `test_schmitz_mapper.py` | 4 | Mapper Schmitz v3 (chassis, GPS, Events vacíos) |
 | Mapper Protrack | `test_protrack_mapper.py` | 3 | Mapper Protrack (estructura, MD5 auth, schema) |
+| Deduplicación PULL | `test_state_dedup.py` | 9 | Anti-State Flooding (base_code, transiciones, toggle on/off, TTL cache cleanup) |
 
 **Aislamiento garantizado:** DB temporal, `MASTER_ENC_KEY` fija de test, `RC_USE_MOCK=True`. No toca producción.
 
