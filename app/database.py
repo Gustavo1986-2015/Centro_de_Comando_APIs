@@ -120,6 +120,13 @@ def check_and_migrate_db():
                         )
                         logger.info("Schmitz: SCHMITZ_API_KEY migrada a DB cifrada.")
                         conn.commit()
+                        
+                # Migración: añadir enable_state_dedup a provider_config
+                cursor.execute("PRAGMA table_info(provider_config)")
+                columns_prov = [row[1] for row in cursor.fetchall()]
+                if "enable_state_dedup" not in columns_prov:
+                    cursor.execute("ALTER TABLE provider_config ADD COLUMN enable_state_dedup BOOLEAN DEFAULT 1")
+                    conn.commit()
             
             cursor.execute("CREATE TABLE IF NOT EXISTS provider_dictionary (id INTEGER PRIMARY KEY AUTOINCREMENT, provider_name TEXT, env TEXT, dict_key TEXT, dict_value TEXT)")
             cursor.execute("CREATE INDEX IF NOT EXISTS ix_provider_dictionary_provider_name ON provider_dictionary (provider_name)")
