@@ -83,7 +83,8 @@ def create_provider(payload: dict, _: None = Depends(verify_dashboard_auth)):
             is_active=False,
             use_mock=True,
             queue_backend="sqlite",
-            mapping_schema={}
+            mapping_schema={},
+            enable_state_dedup=True
         )
         new_test = ProviderConfig(
             provider_name=provider_name,
@@ -91,7 +92,8 @@ def create_provider(payload: dict, _: None = Depends(verify_dashboard_auth)):
             is_active=True,
             use_mock=True,
             queue_backend="sqlite",
-            mapping_schema={}
+            mapping_schema={},
+            enable_state_dedup=True
         )
         
         config_db.add_all([new_prod, new_test])
