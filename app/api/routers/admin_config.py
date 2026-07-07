@@ -32,6 +32,7 @@ class ConfigUpdate(BaseModel):
     webhook_auth_secret: str | None = None
     webhook_auth_header: str | None = None
     fetch_config: str | None = None
+    enable_state_dedup: bool = True
 
 class RetentionUpdateModel(BaseModel):
     audit_retention_days: int
@@ -75,6 +76,13 @@ def create_provider(payload: dict, _: None = Depends(verify_dashboard_auth)):
         
         if exists:
             return {"status": "error", "message": f"El proveedor {provider_name} ya existe."}
+        
+        # PUSH: dedup off por defecto (ya tienen dedup interno o no lo necesitan)
+        # PULL: dedup on por defecto (filtra alarmas repetidas cada ciclo)
+        p_type = payload.get("provider_type", "pull").lower()
+        if p_type not in ("push", "pull"):
+            p_type = "pull"
+        dedup_default = (p_type == "pull")
             
         new_prod = ProviderConfig(
             provider_name=provider_name,
@@ -82,7 +90,9 @@ def create_provider(payload: dict, _: None = Depends(verify_dashboard_auth)):
             is_active=False,
             use_mock=True,
             queue_backend="sqlite",
-            mapping_schema={}
+            mapping_schema={},
+            provider_type=p_type,
+            enable_state_dedup=dedup_default
         )
         new_test = ProviderConfig(
             provider_name=provider_name,
@@ -90,7 +100,9 @@ def create_provider(payload: dict, _: None = Depends(verify_dashboard_auth)):
             is_active=True,
             use_mock=True,
             queue_backend="sqlite",
-            mapping_schema={}
+            mapping_schema={},
+            provider_type=p_type,
+            enable_state_dedup=dedup_default
         )
         
         config_db.add_all([new_prod, new_test])
@@ -219,7 +231,9 @@ def get_all_configs(_: None = Depends(verify_dashboard_auth)):
             "use_mock": c.use_mock,
             "purge_interval_min": c.purge_interval_min,
             "run_interval_sec": c.run_interval_sec,
-            "queue_backend": c.queue_backend if hasattr(c, 'queue_backend') and c.queue_backend else "sqlite"
+            "queue_backend": c.queue_backend if hasattr(c, 'queue_backend') and c.queue_backend else "sqlite",
+            "provider_type": getattr(c, 'provider_type', 'pull') or 'pull',
+            "enable_state_dedup": bool(getattr(c, 'enable_state_dedup', True))
         } for c in configs]
     finally:
         db.close()
@@ -254,6 +268,9 @@ def update_configs(updates: List[ConfigUpdate], _: None = Depends(verify_dashboa
                 conf.purge_interval_min = u.purge_interval_min
                 conf.run_interval_sec = u.run_interval_sec
                 conf.queue_backend = u.queue_backend.lower()
+                # Guardar toggle de deduplicación de estado
+                if hasattr(conf, 'enable_state_dedup'):
+                    conf.enable_state_dedup = u.enable_state_dedup
         db.commit()
         return {"status": "ok"}
     finally:

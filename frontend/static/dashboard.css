@@ -539,6 +539,17 @@
         input:checked + .slider { background-color: var(--color-green-vibrant); }
         input:checked + .slider:before { transform: translateX(26px); }
 
+        /* Centrado del toggle de deduplicaci\u00f3n en celdas de tabla */
+        td.center-switch {
+            text-align: center;
+            vertical-align: middle;
+        }
+        td.center-switch .switch {
+            margin: 0 auto;
+            display: inline-block;
+            vertical-align: middle;
+        }
+
     
         /* ESTILOS IPAAS STUDIO */
         

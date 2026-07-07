@@ -1090,6 +1090,15 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
                                     <option value="redis" ${c.queue_backend === 'redis' ? 'selected' : ''}>Redis</option>
                                 </select>
                             </td>
+                            <td class="center-switch">
+                                <label class="switch" title="${(c.provider_type || 'pull').toLowerCase() === 'push'
+                                    ? 'PUSH: activar solo si el proveedor envía estado continuo (no transiciones)'
+                                    : 'PULL: filtra sensores repetidos, manteniendo posición GPS'}"
+                                    style="display: inline-block; margin: 0 auto;">
+                                    <input type="checkbox" id="dedup_${c._originalIdx}" ${c.enable_state_dedup ? 'checked' : ''}>
+                                    <span class="slider"></span>
+                                </label>
+                            </td>
                         `;
                         tbody.appendChild(tr);
                     });
@@ -1110,7 +1119,8 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
                 webhook_auth_header: document.getElementById(`webhook_header_${idx}`) ? document.getElementById(`webhook_header_${idx}`).value : null,
                 purge_interval_min: parseInt(document.getElementById(`purge_${idx}`).value) || 15,
                 run_interval_sec: parseInt(document.getElementById(`run_int_${idx}`).value) || 5,
-                queue_backend: document.getElementById(`queue_${idx}`).value
+                queue_backend: document.getElementById(`queue_${idx}`).value,
+                enable_state_dedup: document.getElementById(`dedup_${idx}`) ? document.getElementById(`dedup_${idx}`).checked : c.enable_state_dedup
             }));
 
             try {
