@@ -23,6 +23,7 @@ class ProviderConfig(Base):
     fetch_config_enc = Column(String, nullable=True) # Text en el spec, pero String funciona igual o TEXT
     webhook_auth_secret_enc = Column(String, nullable=True)
     webhook_auth_header = Column(String, default="x-api-key")
+    enable_state_dedup = Column(Boolean, default=True)
 
 class ProviderDictionary(Base):
     """Almacena pares Key-Value del diccionario de metadatos (Ej. IMEI -> Placa)."""

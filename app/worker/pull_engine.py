@@ -216,6 +216,7 @@ async def telemetry_poll_loop(provider_name: str, env: str):
                 
             mapping_schema = config.mapping_schema or {}
             interval_sec = config.run_interval_sec or 30
+            enable_state_dedup = config.enable_state_dedup
             db_global.close()
             
             if not fetch_config.get("url"):
@@ -240,10 +241,10 @@ async def telemetry_poll_loop(provider_name: str, env: str):
                     fc["url"] += f"{separator}imeis={','.join(batch)}"
                         
                     data = await execute_fetch(fc)
-                    await process_and_enqueue(provider_name, env, data, mapping_schema)
+                    await process_and_enqueue(provider_name, env, data, mapping_schema, enable_state_dedup)
             else:
                 data = await execute_fetch(fetch_cfg)
-                await process_and_enqueue(provider_name, env, data, mapping_schema)
+                await process_and_enqueue(provider_name, env, data, mapping_schema, enable_state_dedup)
 
             await asyncio.sleep(interval_sec)
             
@@ -251,7 +252,7 @@ async def telemetry_poll_loop(provider_name: str, env: str):
             logger.error(f"[{provider_name.upper()}-{env}] Error en Sondeo PULL: {e}")
             await asyncio.sleep(60)
 
-async def process_and_enqueue(provider_name: str, env: str, data: dict|list, mapping_schema: dict):
+async def process_and_enqueue(provider_name: str, env: str, data: dict|list, mapping_schema: dict, enable_state_dedup: bool = True):
     from app.core.auditor import log_raw_payload
     
     items = []
@@ -274,6 +275,10 @@ async def process_and_enqueue(provider_name: str, env: str, data: dict|list, map
 
     db_provider = get_session(provider_name, env)
     from app.worker.processor import trigger_worker
+    from app.core.state_dedup import should_emit_event, get_base_code
+    
+    base_code = get_base_code(mapping_schema)
+    
     try:
         events_to_add = []
         for item in items:
@@ -293,6 +298,16 @@ async def process_and_enqueue(provider_name: str, env: str, data: dict|list, map
 
             # Agregar todos los eventos generados por este item
             for canonical in canonical_list:
+                if not should_emit_event(
+                    provider=provider_name,
+                    env=env,
+                    chassis=canonical.chassis_number,
+                    code=canonical.code,
+                    base_code=base_code,
+                    enabled=enable_state_dedup
+                ):
+                    continue
+                    
                 events_to_add.append(NormalizedRCEvent(
                     provider=provider_name,
                     status="pending",
