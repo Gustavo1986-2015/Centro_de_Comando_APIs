@@ -1077,6 +1077,12 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
                                     </span>
                                 </div>
                             </td>
+                            <td>
+                                <label class="switch" title="Filtra eventos de sensor repetidos, manteniendo posición GPS siempre. Solo para PULL. Default: activado.">
+                                    <input type="checkbox" id="dedup_${c._originalIdx}" ${c.enable_state_dedup !== false ? 'checked' : ''} ${c.provider_name.toLowerCase() === 'schmitz' ? 'disabled' : ''}>
+                                    <span class="slider"></span>
+                                </label>
+                            </td>
                             <td>${c.provider_name.toLowerCase() === 'protrack' ? '<input class="form-control" type="text" disabled value="--- N/A ---" style="width: 100px; color: var(--color-gray); background: var(--level-1); text-align: center; border: 1px dashed var(--card-border);" title="No aplica para proveedores PULL">' : `<input class="form-control" type="text" id="webhook_header_${c._originalIdx}" value="${c.webhook_auth_header || 'x-api-key'}" style="width: 100px;">`}</td>
                             <td>${c.provider_name.toLowerCase() === 'protrack' ? '<input class="form-control" type="text" disabled value="--- N/A (Es PULL) ---" style="color: var(--color-gray); background: var(--level-1); font-style: italic; border: 1px dashed var(--card-border);" title="No aplica para proveedores PULL">' : `<input class="form-control" type="password" id="webhook_auth_${c._originalIdx}" placeholder="${c.has_webhook_auth ? '•••••••• (Cifrado)' : ''}" title="Dejar vacío para mantener el actual">`}</td>
                             <td><input class="form-control" type="text" id="user_${c._originalIdx}" value="${c.rc_user || ''}"></td>

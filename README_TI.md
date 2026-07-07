@@ -10,6 +10,7 @@ Como cada proveedor manda la información en su propio idioma y a su propio ritm
 1. **Recibir todo el caos:** Atrapa la información de los camiones, ya sea porque el proveedor nos la "empuja" (Webhooks) o porque nosotros vamos a buscarla de forma programada (PULL).
 2. **Traducirlo a un formato único:** Convierte todo a un estándar que nosotros entendemos (Modelo Canónico) mediante *Mappers* aislados por proveedor.
 3. **Enviarlo de forma ordenada y segura:** En lugar de bombardear a Recurso Confiable con miles de datos por segundo y correr el riesgo de tirarlo, el sistema forma una "fila" (cola de procesamiento) y va entregando los datos de a poco y de forma constante.
+4. **Filtrar eventos redundantes (PULL):** Para APIs que retornan el estado completo en cada ciclo (ej. motor apagado repetido), el motor de *Deduplicación de Estado* filtra alarmas idénticas y solo notifica transiciones reales, evitando inundar a RC con datos inútiles.
 
 ---
 
@@ -185,7 +186,7 @@ pip install pytest pytest-asyncio
 
 # Ejecutar suite completa
 pytest tests/
-# Output esperado: 25 passed in ~3s
+# Output esperado: 34 passed in ~5s
 ```
 
 Ver `docs/TESTING.md` para detalles de aislamiento y cómo agregar tests para APIs nuevas.
