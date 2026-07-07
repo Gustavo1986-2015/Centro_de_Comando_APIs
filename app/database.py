@@ -71,6 +71,24 @@ def check_and_migrate_db():
             if "webhook_auth_header" not in columns:
                 cursor.execute("ALTER TABLE provider_config ADD COLUMN webhook_auth_header TEXT DEFAULT 'x-api-key'")
                 conn.commit()
+
+            # Migración: enable_state_dedup (Anti-State Flooding para PULL)
+            if "enable_state_dedup" not in columns:
+                cursor.execute("ALTER TABLE provider_config ADD COLUMN enable_state_dedup BOOLEAN DEFAULT 1")
+                conn.commit()
+
+            # Migración: provider_type (push | pull)
+            if "provider_type" not in columns:
+                cursor.execute("ALTER TABLE provider_config ADD COLUMN provider_type TEXT DEFAULT 'pull'")
+                # Setear tipos conocidos
+                cursor.execute("UPDATE provider_config SET provider_type='push' WHERE provider_name='schmitz'")
+                cursor.execute("UPDATE provider_config SET provider_type='pull' WHERE provider_name='protrack'")
+                # PUSH: dedup OFF por defecto (el mapper de Schmitz ya tiene dedup interno)
+                # PULL: dedup ON por defecto (filtra alarmas repetidas)
+                cursor.execute("UPDATE provider_config SET enable_state_dedup=0 WHERE provider_type='push'")
+                cursor.execute("UPDATE provider_config SET enable_state_dedup=1 WHERE provider_type='pull'")
+                conn.commit()
+                logger.info("Migración: provider_type añadido. Schmitz=push (dedup off), Protrack=pull (dedup on).")
                 
             # Migración: cifrar campos legacy plaintext
             cursor.execute("PRAGMA table_info(provider_config)")

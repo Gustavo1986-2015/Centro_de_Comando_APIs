@@ -56,8 +56,12 @@ def _validate_dynamic_auth(
         mapping_schema = config.mapping_schema or {}
         if not mapping_schema:
             raise HTTPException(status_code=400, detail="El proveedor no tiene un esquema visual configurado (mapping_schema).")
-            
-        return mapping_schema
+        
+        # Pasar configuración de dedup junto con mapping_schema
+        return {
+            "mapping_schema": mapping_schema,
+            "enable_state_dedup": bool(getattr(config, 'enable_state_dedup', False)),
+        }
     finally:
         db_global.close()
 
@@ -109,12 +113,16 @@ async def dynamic_webhook_receive(
     provider_name: str,
     request: Request,
     env: str = Query("prod", description="Entorno de destino: test o prod"),
-    mapping_schema: dict = Depends(_validate_dynamic_auth)
+    auth_config: dict = Depends(_validate_dynamic_auth)
 ):
     """
     Endpoint iPaaS Universal: Recibe un payload JSON de cualquier proveedor configurado.
     Extrae la data usando su mapping_schema desde la DB, y lo encola.
+    Si el proveedor tiene enable_state_dedup=True, filtra eventos de sensor repetidos
+    (Anti-State Flooding) antes de persistir.
     """
+    mapping_schema = auth_config["mapping_schema"]
+    enable_dedup = auth_config["enable_state_dedup"]
 
     # 2. Atrapar el Payload JSON
     try:
@@ -136,6 +144,30 @@ async def dynamic_webhook_receive(
         logger.warning(f"Excepción capturada en dynamic_webhook: {e}")
         logger.error(f"Error en DynamicMapper para {provider_name}: {e}")
         raise HTTPException(status_code=422, detail=f"Fallo al mapear los datos: {e}")
+
+    # 3.5 Deduplicación de Estado (Anti-State Flooding) — solo si el toggle está activo
+    # NOTA: schmitz.py NO pasa por aquí (tiene su propio router /Json/Data con dedup interno).
+    if enable_dedup and canonical_events:
+        from app.core.state_dedup import should_emit_event, get_base_code
+        base_code = get_base_code(mapping_schema)
+        original_count = len(canonical_events)
+        canonical_events = [
+            ev for ev in canonical_events
+            if should_emit_event(
+                provider=provider_name,
+                env=env,
+                chassis=ev.chassis_number,
+                code=ev.code,
+                base_code=base_code,
+                enabled=True
+            )
+        ]
+        filtered = original_count - len(canonical_events)
+        if filtered > 0:
+            logger.info(f"[DEDUP] {provider_name}/{env}: {filtered} evento(s) suprimidos (sin transición de estado).")
+
+    if not canonical_events:
+        return {"status": "ok", "message": "Todos los eventos fueron suprimidos por deduplicación de estado.", "events_count": 0}
 
     # 4. Guardar en Base de Datos Específica / Cola usando ThreadPool para no bloquear
     await run_in_threadpool(_save_dynamic_events, provider_name, env, canonical_events, payload)

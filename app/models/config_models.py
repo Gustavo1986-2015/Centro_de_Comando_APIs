@@ -24,6 +24,10 @@ class ProviderConfig(Base):
     webhook_auth_secret_enc = Column(String, nullable=True)
     webhook_auth_header = Column(String, default="x-api-key")
 
+    # Tipo de ingesta y deduplicación de estado
+    provider_type = Column(String, default="pull")       # "push" | "pull"
+    enable_state_dedup = Column(Boolean, default=True)   # Anti-State Flooding (PULL ON, PUSH OFF por migración)
+
 class ProviderDictionary(Base):
     """Almacena pares Key-Value del diccionario de metadatos (Ej. IMEI -> Placa)."""
     __tablename__ = "provider_dictionary"
