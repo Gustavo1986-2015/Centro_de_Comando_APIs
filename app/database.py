@@ -214,7 +214,12 @@ def get_engine(provider: str, env: str = "prod"):
         @event.listens_for(engine, "connect")
         def set_sqlite_pragma(dbapi_connection, connection_record):
             cursor = dbapi_connection.cursor()
-            cursor.execute("PRAGMA journal_mode=WAL")
+            # WAL mode es persistente — no necesita setearse en cada conexión.
+            # Solo setear si no está ya en WAL (evita race condition bajo carga en Docker).
+            try:
+                cursor.execute("PRAGMA journal_mode=WAL")
+            except Exception:
+                pass  # Ya está en WAL o transient lock — ignorar
             cursor.execute("PRAGMA synchronous=NORMAL")
             cursor.execute("PRAGMA busy_timeout=3000")
             cursor.close()
