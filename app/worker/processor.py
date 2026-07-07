@@ -863,6 +863,8 @@ async def worker_loop():
 
     running_providers = set()
     active_tasks = []
+    import time
+    last_cleanup = time.time()
 
     while True:
         try:
@@ -879,6 +881,13 @@ async def worker_loop():
                     from app.worker.pull_engine import dictionary_sync_loop, telemetry_poll_loop
                     active_tasks.append(asyncio.create_task(dictionary_sync_loop(provider_name, env)))
                     active_tasks.append(asyncio.create_task(telemetry_poll_loop(provider_name, env)))
+            
+            # Limpieza periódica del cache de deduplicación de estado
+            if time.time() - last_cleanup > 3600:
+                from app.core.state_dedup import cleanup_stale_entries
+                await asyncio.to_thread(cleanup_stale_entries)
+                last_cleanup = time.time()
+                
         except Exception as e:
             logger.error(f"Error en el watchdog de workers: {e}")
 
