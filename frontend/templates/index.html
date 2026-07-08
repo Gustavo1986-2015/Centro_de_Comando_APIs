@@ -607,6 +607,21 @@
                     </div>
                 </div>
 
+                <div style="background: rgba(16, 185, 129, 0.08); border: 1px solid rgba(16, 185, 129, 0.3); border-radius: 8px; padding: 12px; margin: 10px 0;">
+                    <h4 style="color: #10b981; margin: 0 0 8px 0; font-size: 0.9rem;">📋 Deduplicación de Estado — Cómo funciona</h4>
+                    <p style="color: #cbd5e1; font-size: 0.82rem; margin: 0 0 6px 0;">
+                        El Hub envía <strong>posición GPS siempre</strong> (código base). Los sensores se filtran para evitar spam a RC:
+                    </p>
+                    <ul style="color: #94a3b8; font-size: 0.8rem; margin: 0; padding-left: 18px;">
+                        <li><strong style="color: #10b981;">Tipo "Estado":</strong> filtra repeticiones (ej: Motor Apagado cada minuto → solo 1 vez). Detecta transiciones automáticamente.</li>
+                        <li><strong style="color: #ef4444;">Tipo "Momentáneo":</strong> siempre emite (ej: SOS, impacto, geofence). No se filtra nunca.</li>
+                        <li><strong style="color: #3b82f6;">Dedup Key:</strong> agrupa estados opuestos del mismo sensor. Ej: puerta abierta (code 10) y cerrada (code 34) comparten key <code>doorstatus</code>. Así el sistema detecta que abrir→cerrar→abrir son transiciones reales.</li>
+                    </ul>
+                    <p style="color: #64748b; font-size: 0.78rem; margin: 6px 0 0 0;">
+                        💡 Si dejás "Dedup Key" vacío, cada código se trata independientemente (las transiciones 1→0→1 pueden filtrarse incorrectamente).
+                    </p>
+                </div>
+
                 <!-- Lista de Trigger Rules -->
                 <div style="font-size: 0.75rem; color: var(--color-gray-label); display: grid; grid-template-columns: 1fr 120px 1fr 1.5fr 1fr 100px 1fr auto; gap: 0.5rem; padding: 0 0.6rem; margin-bottom: 0.4rem;">
                     <span>Campo del Payload</span>
