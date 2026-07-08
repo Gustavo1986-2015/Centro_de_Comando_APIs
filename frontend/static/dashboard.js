@@ -1019,7 +1019,47 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
                 `;
                 tbody.appendChild(tr);
             });
+            
+            applyChassisSearch(); // Apply search if input exists
         }
+        
+        function applyChassisSearch() {
+            const input = document.getElementById('search-chassis');
+            if (!input) return;
+            const searchTerm = input.value.toLowerCase().trim();
+            const tbody = document.getElementById('recent-table-body');
+            if (!tbody) return;
+            
+            const rows = tbody.querySelectorAll('tr');
+            let visibleCount = 0;
+            
+            rows.forEach(row => {
+                // Ignore empty state rows
+                if (row.cells.length === 1) return;
+                
+                const chassisCell = row.cells[1]; // Index 1 is "Activo / Patente"
+                if (!chassisCell) return;
+                
+                const chassisText = chassisCell.textContent.toLowerCase();
+                if (searchTerm === '' || chassisText.includes(searchTerm)) {
+                    row.style.display = '';
+                    visibleCount++;
+                } else {
+                    row.style.display = 'none';
+                }
+            });
+            
+            const countEl = document.getElementById('event-count');
+            if (countEl) {
+                const total = rows.length > 0 && rows[0].cells.length > 1 ? rows.length : 0;
+                countEl.textContent = searchTerm === '' 
+                    ? `${total} eventos` 
+                    : `${visibleCount} de ${total} eventos`;
+            }
+        }
+
+        document.getElementById('search-chassis')?.addEventListener('input', applyChassisSearch);
+
         
         // UI Helpers
         // Configuración
@@ -1334,8 +1374,33 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
             info.textContent = 'Mostrando 0 registros.';
             badge.style.display = 'none';
             
+            const searchContainer = document.getElementById('db-search-container');
+            if (tableName === 'normalized_rc_events') {
+                if (!document.getElementById('db-search-input')) {
+                    searchContainer.innerHTML = `<input type="text" id="db-search-input" placeholder="🔍 Buscar por placa/IMEI..." 
+                       style="background: #1e293b; border: 1px solid #334155; color: #e2e8f0; 
+                              padding: 6px 12px; border-radius: 6px; margin-bottom: 10px; width: 300px;">`;
+                    
+                    document.getElementById('db-search-input').addEventListener('input', function(e) {
+                        clearTimeout(window.searchDbTimeout);
+                        window.searchDbTimeout = setTimeout(() => {
+                            loadQueryData();
+                        }, 500);
+                    });
+                }
+            } else {
+                searchContainer.innerHTML = '';
+            }
+
+            const searchInput = document.getElementById('db-search-input');
+            const searchTerm = searchInput && tableName === 'normalized_rc_events' ? searchInput.value.trim() : '';
+
             try {
-                const res = await fetch(`/api/db-viewer/query?db_name=${encodeURIComponent(dbName)}&table=${encodeURIComponent(tableName)}&limit=50&offset=0`);
+                let url = `/api/db-viewer/query?db_name=${encodeURIComponent(dbName)}&table=${encodeURIComponent(tableName)}&limit=50&offset=0`;
+                if (searchTerm) {
+                    url += `&search=${encodeURIComponent(searchTerm)}`;
+                }
+                const res = await fetch(url);
                 const data = await res.json();
                 if(data.error) throw new Error(data.error);
 
