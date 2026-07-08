@@ -150,6 +150,14 @@
                     <button class="btn-save" onclick="downloadExcel()" style="background: #10B981; color: white; padding: 4px 8px;" title="Descargar registros filtrados en formato Excel (CSV)">📥 Descargar Excel</button>
                 </div>
             </div>
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                <div style="display: flex; align-items: center; gap: 10px;">
+                    <span id="event-count" style="color: #94a3b8; font-size: 0.85rem;">Cargando...</span>
+                    <input type="text" id="search-chassis" placeholder="🔍 Buscar por placa o IMEI..." 
+                           style="background: #1e293b; border: 1px solid #334155; color: #e2e8f0; 
+                                  padding: 6px 12px; border-radius: 6px; font-size: 0.85rem; width: 250px;">
+                </div>
+            </div>
             <div class="table-container">
                 <table>
                     <thead>
@@ -377,6 +385,8 @@
                     <button class="btn-save" onclick="loadQueryData()" style="height: 42px;">Consultar Datos</button>
                 </div>
             </div>
+            
+            <div id="db-search-container"></div>
 
             <div class="table-container">
                 <table id="db-viewer-table">

@@ -83,7 +83,14 @@ def get_tables(db_name: str = Query(...), _: None = Depends(verify_dashboard_aut
             conn.close()
 
 @router.get("/api/db-viewer/query")
-def execute_query(db_name: str = Query(...), table: str = Query(...), limit: int = 50, offset: int = 0, _: None = Depends(verify_dashboard_auth)):
+def execute_query(
+    db_name: str = Query(...), 
+    table: str = Query(...), 
+    limit: int = 50, 
+    offset: int = 0,
+    search: str = Query(None),
+    _: None = Depends(verify_dashboard_auth)
+):
     """Retorna los datos y las columnas de una tabla seleccionada. Incluye rowid para edición."""
     db_path = _resolve_db_path(db_name)
     if not db_path:
@@ -98,8 +105,15 @@ def execute_query(db_name: str = Query(...), table: str = Query(...), limit: int
         if not re.match(r'^[a-zA-Z0-9_]+$', table):
             return {"error": "Nombre de tabla inválido"}
         
+        search_clause = ""
+        search_params = []
+        if search and table == "normalized_rc_events":
+            search_clause = " WHERE chassis_number LIKE ? OR raw_data LIKE ?"
+            search_params = [f"%{search}%", f"%{search}%"]
+        
         # Incluir rowid como identificador único universal de SQLite (funciona aunque no haya PK)
-        cursor.execute(f"SELECT rowid, * FROM {table} LIMIT ? OFFSET ?", (limit, offset))
+        query = f"SELECT rowid, * FROM {table}{search_clause} LIMIT ? OFFSET ?"
+        cursor.execute(query, search_params + [limit, offset])
         rows = cursor.fetchall()
         
         # Obtener los nombres de las columnas (prefijado con __rowid__ para el frontend)
@@ -107,7 +121,8 @@ def execute_query(db_name: str = Query(...), table: str = Query(...), limit: int
         columns = ["__rowid__"] + [col[1] for col in cursor.fetchall()]
         
         # Obtener conteo total
-        cursor.execute(f"SELECT COUNT(*) FROM {table}")
+        count_query = f"SELECT COUNT(*) FROM {table}{search_clause}"
+        cursor.execute(count_query, search_params)
         total = cursor.fetchone()[0]
         
         return {
