@@ -1078,9 +1078,7 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
                                 </div>
                             </td>
                             <td class="center-switch">
-                                <label class="switch" title="${(c.provider_type || 'pull').toLowerCase() === 'push'
-                                    ? 'PUSH: activar solo si el proveedor envía estado continuo (no transiciones). SOS siempre emite.'
-                                    : 'PULL: filtra sensores repetidos. SOS y eventos momentáneos siempre emiten. Transiciones detectadas.'}" style="display: inline-block; margin: 0 auto;">
+                                <label class="switch" title="Control maestro: activa/desactiva la deduplicación para este proveedor. Si está OFF, pasan TODOS los eventos. Si está ON, aplica las reglas de Tipo y Dedup Key configuradas en 'Reglas de Disparo'." style="display: inline-block; margin: 0 auto;">
                                     <input type="checkbox" id="dedup_${c._originalIdx}" ${c.enable_state_dedup !== false ? 'checked' : ''}>
                                     <span class="slider"></span>
                                 </label>
@@ -1744,8 +1742,8 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
                     <input type="text"  class="form-control" style="font-size:0.8rem;" value="${r.value   || '1'}" placeholder="valor (ej: 1)"    onchange="updateRule('${r.id}','value',   this.value)">
                     <input type="text"  class="form-control" style="font-size:0.8rem;" value="${r.label   || ''}" placeholder="descripción"        onchange="updateRule('${r.id}','label',   this.value)">
                     <input type="text"  class="form-control" style="font-size:0.8rem;" value="${r.rc_code || ''}" placeholder="código RC"          onchange="updateRule('${r.id}','rc_code', this.value)">
-                    <select title="Estado: filtra repeticiones (motor, puerta). Momentáneo: siempre emite (SOS, crash)." class="form-control" style="font-size:0.8rem;" onchange="updateRule('${r.id}','event_type',this.value)">${evTypeOptions}</select>
-                    <input type="text"  class="form-control" style="font-size:0.8rem;" value="${r.dedup_key || ''}" placeholder="ej: doorstatus" title="Agrupa estados mutuamente excluyentes. Ej: code=10 (abierto) y code=34 (cerrado) con key='door'. Vacío = usa rc_code." onchange="updateRule('${r.id}','dedup_key',this.value)">
+                    <select title="Estado: filtra repeticiones del mismo código (motor apagado, puerta abierta). Detecta transiciones si usás Dedup Key. Momentáneo: siempre emite (SOS, crash, geofence)." class="form-control" style="font-size:0.8rem;" onchange="updateRule('${r.id}','event_type',this.value)">${evTypeOptions}</select>
+                    <input type="text"  class="form-control" style="font-size:0.8rem;" value="${r.dedup_key || ''}" placeholder="ej: doorstatus" title="Clave de agrupación para estados mutuamente excluyentes del mismo sensor. Ej: doorstatus=1 (code 10) y doorstatus=0 (code 34) deben compartir key 'doorstatus' para que el sistema detecte transiciones (abrir→cerrar→abrir). Si lo dejás vacío, cada código se trata independientemente." onchange="updateRule('${r.id}','dedup_key',this.value)">
                     <div style="display:flex;gap:4px;align-items:center;">
                         <input type="checkbox" ${r.enabled ? 'checked' : ''} title="Activar/desactivar" style="width:16px;height:16px;accent-color:var(--color-green-vibrant);cursor:pointer;" onchange="updateRule('${r.id}','enabled',this.checked)">
                         <button class="btn-delete-rule" onclick="deleteRule('${r.id}')">✕</button>
