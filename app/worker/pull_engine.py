@@ -304,6 +304,7 @@ async def process_and_enqueue(provider_name: str, env: str, data: dict|list, map
                     chassis=canonical.chassis_number,
                     code=canonical.code,
                     base_code=base_code,
+                    mapping_schema=mapping_schema,
                     enabled=enable_state_dedup
                 ):
                     continue

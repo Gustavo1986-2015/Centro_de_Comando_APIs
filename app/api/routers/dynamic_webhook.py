@@ -159,6 +159,7 @@ async def dynamic_webhook_receive(
                 chassis=ev.chassis_number,
                 code=ev.code,
                 base_code=base_code,
+                mapping_schema=mapping_schema,
                 enabled=True
             )
         ]

@@ -189,7 +189,7 @@
                             <th>Entorno</th>
                             <th title="Activa o desactiva por completo el procesamiento de este proveedor.">Activo (Worker)</th>
                             <th title="Si está en SIMULANDO, los datos se procesan pero NO se envían a Recurso Confiable. Útil para pruebas.">Envío Simulado a RC</th>
-                            <th title="Filtra eventos de sensor repetidos, manteniendo posición GPS siempre. Solo para PULL. Default: activado.">Deduplicación de estado (PULL)</th>
+                            <th title="Filtra eventos de sensor repetidos (estado continuo). Momentáneos como SOS siempre emiten. Aplica a PULL. En PUSH activar solo si el proveedor envía estado continuo.">Deduplicación</th>
                             <th title="Nombre de la cabecera HTTP (header) donde el proveedor enviará el PUSH API Key.">PUSH Header</th>
                             <th title="Llave de seguridad que un proveedor PUSH (ej: Schmitz) te enviará para autorizarse. (Cifrado en BD)">PUSH API Key</th>
                             <th title="Usuario de autenticación para la API de Recurso Confiable.">RC Usuario</th>
@@ -197,7 +197,7 @@
                             <th title="Frecuencia en minutos para purgar datos viejos de la base de datos interna.">Purga (min)</th>
                             <th title="Frecuencia en segundos en que el worker escanea y procesa datos nuevos.">Ejecución (seg)</th>
                             <th title="Motor de base de datos usado para la cola interna de procesamiento.">Motor Cola</th>
-                            <th title="Anti-State Flooding: filtra alarmas repetidas (PULL). En PUSH, activar solo si el proveedor envía estado continuo.">Dedup Estado</th>
+
                         </tr>
                     </thead>
                     <tbody id="config-table-body">
@@ -608,12 +608,14 @@
                 </div>
 
                 <!-- Lista de Trigger Rules -->
-                <div style="font-size: 0.75rem; color: var(--color-gray-label); display: grid; grid-template-columns: 1fr 120px 1fr 1.5fr 1fr auto; gap: 0.5rem; padding: 0 0.6rem; margin-bottom: 0.4rem;">
+                <div style="font-size: 0.75rem; color: var(--color-gray-label); display: grid; grid-template-columns: 1fr 120px 1fr 1.5fr 1fr 100px 1fr auto; gap: 0.5rem; padding: 0 0.6rem; margin-bottom: 0.4rem;">
                     <span>Campo del Payload</span>
                     <span>Operador</span>
                     <span>Valor de Activación</span>
                     <span>Descripción del Evento</span>
                     <span>Código RC</span>
+                    <span title="Estado: filtra repeticiones. Momentáneo: siempre emite (SOS, crash).">Tipo</span>
+                    <span title="Agrupa estados mutuamente excluyentes (ej: doorstatus). Vacío = usa rc_code.">Dedup Key</span>
                     <span></span>
                 </div>
 
