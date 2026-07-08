@@ -937,7 +937,7 @@
         /* Reglas de disparo */
         .rule-row {
             display: grid;
-            grid-template-columns: 1fr 120px 1fr 1.5fr 1fr auto;
+            grid-template-columns: 1fr 120px 1fr 1.5fr 1fr 100px 1fr auto;
             gap: 0.5rem;
             align-items: center;
             padding: 0.6rem;

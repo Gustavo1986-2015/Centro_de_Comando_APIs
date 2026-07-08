@@ -1077,9 +1077,11 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
                                     </span>
                                 </div>
                             </td>
-                            <td>
-                                <label class="switch" title="Filtra eventos de sensor repetidos, manteniendo posición GPS siempre. Solo para PULL. Default: activado.">
-                                    <input type="checkbox" id="dedup_${c._originalIdx}" ${c.enable_state_dedup !== false ? 'checked' : ''} ${c.provider_name.toLowerCase() === 'schmitz' ? 'disabled' : ''}>
+                            <td class="center-switch">
+                                <label class="switch" title="${(c.provider_type || 'pull').toLowerCase() === 'push'
+                                    ? 'PUSH: activar solo si el proveedor envía estado continuo (no transiciones). SOS siempre emite.'
+                                    : 'PULL: filtra sensores repetidos. SOS y eventos momentáneos siempre emiten. Transiciones detectadas.'}" style="display: inline-block; margin: 0 auto;">
+                                    <input type="checkbox" id="dedup_${c._originalIdx}" ${c.enable_state_dedup !== false ? 'checked' : ''}>
                                     <span class="slider"></span>
                                 </label>
                             </td>
@@ -1096,15 +1098,7 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
                                     <option value="redis" ${c.queue_backend === 'redis' ? 'selected' : ''}>Redis</option>
                                 </select>
                             </td>
-                            <td class="center-switch">
-                                <label class="switch" title="${(c.provider_type || 'pull').toLowerCase() === 'push'
-                                    ? 'PUSH: activar solo si el proveedor envía estado continuo (no transiciones)'
-                                    : 'PULL: filtra sensores repetidos, manteniendo posición GPS'}"
-                                    style="display: inline-block; margin: 0 auto;">
-                                    <input type="checkbox" id="dedup_${c._originalIdx}" ${c.enable_state_dedup ? 'checked' : ''}>
-                                    <span class="slider"></span>
-                                </label>
-                            </td>
+
                         `;
                         tbody.appendChild(tr);
                     });
@@ -1735,6 +1729,14 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
                     `<option value="${o.value}" ${r.operator === o.value ? 'selected' : ''}>${o.label}</option>`
                 ).join('');
 
+                // event_type: 'state' (default) | 'momentary'
+                const evTypeOptions = [
+                    { value: 'state',     label: 'Estado' },
+                    { value: 'momentary', label: 'Momentáneo' },
+                ].map(o =>
+                    `<option value="${o.value}" ${(r.event_type || 'state') === o.value ? 'selected' : ''}>${o.label}</option>`
+                ).join('');
+
                 return `
                 <div class="rule-row ${r.enabled ? '' : 'disabled'}" id="rulerow-${r.id}">
                     <input type="text"  class="form-control" style="font-size:0.8rem;" value="${r.field   || ''}" placeholder="campo del payload"  onchange="updateRule('${r.id}','field',   this.value)">
@@ -1742,6 +1744,8 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
                     <input type="text"  class="form-control" style="font-size:0.8rem;" value="${r.value   || '1'}" placeholder="valor (ej: 1)"    onchange="updateRule('${r.id}','value',   this.value)">
                     <input type="text"  class="form-control" style="font-size:0.8rem;" value="${r.label   || ''}" placeholder="descripción"        onchange="updateRule('${r.id}','label',   this.value)">
                     <input type="text"  class="form-control" style="font-size:0.8rem;" value="${r.rc_code || ''}" placeholder="código RC"          onchange="updateRule('${r.id}','rc_code', this.value)">
+                    <select title="Estado: filtra repeticiones (motor, puerta). Momentáneo: siempre emite (SOS, crash)." class="form-control" style="font-size:0.8rem;" onchange="updateRule('${r.id}','event_type',this.value)">${evTypeOptions}</select>
+                    <input type="text"  class="form-control" style="font-size:0.8rem;" value="${r.dedup_key || ''}" placeholder="ej: doorstatus" title="Agrupa estados mutuamente excluyentes. Ej: code=10 (abierto) y code=34 (cerrado) con key='door'. Vacío = usa rc_code." onchange="updateRule('${r.id}','dedup_key',this.value)">
                     <div style="display:flex;gap:4px;align-items:center;">
                         <input type="checkbox" ${r.enabled ? 'checked' : ''} title="Activar/desactivar" style="width:16px;height:16px;accent-color:var(--color-green-vibrant);cursor:pointer;" onchange="updateRule('${r.id}','enabled',this.checked)">
                         <button class="btn-delete-rule" onclick="deleteRule('${r.id}')">✕</button>
@@ -1755,13 +1759,15 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
 
         function addTriggerRule() {
             _currentRules.push({
-                id:       _ruleId(),
-                field:    '',
-                operator: 'eq',
-                value:    '1',
-                rc_code:  '',
-                label:    '',
-                enabled:  true
+                id:         _ruleId(),
+                field:      '',
+                operator:   'eq',
+                value:      '1',
+                rc_code:    '',
+                label:      '',
+                enabled:    true,
+                event_type: 'state',   // 'state' | 'momentary'
+                dedup_key:  ''         // vacío = usar rc_code como key
             });
             renderTriggerRules(_currentRules);
         }
