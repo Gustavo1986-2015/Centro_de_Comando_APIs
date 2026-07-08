@@ -59,8 +59,12 @@ class RCSOAPClient:
                 
                 # Configurar timeout explícito para que el worker no se quede colgado
                 session = requests.Session()
-                session.timeout = (5, 25)  # (connect_timeout, read_timeout)
-                transport = Transport(session=session)
+                session.timeout = (5, 25)  # (connect_timeout, read_timeout) — backup
+                transport = Transport(
+                    session=session,
+                    timeout=5,           # connect timeout (segundos)
+                    operation_timeout=25  # read/operation timeout (segundos)
+                )
                 
                 wsdl = endpoint + "?wsdl"
                 cls._global_zeep_client = Client(wsdl, transport=transport)
