@@ -134,7 +134,13 @@
 
         <div class="recent-section">
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
-                <h2>Última Actividad Global <span id="current-filter-label" style="font-size: 0.9rem; font-weight: normal; color: var(--color-yellow); margin-left: 10px;"></span></h2>
+                <div style="display: flex; align-items: center; gap: 1rem;">
+                    <h2 style="margin: 0;">Última Actividad Global <span id="current-filter-label" style="font-size: 0.9rem; font-weight: normal; color: var(--color-yellow); margin-left: 10px;"></span></h2>
+                    <span id="event-count" style="color: #94a3b8; font-size: 0.85rem;">Cargando...</span>
+                    <input type="text" id="search-chassis" placeholder="🔍 Buscar por placa o IMEI..." 
+                           style="background: #1e293b; border: 1px solid #334155; color: #e2e8f0; 
+                                  padding: 6px 12px; border-radius: 6px; font-size: 0.85rem; width: 250px;">
+                </div>
                 <div style="display: flex; gap: 1rem; align-items: center;">
                     <span style="color: var(--color-gray); font-size: 0.9rem;">Filtros:</span>
                     <select id="filter-provider" onchange="setFilterProvider(this.value)" style="background: var(--color-gray-dark); color: white; border: 1px solid var(--color-gray); border-radius: 4px; padding: 4px 8px; cursor: pointer;">
@@ -148,14 +154,6 @@
                     </select>
                     <button class="btn-save" onclick="resetFilters()" style="background: var(--level-2); color: var(--color-text); border: 1px solid var(--card-border); padding: 4px 8px;">Quitar Filtros</button>
                     <button class="btn-save" onclick="downloadExcel()" style="background: #10B981; color: white; padding: 4px 8px;" title="Descargar registros filtrados en formato Excel (CSV)">📥 Descargar Excel</button>
-                </div>
-            </div>
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
-                <div style="display: flex; align-items: center; gap: 10px;">
-                    <span id="event-count" style="color: #94a3b8; font-size: 0.85rem;">Cargando...</span>
-                    <input type="text" id="search-chassis" placeholder="🔍 Buscar por placa o IMEI..." 
-                           style="background: #1e293b; border: 1px solid #334155; color: #e2e8f0; 
-                                  padding: 6px 12px; border-radius: 6px; font-size: 0.85rem; width: 250px;">
                 </div>
             </div>
             <div class="table-container">
