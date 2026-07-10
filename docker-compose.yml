@@ -1,0 +1,113 @@
+# === CONFIGURACIÓN DOCKER COMPOSE PARA PRODUCCIÓN (AWS) ===
+# Instrucciones:
+# 1. Asegúrense de copiar el archivo '.env.example' y renombrarlo a '.env'
+# 2. Llenen los valores en el nuevo '.env' (Usuario, Contraseña, y Master Key vacía para que se auto-genere).
+# 3. Levantar con: docker compose up -d
+# 4. Para reiniciar tras editar código: docker compose restart
+
+services:
+  centro-comando:
+    # Nombre de la imagen y del contenedor
+    image: centro-comando-telematica:latest
+    container_name: centro-comando-app
+    
+    # Le indicamos a Docker que construya la imagen desde el Dockerfile en este mismo directorio
+    build:
+      context: .
+      dockerfile: Dockerfile
+    
+    # Política de reinicio: Si el servidor AWS se reinicia, este contenedor arrancará solo automáticamente.
+    restart: unless-stopped
+    
+    # Cargamos el archivo de configuración secreto (.env)
+    # Importante: Este archivo NUNCA debe subirse a Git.
+    env_file:
+      - .env
+    
+    # Variables de entorno adicionales específicas para el despliegue
+    environment:
+      - APP_ENV=production
+      
+    # Mapeo de Puertos: "puerto_externo:puerto_interno"
+    # El firewall del servidor y el Reverse Proxy (HTTPS/443) deberán redirigir el tráfico hacia este puerto 8000 local.
+    ports:
+      - "8000:8000"
+      
+    # Mapeo de Volúmenes (Persistencia de Datos y Código)
+    # Sintaxis: "./carpeta_local_aws:/carpeta_dentro_del_docker"
+    volumes:
+      - .:/app                 # Sincroniza el código fuente en tiempo real (edición directa en servidor)
+      - ./db:/app/db           # Bases de datos fragmentadas (Sharding)
+      - ./logs:/app/logs       # Logs de la aplicación y sistema
+      - ./audit:/app/audit     # Logs crudos de auditoría JSONL (Forenses)
+    
+    # Usar el CMD del Dockerfile (sin override).
+    # Antes había un "command: bash -c pip install..." que era problemático:
+    #   - Reinstalaba deps en cada restart (ignorando el cache del Dockerfile)
+    #   - Podía instalar versiones no pinnadas (causó el bug de httpx 0.27)
+    #   - Usaba --reload (inestable en producción)
+    # Ahora: las deps se instalan solo al buildear (Dockerfile paso 6).
+    # Si cambiás requirements.txt, hay que rebuildear: docker compose build --no-cache
+    
+    # Limita el tamaño de los logs generados por el mismísimo Docker para que no llene el disco de AWS.
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "3"
+
+
+
+# # === CONFIGURACIÓN DOCKER COMPOSE PARA PRODUCCIÓN (AWS) ===
+# # Instrucciones:
+# # 1. Asegúrense de copiar el archivo '.env.example' y renombrarlo a '.env'
+# # 2. Llenen los valores en el nuevo '.env' (Usuario, Contraseña, y Master Key vacía para que se auto-genere).
+# # 3. Levantar con: docker compose up -d
+
+# services:
+#   centro-comando:
+#     # Nombre de la imagen y del contenedor
+#     image: centro-comando-telematica:latest
+#     container_name: centro-comando-app
+    
+#     # Le indicamos a Docker que construya la imagen desde el Dockerfile en este mismo directorio
+#     build:
+#       context: .
+#       dockerfile: Dockerfile
+    
+#     # Política de reinicio: Si el servidor AWS se reinicia, este contenedor arrancará solo automáticamente.
+#     restart: unless-stopped
+    
+#     # Cargamos el archivo de configuración secreto (.env)
+#     # Importante: Este archivo NUNCA debe subirse a Git.
+#     env_file:
+#       - .env
+    
+#     # Variables de entorno adicionales específicas para el despliegue
+#     environment:
+#       - APP_ENV=production
+      
+#     # Mapeo de Puertos: "puerto_externo:puerto_interno"
+#     # El firewall del servidor y el Reverse Proxy (HTTPS/443) deberán redirigir el tráfico hacia este puerto 8000 local.
+#     ports:
+#       - "8000:8000"
+      
+#     # Mapeo de Volúmenes (Persistencia de Datos y Código)
+#     # Sintaxis: "./carpeta_local_aws:/carpeta_dentro_del_docker"
+#     volumes:
+#       - .:/app                 # Sincroniza el código fuente en tiempo real
+#       - ./db:/app/db           # Bases de datos fragmentadas (Sharding)
+#       - ./logs:/app/logs       # Logs de la aplicación y sistema
+#       - ./audit:/app/audit     # Logs crudos de auditoría JSONL (Forenses)
+      
+#     # Sobrescribir el comando para instalar las dependencias exactas en runtime antes de arrancar
+#     command: bash -c "pip install -r requirements.txt && uvicorn main:app --host 0.0.0.0 --port 8000 --reload"
+
+#     # Limita el tamaño de los logs generados por el mismísimo Docker para que no llene el disco de AWS.
+#     logging:
+#       driver: "json-file"
+#       options:
+#         max-size: "50m"
+#         max-file: "3"
+
+
