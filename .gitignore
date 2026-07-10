@@ -88,7 +88,9 @@ simulador_vivo.py
 
 # Archivos de TI y DevOps
 # (Se remueven Dockerfile y compose del ignore para que suban a GitHub)
+# docs/ se vuelve a ignorar por privacidad
 docs/
+PLAYBOOK_NEW_API.md
 
 # Configuración local de LLM / Agentes
 .agents/
