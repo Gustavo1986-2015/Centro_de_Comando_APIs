@@ -87,9 +87,7 @@ README.md
 simulador_vivo.py
 
 # Archivos de TI y DevOps
-Dockerfile
-docker-compose.yml
-.dockerignore
+# (Se remueven Dockerfile y compose del ignore para que suban a GitHub)
 docs/
 
 # Configuración local de LLM / Agentes

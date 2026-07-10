@@ -1,0 +1,34 @@
+# Ignorar directorios de control de versiones
+.git
+.gitignore
+
+# Ignorar archivos temporales y compilados de Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.venv/
+env.bak/
+venv.bak/
+
+# Ignorar configuración local (el contenedor usará el del servidor AWS)
+.env
+
+# Ignorar las carpetas de datos locales 
+# (No queremos subir la base de datos de pruebas o logs locales de Windows al servidor)
+db/
+logs/
+audit/
+scratch/
+
+# Ignorar herramientas y scripts locales
+scripts/
+simulador_vivo.py
+launcher.py
+
+# Ignorar caché de VSCode u otros IDEs
+.vscode/
+.idea/
