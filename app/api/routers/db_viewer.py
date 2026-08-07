@@ -30,6 +30,30 @@ class CellUpdateRequest(BaseModel):
     new_value: Optional[str]
     password: str  # Revalidación de DASHBOARD_PASSWORD — seguridad real, no cosmética
 
+# Tablas que cada tipo de base debe contener según el esquema vigente
+# (app/database.py: create_all separa los modelos por engine).
+_TABLAS_CONFIG = {"provider_config", "provider_dictionary", "daily_stats", "system_settings"}
+_TABLAS_PROVEEDOR = {"normalized_rc_events"}
+_TABLAS_INTERNAS = {"sqlite_sequence"}
+
+
+def _tabla_es_huerfana(db_rel: str, tabla: str) -> bool:
+    """
+    Indica si una tabla no corresponde al tipo de base donde está.
+
+    Una versión anterior creaba TODOS los modelos en TODOS los engines, así que
+    las bases de proveedor quedaron con las tablas de configuración vacías y
+    viceversa. El esquema actual ya no lo hace, pero esas tablas siguen en disco
+    y aparecen en el selector como si fueran válidas.
+    """
+    if tabla in _TABLAS_INTERNAS:
+        return False
+    if db_rel == "system_config_global.db":
+        return tabla not in _TABLAS_CONFIG
+    # Base de proveedor: {provider}/{env}.db
+    return tabla not in _TABLAS_PROVEEDOR
+
+
 def _resolve_db_path(db_name: str) -> str | None:
     """
     Resuelve y valida la ruta de una base de datos dentro de ./db/.
@@ -52,13 +76,52 @@ def get_databases(_: None = Depends(verify_dashboard_auth)):
     db_dir = "./db"
     if not os.path.exists(db_dir):
         return []
-    # Raíz (system_config_global.db) + subcarpetas de proveedores
-    files = glob.glob(f"{db_dir}/*.db") + glob.glob(f"{db_dir}/**/*.db")
+    # recursive=True es necesario: sin él, ** solo cubre UN nivel de subcarpeta
+    # y una base en db/proveedor/sub/x.db no aparecería en el listado.
+    # El set() deduplica cuando un archivo matchea más de un patrón.
+    patrones = ("*.db", "*.sqlite", "*.sqlite3")
+    archivos = set()
+    for pat in patrones:
+        archivos.update(glob.glob(f"{db_dir}/**/{pat}", recursive=True))
+
     result = []
-    for f in sorted(files):
+    for f in sorted(archivos):
         rel = os.path.relpath(f, db_dir).replace("\\", "/")
-        result.append({"name": rel})
+        try:
+            size_mb = round(os.path.getsize(f) / (1024 * 1024), 2)
+        except OSError:
+            size_mb = None
+        result.append({
+            "name": rel,
+            # Agrupa por proveedor en el selector: db/protrack/prod.db -> "protrack"
+            "group": rel.split("/")[0] if "/" in rel else "global",
+            "size_mb": size_mb,
+            # Marca las bases que el esquema actual no genera. Suelen ser
+            # residuos de versiones anteriores o de corridas de tests, y
+            # confunden al operador porque aparecen junto a las reales.
+            "orphan": _es_huerfana(rel),
+        })
     return result
+
+
+def _es_huerfana(rel: str) -> bool:
+    """
+    Determina si un archivo .db corresponde al esquema vigente.
+
+    Esquema actual (app/database.py):
+      system_config_global.db      archivo maestro en la raíz
+      {provider}/{env}.db          colas operativas por proveedor
+
+    Cualquier otra forma es residual: bases de esquemas viejos o generadas por
+    corridas de tests. No se borran automáticamente (podrían tener datos que el
+    operador quiera rescatar), solo se marcan.
+    """
+    if rel == "system_config_global.db":
+        return False
+    partes = rel.split("/")
+    if len(partes) == 2 and partes[1] in ("prod.db", "test.db"):
+        return False
+    return True
 
 @router.get("/api/db-viewer/tables")
 def get_tables(db_name: str = Query(...), _: None = Depends(verify_dashboard_auth)):
@@ -72,8 +135,26 @@ def get_tables(db_name: str = Query(...), _: None = Depends(verify_dashboard_aut
     try:
         conn = sqlite3.connect(db_path)
         cursor = conn.cursor()
-        cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
-        tables = [row[0] for row in cursor.fetchall()]
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name;")
+        nombres = [row[0] for row in cursor.fetchall()]
+
+        # Conteo por tabla: permite ver de un vistazo cuáles tienen datos sin
+        # tener que consultarlas una por una.
+        tables = []
+        for n in nombres:
+            filas = None
+            if re.match(r'^[a-zA-Z0-9_]+$', n):
+                try:
+                    cursor.execute(f"SELECT COUNT(*) FROM {n}")
+                    filas = cursor.fetchone()[0]
+                except sqlite3.Error:
+                    pass   # tabla interna o corrupta: se lista igual, sin conteo
+            tables.append({
+                "name": n,
+                "rows": filas,
+                "orphan": _tabla_es_huerfana(db_name.replace("\\", "/"), n),
+            })
+
         return {"tables": tables}
     except Exception as e:
         logger.warning(f"Excepción capturada en db_viewer: {e}")
@@ -105,11 +186,24 @@ def execute_query(
         if not re.match(r'^[a-zA-Z0-9_]+$', table):
             return {"error": "Nombre de tabla inválido"}
         
+        # Búsqueda genérica: antes solo funcionaba en normalized_rc_events y
+        # sobre dos columnas fijas. Ahora recorre todas las columnas de texto de
+        # cualquier tabla, así el filtro sirve igual para el diccionario, la
+        # configuración de proveedores o cualquier tabla futura.
         search_clause = ""
         search_params = []
-        if search and table == "normalized_rc_events":
-            search_clause = " WHERE chassis_number LIKE ? OR raw_data LIKE ?"
-            search_params = [f"%{search}%", f"%{search}%"]
+        if search:
+            cursor.execute(f"PRAGMA table_info({table})")
+            # Los nombres vienen del PRAGMA (no del usuario), pero se validan
+            # igual antes de interpolarlos en el SQL.
+            columnas = [
+                c[1] for c in cursor.fetchall()
+                if re.match(r'^[a-zA-Z0-9_]+$', c[1])
+            ]
+            if columnas:
+                condiciones = " OR ".join(f"CAST({c} AS TEXT) LIKE ?" for c in columnas)
+                search_clause = f" WHERE {condiciones}"
+                search_params = [f"%{search}%"] * len(columnas)
         
         # Incluir rowid como identificador único universal de SQLite (funciona aunque no haya PK)
         query = f"SELECT rowid, * FROM {table}{search_clause} LIMIT ? OFFSET ?"
