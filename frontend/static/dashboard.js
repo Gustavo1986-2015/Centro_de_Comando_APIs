@@ -460,6 +460,9 @@
             document.getElementById('view-history').style.display = view === 'history' ? 'flex' : 'none';
             document.getElementById('view-db-viewer').style.display = view === 'db-viewer' ? 'flex' : 'none';
             document.getElementById('view-monitor').style.display = view === 'monitor' ? 'flex' : 'none';
+            if(document.getElementById('view-console')) {
+                document.getElementById('view-console').style.display = view === 'console' ? 'flex' : 'none';
+            }
             if(document.getElementById('view-integrations')) {
                 document.getElementById('view-integrations').style.display = view === 'integrations' ? 'flex' : 'none';
             }
@@ -470,6 +473,9 @@
             document.getElementById('tab-history').classList.toggle('active-tab', view === 'history');
             document.getElementById('tab-db-viewer').classList.toggle('active-tab', view === 'db-viewer');
             document.getElementById('tab-monitor').classList.toggle('active-tab', view === 'monitor');
+            if(document.getElementById('tab-console')) {
+                document.getElementById('tab-console').classList.toggle('active-tab', view === 'console');
+            }
             if(document.getElementById('tab-integrations')) {
                 document.getElementById('tab-integrations').classList.toggle('active-tab', view === 'integrations');
             }
@@ -477,6 +483,9 @@
             toggleMenu(); // Cierra el menú al elegir
  
             if(window.evtSource) { window.evtSource.close(); window.evtSource = null; }
+
+            // El stream de logs solo vive mientras la consola está visible
+            if (view !== 'console') stopConsole();
             
             if (view === 'config') {
                 loadConfig();
@@ -485,6 +494,8 @@
                 loadSimulator();
             } else if (view === 'history') {
                 loadHistory();
+            } else if (view === 'console') {
+                startConsole();
             } else if (view === 'db-viewer') {
                 loadDatabases();
             } else if (view === 'monitor') {
@@ -1431,6 +1442,169 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
         }
 
         // Lógica de Visor de BD y Settings
+        // Estado de paginación del visor de BD. Antes el frontend pedía siempre
+        // limit=50&offset=0, así que solo se veían las primeras 50 filas de
+        // cualquier tabla sin manera de avanzar.
+        const _dbPage = { size: 50, offset: 0, total: 0 };
+
+        function _renderPagination() {
+            const cont = document.getElementById('db-pagination');
+            if (!cont) return;
+
+            if (!_dbPage.total || _dbPage.total <= _dbPage.size) {
+                cont.style.display = _dbPage.total ? 'flex' : 'none';
+            } else {
+                cont.style.display = 'flex';
+            }
+
+            const paginaActual = Math.floor(_dbPage.offset / _dbPage.size) + 1;
+            const totalPaginas = Math.max(Math.ceil(_dbPage.total / _dbPage.size), 1);
+
+            const label = document.getElementById('db-page-label');
+            if (label) label.textContent = `Página ${paginaActual} de ${totalPaginas}`;
+
+            const enPrimera = _dbPage.offset <= 0;
+            const enUltima  = _dbPage.offset + _dbPage.size >= _dbPage.total;
+            ['db-page-first', 'db-page-prev'].forEach(id => {
+                const b = document.getElementById(id); if (b) b.disabled = enPrimera;
+            });
+            ['db-page-next', 'db-page-last'].forEach(id => {
+                const b = document.getElementById(id); if (b) b.disabled = enUltima;
+            });
+        }
+
+        function goToPage(accion) {
+            const totalPaginas = Math.max(Math.ceil(_dbPage.total / _dbPage.size), 1);
+            if (accion === 'first') _dbPage.offset = 0;
+            if (accion === 'prev')  _dbPage.offset = Math.max(_dbPage.offset - _dbPage.size, 0);
+            if (accion === 'next')  _dbPage.offset = _dbPage.offset + _dbPage.size;
+            if (accion === 'last')  _dbPage.offset = (totalPaginas - 1) * _dbPage.size;
+            loadQueryData();
+        }
+
+        function changePageSize() {
+            const sel = document.getElementById('db-page-size');
+            _dbPage.size = parseInt(sel.value, 10) || 50;
+            _dbPage.offset = 0;   // volver al inicio al cambiar el tamaño
+            loadQueryData();
+        }
+
+
+        // ─── Consola de logs en vivo ─────────────────────────────────────────
+        // Evita entrar por SSH al servidor para diagnosticar. Los secretos ya
+        // vienen enmascarados desde el backend (app/core/log_stream.py).
+        const CONSOLE_MAX_LINES = 1000;
+        let _consoleLines = [];
+        let _consoleSource = null;
+
+        const _LEVEL_RANK = { DEBUG: 0, INFO: 1, WARNING: 2, ERROR: 3, CRITICAL: 4 };
+
+        function _consoleStatus(estado) {
+            const el = document.getElementById('console-status');
+            if (!el) return;
+            const mapa = {
+                connected:    ['conectado', 'connected'],
+                connecting:   ['conectando...', 'connecting'],
+                disconnected: ['desconectado', 'disconnected'],
+            };
+            const [texto, cls] = mapa[estado] || mapa.disconnected;
+            el.textContent = texto;
+            el.className = 'console-badge ' + cls;
+        }
+
+        function _pushConsoleLine(registro) {
+            _consoleLines.push(registro);
+            if (_consoleLines.length > CONSOLE_MAX_LINES) {
+                _consoleLines = _consoleLines.slice(-CONSOLE_MAX_LINES);
+            }
+        }
+
+        function renderConsole() {
+            const cont = document.getElementById('console-output');
+            if (!cont) return;
+
+            const filtro = (document.getElementById('console-filter')?.value || '').toLowerCase();
+            const nivel  = document.getElementById('console-level')?.value || 'ALL';
+            const minimo = nivel === 'ALL' ? -1 : (_LEVEL_RANK[nivel] ?? -1);
+
+            const visibles = _consoleLines.filter(l => {
+                if (minimo >= 0 && (_LEVEL_RANK[l.level] ?? 1) < minimo) return false;
+                if (filtro && !(`${l.message} ${l.logger}`.toLowerCase().includes(filtro))) return false;
+                return true;
+            });
+
+            cont.innerHTML = visibles.map(l => {
+                const hora = (l.time || '').split('T')[1]?.split(/[-+]/)[0] || l.time || '';
+                return `<div class="console-line lvl-${(l.level || 'INFO').toLowerCase()}">
+                    <span class="c-time">${hora}</span>
+                    <span class="c-level">${l.level || 'INFO'}</span>
+                    <span class="c-logger">${(l.logger || '').split('.').pop()}</span>
+                    <span class="c-msg">${_escapeHtml(l.message || '')}</span>
+                </div>`;
+            }).join('');
+
+            const contador = document.getElementById('console-count');
+            if (contador) {
+                contador.textContent = visibles.length === _consoleLines.length
+                    ? `${visibles.length} líneas`
+                    : `${visibles.length} de ${_consoleLines.length} líneas (filtrado)`;
+            }
+
+            if (document.getElementById('console-autoscroll')?.checked) {
+                cont.scrollTop = cont.scrollHeight;
+            }
+        }
+
+        function _escapeHtml(txt) {
+            const d = document.createElement('div');
+            d.textContent = txt;
+            return d.innerHTML;
+        }
+
+        function clearConsole() {
+            _consoleLines = [];
+            renderConsole();
+        }
+
+        async function startConsole() {
+            if (_consoleSource) return;   // ya está conectada
+            _consoleStatus('connecting');
+
+            // Carga inicial: últimas líneas para no arrancar en blanco
+            try {
+                const res = await fetch('/api/logs/recent?n=300');
+                const data = await res.json();
+                _consoleLines = data.logs || [];
+                renderConsole();
+            } catch (e) {
+                console.warn('No se pudieron cargar los logs recientes:', e);
+            }
+
+            // Stream de líneas nuevas
+            _consoleSource = new EventSource('/api/logs/stream');
+            _consoleSource.onopen = () => _consoleStatus('connected');
+            _consoleSource.onmessage = (ev) => {
+                try {
+                    _pushConsoleLine(JSON.parse(ev.data));
+                    renderConsole();
+                } catch (e) { /* línea malformada, se ignora */ }
+            };
+            _consoleSource.onerror = () => {
+                _consoleStatus('disconnected');
+                // EventSource reintenta solo; no se cierra manualmente
+            };
+        }
+
+        function stopConsole() {
+            // Se cierra al salir de la pestaña para no mantener una conexión
+            // abierta ni acumular líneas mientras no se está mirando.
+            if (_consoleSource) {
+                _consoleSource.close();
+                _consoleSource = null;
+            }
+            _consoleStatus('disconnected');
+        }
+
         async function loadDatabases() {
             const select = document.getElementById('db-select');
             select.innerHTML = '<option value="">Cargando...</option>';
@@ -1438,9 +1612,40 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
                 const res = await fetch('/api/db-viewer/databases');
                 const dbs = await res.json();
                 select.innerHTML = '<option value="">-- Seleccione BD --</option>';
-                dbs.forEach(db => {
-                    select.innerHTML += `<option value="${db.name}">${db.name}</option>`;
-                });
+
+                // Agrupar por proveedor y separar las residuales: aparecían
+                // mezcladas con las reales y no había forma de distinguirlas.
+                const activas   = dbs.filter(d => !d.orphan);
+                const residuales = dbs.filter(d => d.orphan);
+
+                const etiqueta = (db) => {
+                    const peso = db.size_mb != null ? ` — ${db.size_mb} MB` : '';
+                    return `${db.name}${peso}`;
+                };
+
+                if (activas.length) {
+                    const g = document.createElement('optgroup');
+                    g.label = 'Bases activas';
+                    activas.forEach(db => {
+                        const o = document.createElement('option');
+                        o.value = db.name;
+                        o.textContent = etiqueta(db);
+                        g.appendChild(o);
+                    });
+                    select.appendChild(g);
+                }
+
+                if (residuales.length) {
+                    const g = document.createElement('optgroup');
+                    g.label = 'Residuales (no las genera el esquema actual)';
+                    residuales.forEach(db => {
+                        const o = document.createElement('option');
+                        o.value = db.name;
+                        o.textContent = `⚠ ${etiqueta(db)}`;
+                        g.appendChild(o);
+                    });
+                    select.appendChild(g);
+                }
             } catch(e) {
                 select.innerHTML = '<option value="">Error cargando BDs</option>';
             }
@@ -1459,9 +1664,38 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
                 const data = await res.json();
                 if(data.error) throw new Error(data.error);
                 tableSelect.innerHTML = '<option value="">-- Seleccione Tabla --</option>';
-                data.tables.forEach(t => {
-                    tableSelect.innerHTML += `<option value="${t}">${t}</option>`;
-                });
+                // El backend ahora devuelve objetos {name, rows}: mostrar el
+                // conteo evita tener que consultar tabla por tabla para saber
+                // cuáles tienen datos.
+                // Separar las tablas que no corresponden a este tipo de base:
+                // quedaron de una versión que creaba todos los modelos en todos
+                // los engines. Están vacías y solo generan confusión.
+                const propias   = data.tables.filter(t => !t.orphan);
+                const residuales = data.tables.filter(t => t.orphan);
+
+                const etiquetaTabla = (t) => {
+                    const nombre = typeof t === 'string' ? t : t.name;
+                    const filas  = (typeof t === 'object' && t.rows != null)
+                        ? ` (${t.rows.toLocaleString()} filas)` : '';
+                    return { nombre, texto: `${nombre}${filas}` };
+                };
+
+                const agregarGrupo = (items, label, prefijo = '') => {
+                    if (!items.length) return;
+                    const g = document.createElement('optgroup');
+                    g.label = label;
+                    items.forEach(t => {
+                        const { nombre, texto } = etiquetaTabla(t);
+                        const o = document.createElement('option');
+                        o.value = nombre;
+                        o.textContent = prefijo + texto;
+                        g.appendChild(o);
+                    });
+                    tableSelect.appendChild(g);
+                };
+
+                agregarGrupo(propias, 'Tablas de esta base');
+                agregarGrupo(residuales, 'Residuales (no corresponden a esta base)', '⚠ ');
             } catch(e) {
                 tableSelect.innerHTML = '<option value="">Error cargando tablas</option>';
             }
@@ -1489,15 +1723,16 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
             badge.style.display = 'none';
             
             const searchContainer = document.getElementById('db-search-container');
-            if (tableName === 'normalized_rc_events') {
+            if (tableName) {
                 if (!document.getElementById('db-search-input')) {
-                    searchContainer.innerHTML = `<input type="text" id="db-search-input" placeholder="🔍 Buscar por placa/IMEI..." 
+                    searchContainer.innerHTML = `<input type="text" id="db-search-input" placeholder="🔍 Buscar en cualquier columna..." 
                        style="background: #1e293b; border: 1px solid #334155; color: #e2e8f0; 
                               padding: 6px 12px; border-radius: 6px; margin-bottom: 10px; width: 300px;">`;
                     
                     document.getElementById('db-search-input').addEventListener('input', function(e) {
                         clearTimeout(window.searchDbTimeout);
                         window.searchDbTimeout = setTimeout(() => {
+                            _dbPage.offset = 0;   // nueva búsqueda: volver al inicio
                             loadQueryData();
                         }, 500);
                     });
@@ -1507,10 +1742,12 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
             }
 
             const searchInput = document.getElementById('db-search-input');
-            const searchTerm = searchInput && tableName === 'normalized_rc_events' ? searchInput.value.trim() : '';
+            const searchTerm = searchInput ? searchInput.value.trim() : '';
 
             try {
-                let url = `/api/db-viewer/query?db_name=${encodeURIComponent(dbName)}&table=${encodeURIComponent(tableName)}&limit=50&offset=0`;
+                const limit  = _dbPage.size;
+                const offset = _dbPage.offset;
+                let url = `/api/db-viewer/query?db_name=${encodeURIComponent(dbName)}&table=${encodeURIComponent(tableName)}&limit=${limit}&offset=${offset}`;
                 if (searchTerm) {
                     url += `&search=${encodeURIComponent(searchTerm)}`;
                 }
@@ -1518,6 +1755,9 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
                 const data = await res.json();
                 if(data.error) throw new Error(data.error);
 
+                if (_dbEditorState.table !== tableName || _dbEditorState.db !== dbName) {
+                    _dbPage.offset = 0;   // tabla distinta: volver al inicio
+                }
                 _dbEditorState.db = dbName;
                 _dbEditorState.table = tableName;
                 _dbEditorState.editable = data.editable;
@@ -1550,7 +1790,12 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
                         }).join('') + '</tr>';
                     }).join('');
                 }
-                info.textContent = `Mostrando ${data.rows.length} de ${data.total} registros en "${tableName}". (Límite visual 50)`;
+                // Actualizar el estado de paginación con lo que respondió el backend
+                _dbPage.total = data.total || 0;
+                const desde = data.rows.length ? _dbPage.offset + 1 : 0;
+                const hasta = _dbPage.offset + data.rows.length;
+                info.textContent = `Mostrando ${desde}-${hasta} de ${data.total} registros en "${tableName}".`;
+                _renderPagination();
             } catch(e) {
                 thead.innerHTML = '<tr><th>Error</th></tr>';
                 tbody.innerHTML = `<tr><td style="color:var(--color-red)">${e.message}</td></tr>`;

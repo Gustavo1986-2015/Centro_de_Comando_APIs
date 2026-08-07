@@ -38,6 +38,7 @@
             <li id="tab-history" onclick="switchView('history')">Historial Diario</li>
             <li id="tab-db-viewer" onclick="switchView('db-viewer')">Visor de Base de Datos</li>
             <li id="tab-monitor" onclick="switchView('monitor')">Monitor Interno (APIs)</li>
+            <li id="tab-console" onclick="switchView('console')">Consola en Vivo</li>
         </ul>
     </nav>
 
@@ -395,8 +396,27 @@
                     </tbody>
                 </table>
             </div>
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 1rem; color: var(--color-gray);">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 1rem; color: var(--color-gray); flex-wrap: wrap; gap: 1rem;">
                 <span id="db-viewer-info">Mostrando 0 registros.</span>
+
+                <!-- Paginación: antes el frontend pedía siempre limit=50&offset=0
+                     y no había forma de ver el resto de la tabla. -->
+                <div id="db-pagination" style="display:none; align-items:center; gap:0.5rem;">
+                    <label style="font-size:0.78rem;">Filas:</label>
+                    <select id="db-page-size" class="form-control" onchange="changePageSize()"
+                            style="width:auto; padding:0.3rem 0.6rem; background-color: var(--color-black); cursor:pointer; font-size:0.8rem;">
+                        <option value="50">50</option>
+                        <option value="100">100</option>
+                        <option value="250">250</option>
+                        <option value="500">500</option>
+                    </select>
+                    <button class="db-page-btn" id="db-page-first" onclick="goToPage('first')" title="Primera página">&laquo;</button>
+                    <button class="db-page-btn" id="db-page-prev"  onclick="goToPage('prev')"  title="Anterior">&lsaquo;</button>
+                    <span id="db-page-label" style="font-size:0.8rem; min-width:110px; text-align:center;">Página 1 de 1</span>
+                    <button class="db-page-btn" id="db-page-next" onclick="goToPage('next')" title="Siguiente">&rsaquo;</button>
+                    <button class="db-page-btn" id="db-page-last" onclick="goToPage('last')" title="Última página">&raquo;</button>
+                </div>
+
                 <span id="db-edit-badge" style="display:none; font-size:0.78rem; padding: 0.3rem 0.8rem; border-radius: 20px; font-weight: 700;"></span>
             </div>
 
@@ -415,6 +435,43 @@
                     </div>
                     <p id="db-edit-error" style="color:#f87171; font-size:0.8rem; margin:0.8rem 0 0; display:none;"></p>
                 </div>
+            </div>
+        </div>
+    </main>
+
+    <!-- VISTA CONSOLA EN VIVO -->
+    <main id="view-console" style="display: none;">
+        <div class="recent-section">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1.2rem; flex-wrap:wrap; gap:1rem;">
+                <h2 style="margin:0;">Consola en Vivo
+                    <span id="console-status" class="console-badge disconnected">desconectado</span>
+                </h2>
+                <div style="display:flex; gap:0.6rem; align-items:center; flex-wrap:wrap;">
+                    <input type="text" id="console-filter" placeholder="Filtrar texto..." oninput="renderConsole()"
+                           class="form-control" style="width:200px; padding:0.4rem 0.7rem; font-size:0.82rem;">
+                    <select id="console-level" class="form-control" onchange="renderConsole()"
+                            style="width:auto; padding:0.4rem 0.7rem; font-size:0.82rem; background-color:var(--color-black); cursor:pointer;">
+                        <option value="ALL">Todos los niveles</option>
+                        <option value="ERROR">Solo errores</option>
+                        <option value="WARNING">Advertencias y errores</option>
+                        <option value="INFO">Info y superiores</option>
+                    </select>
+                    <label class="console-toggle" title="Seguir la salida automáticamente">
+                        <input type="checkbox" id="console-autoscroll" checked> Auto-scroll
+                    </label>
+                    <button class="btn-save" onclick="clearConsole()" style="padding:0.4rem 0.9rem; font-size:0.82rem;">Limpiar</button>
+                </div>
+            </div>
+
+            <div style="font-size:0.78rem; color:var(--color-gray); margin-bottom:0.8rem;">
+                Los tokens, firmas y contraseñas se enmascaran antes de salir del servidor.
+            </div>
+
+            <div id="console-output" class="console-output"></div>
+
+            <div style="display:flex; justify-content:space-between; margin-top:0.8rem; font-size:0.78rem; color:var(--color-gray);">
+                <span id="console-count">0 líneas</span>
+                <span>Se conservan las últimas 1000 líneas en memoria</span>
             </div>
         </div>
     </main>
