@@ -1124,3 +1124,108 @@ body.compact-mode .health-chip .health-env    { font-size: 0.55rem; padding: 1px
 .health-resync.fail { color: var(--color-red); border-color: var(--color-red); opacity: 1; }
 
 @keyframes spin { to { transform: rotate(360deg); } }
+
+/* ── Paginación del visor de base de datos ───────────────────────────────── */
+.db-page-btn {
+    background: var(--level-2);
+    border: 1px solid var(--card-border);
+    color: var(--color-text);
+    border-radius: 6px;
+    width: 30px;
+    height: 30px;
+    cursor: pointer;
+    font-size: 0.95rem;
+    line-height: 1;
+    transition: background 0.15s, border-color 0.15s;
+}
+.db-page-btn:hover:not(:disabled) {
+    background: var(--level-3);
+    border-color: var(--color-green-vibrant);
+}
+.db-page-btn:disabled { opacity: 0.3; cursor: default; }
+
+/* ── Consola de logs en vivo ─────────────────────────────────────────────── */
+.console-output {
+    background: #0a0d14;
+    border: 1px solid var(--card-border);
+    border-radius: 10px;
+    height: 62vh;
+    min-height: 340px;
+    overflow-y: auto;
+    padding: 0.8rem 1rem;
+    font-family: "Cascadia Code", "Consolas", "Monaco", monospace;
+    font-size: 0.76rem;
+    line-height: 1.55;
+}
+.console-output::-webkit-scrollbar { width: 10px; }
+.console-output::-webkit-scrollbar-track { background: transparent; }
+.console-output::-webkit-scrollbar-thumb {
+    background: var(--card-border);
+    border-radius: 5px;
+}
+
+.console-line {
+    display: grid;
+    grid-template-columns: 68px 62px 110px 1fr;
+    gap: 0.7rem;
+    padding: 1px 0;
+    border-left: 2px solid transparent;
+    padding-left: 0.5rem;
+    word-break: break-word;
+}
+.console-line:hover { background: rgba(255, 255, 255, 0.03); }
+
+.console-line .c-time   { color: #5c6478; }
+.console-line .c-logger { color: #7c8499; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.console-line .c-msg    { color: #c8cfdd; white-space: pre-wrap; }
+.console-line .c-level  { font-weight: 700; letter-spacing: 0.3px; }
+
+/* Color por severidad: el borde izquierdo permite escanear la columna de un vistazo */
+.console-line.lvl-info     .c-level { color: #60a5fa; }
+.console-line.lvl-warning  .c-level { color: var(--color-yellow); }
+.console-line.lvl-warning  { border-left-color: rgba(234, 179, 8, 0.5); background: rgba(234, 179, 8, 0.04); }
+.console-line.lvl-error    .c-level,
+.console-line.lvl-critical .c-level { color: var(--color-red); }
+.console-line.lvl-error,
+.console-line.lvl-critical { border-left-color: rgba(239, 68, 68, 0.6); background: rgba(239, 68, 68, 0.06); }
+.console-line.lvl-error    .c-msg,
+.console-line.lvl-critical .c-msg { color: #fca5a5; }
+.console-line.lvl-debug    .c-level,
+.console-line.lvl-debug    .c-msg { color: #6b7280; }
+
+.console-badge {
+    font-size: 0.68rem;
+    font-weight: 700;
+    padding: 3px 9px;
+    border-radius: 12px;
+    margin-left: 0.7rem;
+    vertical-align: middle;
+    letter-spacing: 0.4px;
+}
+.console-badge.connected {
+    background: rgba(0, 255, 102, 0.12);
+    color: var(--color-green-bright);
+    border: 1px solid rgba(0, 255, 102, 0.3);
+}
+.console-badge.connecting {
+    background: rgba(234, 179, 8, 0.12);
+    color: var(--color-yellow);
+    border: 1px solid rgba(234, 179, 8, 0.3);
+}
+.console-badge.disconnected {
+    background: rgba(143, 149, 178, 0.1);
+    color: var(--color-gray-label);
+    border: 1px solid var(--card-border);
+}
+
+.console-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    font-size: 0.8rem;
+    color: var(--color-gray-label);
+    cursor: pointer;
+    user-select: none;
+}
+
+body.compact-mode .console-output { height: 70vh; font-size: 0.72rem; }
