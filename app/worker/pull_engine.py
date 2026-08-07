@@ -13,6 +13,8 @@ from app.models.config_models import ProviderConfig, ProviderDictionary
 from app.models.db_models import NormalizedRCEvent
 from app.core.dynamic_mapper import DynamicMapper
 from app.core.crypto import decrypt
+from app.core import provider_health
+from app.core.resync import sleep_or_resync, get_signal
 
 logger = logging.getLogger(__name__)
 
@@ -284,6 +286,7 @@ async def dictionary_sync_loop(provider_name: str, env: str):
           y solo hereda las de fetch_config como fallback.
     """
     logger.info(f"[{provider_name.upper()}-{env}] Iniciando Tarea A: Sincronizador de Diccionario")
+    get_signal(provider_name, env)   # registra la integración como despertable
 
     RETRY_ON_FAILURE_SECONDS = 300   # 5 min
 
@@ -310,7 +313,8 @@ async def dictionary_sync_loop(provider_name: str, env: str):
                 continue
 
             if not enrich.get("enabled") or not enrich.get("url"):
-                await asyncio.sleep(60)
+                provider_health.report_dict_disabled(provider_name, env)
+                await sleep_or_resync(provider_name, env, 60)
                 continue
 
             frequency_hours = int(enrich.get("frequency", 24))
@@ -371,11 +375,19 @@ async def dictionary_sync_loop(provider_name: str, env: str):
                 db_global.query(ProviderDictionary).filter_by(
                     provider_name=provider_name, env=env
                 ).delete()
+                saltados = 0
                 for i in range(len(keys)):
                     k_str = str(keys[i]).strip()
                     if not k_str:
                         continue
-                    v_str = str(vals[i]).strip() or "0"
+                    v_str = str(vals[i]).strip()
+                    # Sin valor de traducción (ej. dispositivo sin patente asignada
+                    # en la plataforma del proveedor) no se guarda la entrada.
+                    # Guardar "0" haría que varios dispositivos distintos colapsen
+                    # en el mismo identificador al llegar a RC.
+                    if not v_str or v_str == "0":
+                        saltados += 1
+                        continue
                     db_global.add(
                         ProviderDictionary(
                             provider_name=provider_name,
@@ -386,22 +398,29 @@ async def dictionary_sync_loop(provider_name: str, env: str):
                     )
                 db_global.commit()
                 sync_ok = True
-                logger.info(
-                    f"[{provider_name.upper()}-{env}] Diccionario actualizado: "
-                    f"{len(keys)} registros guardados."
-                )
+                guardados = len(keys) - saltados
+                provider_health.report_dict_sync_ok(provider_name, env, guardados)
+                msg = f"[{provider_name.upper()}-{env}] Diccionario actualizado: {guardados} registros guardados."
+                if saltados:
+                    msg += (f" {saltados} sin valor de traducción fueron omitidos "
+                            f"(el proveedor no tiene la asignación cargada).")
+                logger.info(msg)
             finally:
                 db_global.close()
 
         except ProviderAuthError as e:
+            provider_health.report_auth_error(provider_name, env, e)
+            provider_health.report_dict_error(provider_name, env, f"auth: {e}")
             logger.error(
                 f"[{provider_name.upper()}-{env}] Diccionario: fallo de autenticación. {e}"
             )
         except ProviderResponseError as e:
+            provider_health.report_dict_error(provider_name, env, e)
             logger.error(
                 f"[{provider_name.upper()}-{env}] Diccionario: el proveedor devolvió error. {e}"
             )
         except Exception as e:
+            provider_health.report_dict_error(provider_name, env, e)
             logger.error(
                 f"[{provider_name.upper()}-{env}] Diccionario: error inesperado: {e}",
                 exc_info=True,
@@ -409,13 +428,18 @@ async def dictionary_sync_loop(provider_name: str, env: str):
 
         # P1-5: dormir el intervalo completo solo si la sincronización tuvo éxito
         if sync_ok:
-            await asyncio.sleep(frequency_hours * 3600)
+            woke = await sleep_or_resync(provider_name, env, frequency_hours * 3600)
         else:
             logger.warning(
                 f"[{provider_name.upper()}-{env}] Diccionario no sincronizado. "
-                f"Reintento en {RETRY_ON_FAILURE_SECONDS}s."
+                f"Reintento en {RETRY_ON_FAILURE_SECONDS}s (o antes si se pide resync)."
             )
-            await asyncio.sleep(RETRY_ON_FAILURE_SECONDS)
+            woke = await sleep_or_resync(provider_name, env, RETRY_ON_FAILURE_SECONDS)
+
+        if woke:
+            logger.info(
+                f"[{provider_name.upper()}-{env}] Resync manual: sincronizando ahora."
+            )
 
 
 def _load_fetch_config(config: ProviderConfig) -> dict:
@@ -455,6 +479,7 @@ async def telemetry_poll_loop(provider_name: str, env: str):
           y ese error terminaba encolado y enviado a RC como evento UNKNOWN.
     """
     logger.info(f"[{provider_name.upper()}-{env}] Iniciando Tarea B: Sondeo PULL Telemetría")
+    provider_health.set_mode(provider_name, env, "pull")
 
     while True:
         interval_sec = 30
@@ -502,6 +527,12 @@ async def telemetry_poll_loop(provider_name: str, env: str):
             finally:
                 db_global.close()
 
+            # Reportar el conteo REAL de la tabla, no solo el de la última sync.
+            # Si el sync falla pero hay datos previos, la integración sigue
+            # operando y el panel debe reflejarlo.
+            if requires_ids:
+                provider_health.report_dict_count(provider_name, env, len(ids))
+
             fetch_cfg = dict(fetch_config)
             url_already_has_ids = "imeis=" in fetch_cfg.get("url", "")
 
@@ -514,8 +545,11 @@ async def telemetry_poll_loop(provider_name: str, env: str):
                     fc["url"] += f"{separator}imeis={','.join(batch)}"
                     data = await execute_fetch(fc)
                     await process_and_enqueue(
-                        provider_name, env, data, mapping_schema, enable_state_dedup
+                        provider_name, env, data, mapping_schema, enable_state_dedup,
+                        require_dict_match=requires_ids
                     )
+                provider_health.report_auth_ok(provider_name, env)
+                provider_health.report_fetch_ok(provider_name, env)
 
             elif not ids and requires_ids and not url_already_has_ids:
                 # P1-6: el diccionario está habilitado pero vacío. No llamar.
@@ -530,22 +564,28 @@ async def telemetry_poll_loop(provider_name: str, env: str):
             else:
                 data = await execute_fetch(fetch_cfg)
                 await process_and_enqueue(
-                    provider_name, env, data, mapping_schema, enable_state_dedup
+                    provider_name, env, data, mapping_schema, enable_state_dedup,
+                    require_dict_match=requires_ids
                 )
+                provider_health.report_auth_ok(provider_name, env)
+                provider_health.report_fetch_ok(provider_name, env)
 
             await asyncio.sleep(interval_sec)
 
         except ProviderAuthError as e:
+            provider_health.report_auth_error(provider_name, env, e)
             logger.error(
                 f"[{provider_name.upper()}-{env}] PULL abortado por fallo de autenticación: {e}"
             )
             await asyncio.sleep(60)
         except ProviderResponseError as e:
+            provider_health.report_fetch_error(provider_name, env, e)
             logger.error(
                 f"[{provider_name.upper()}-{env}] PULL abortado: el proveedor devolvió error: {e}"
             )
             await asyncio.sleep(60)
         except Exception as e:
+            provider_health.report_fetch_error(provider_name, env, e)
             logger.error(
                 f"[{provider_name.upper()}-{env}] Error en Sondeo PULL: {e}", exc_info=True
             )
@@ -558,6 +598,7 @@ async def process_and_enqueue(
     data: dict | list,
     mapping_schema: dict,
     enable_state_dedup: bool = True,
+    require_dict_match: bool = False,
 ):
     """
     Mapea la respuesta del proveedor al modelo canónico y encola los eventos.
@@ -613,12 +654,17 @@ async def process_and_enqueue(
 
     try:
         events_to_add = []
+        descartados = 0
         for item in items:
             try:
                 canonical_list = DynamicMapper.map_payload_multi(
-                    item, mapping_schema, provider_name, env
+                    item, mapping_schema, provider_name, env, require_dict_match
                 )
                 if not canonical_list:
+                    # Puede ser un item sin datos mapeables, o un ID sin traducción
+                    # en el diccionario (ya logueado por el mapper). En ambos casos
+                    # no se encola nada.
+                    descartados += 1
                     continue
             except Exception as e:
                 logger.warning(
@@ -663,6 +709,12 @@ async def process_and_enqueue(
                         vehicle_model=canonical.vehicle_model,
                     )
                 )
+
+        if descartados:
+            logger.warning(
+                f"[{provider_name.upper()}-{env}] {descartados} de {len(items)} registros "
+                f"descartados por falta de traducción en el diccionario."
+            )
 
         if events_to_add:
             db_provider.add_all(events_to_add)
