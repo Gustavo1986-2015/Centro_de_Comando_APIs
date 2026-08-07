@@ -32,3 +32,13 @@ launcher.py
 # Ignorar caché de VSCode u otros IDEs
 .vscode/
 .idea/
+
+# Documentación interna (excluida de Git por privacidad, no debe ir a la imagen pública)
+docs/
+GUIA_INTEGRACION.md
+PLAYBOOK_NEW_API.md
+
+# Ruido de desarrollo
+.pytest_cache/
+.agents/
+tests/
