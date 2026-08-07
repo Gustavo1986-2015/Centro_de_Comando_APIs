@@ -1011,3 +1011,116 @@
                             .switch input:focus + .slider { box-shadow: 0 0 1px var(--color-green-vibrant); }
                             .switch input:checked + .slider:before { transform: translateX(22px); }
                             .slider:before { position: absolute; content: ""; height: 20px; width: 20px; left: 4px; bottom: 4px; background-color: white; transition: .4s; border-radius: 50%; }
+
+/* ── Chips de salud de integraciones ─────────────────────────────────────
+   Un chip por integracion (proveedor + entorno). Reemplaza a los pills
+   sueltos: el entorno SIEMPRE es visible para no confundir prod con test,
+   y el throughput viaja dentro del mismo chip. */
+.health-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    padding: 4px 11px;
+    margin-right: 7px;
+    border-radius: 13px;
+    font-size: 0.74rem;
+    font-weight: 600;
+    letter-spacing: 0.3px;
+    border: 1px solid var(--card-border);
+    background: var(--level-2);
+    cursor: help;
+    transition: background 0.2s, border-color 0.2s;
+    vertical-align: middle;
+}
+.health-chip:hover { background: var(--level-3); }
+
+.health-chip .health-icon { font-size: 0.72rem; line-height: 1; }
+
+.health-chip .health-name {
+    color: var(--color-white);
+    font-weight: 700;
+}
+
+/* El entorno NUNCA se oculta: distinguir prod de test es critico */
+.health-chip .health-env {
+    font-size: 0.6rem;
+    font-weight: 700;
+    letter-spacing: 0.6px;
+    padding: 2px 6px;
+    border-radius: 4px;
+    line-height: 1;
+}
+.health-chip .health-env.env-prod {
+    background: rgba(59, 130, 246, 0.18);
+    color: #93c5fd;
+    border: 1px solid rgba(59, 130, 246, 0.3);
+}
+.health-chip .health-env.env-test {
+    background: rgba(234, 179, 8, 0.15);
+    color: var(--color-yellow);
+    border: 1px solid rgba(234, 179, 8, 0.28);
+}
+
+.health-chip .health-detail {
+    font-weight: 500;
+    font-size: 0.7rem;
+    padding-left: 7px;
+    border-left: 1px solid var(--card-border);
+    white-space: nowrap;
+}
+
+/* Estados semanticos */
+.health-chip.ok { border-color: rgba(0, 255, 102, 0.25); }
+.health-chip.ok .health-icon   { color: var(--color-green-bright); }
+.health-chip.ok .health-detail { color: var(--color-gray-label); }
+
+.health-chip.warn {
+    border-color: rgba(234, 179, 8, 0.4);
+    background: rgba(234, 179, 8, 0.07);
+}
+.health-chip.warn .health-icon,
+.health-chip.warn .health-detail { color: var(--color-yellow); }
+
+.health-chip.error {
+    border-color: rgba(239, 68, 68, 0.5);
+    background: rgba(239, 68, 68, 0.09);
+}
+.health-chip.error .health-icon   { color: var(--color-red); animation: pulsing 2s infinite; }
+.health-chip.error .health-detail { color: var(--color-red); }
+
+/* En modo compacto se reduce el tamano, pero el entorno sigue visible */
+body.compact-mode .health-chip {
+    padding: 3px 8px;
+    font-size: 0.68rem;
+    gap: 5px;
+    margin-right: 5px;
+}
+body.compact-mode .health-chip .health-detail { font-size: 0.65rem; padding-left: 5px; }
+body.compact-mode .health-chip .health-env    { font-size: 0.55rem; padding: 1px 4px; }
+
+/* Boton de resincronizacion manual dentro del chip de salud */
+.health-resync {
+    background: transparent;
+    border: 1px solid currentColor;
+    color: inherit;
+    border-radius: 50%;
+    width: 18px;
+    height: 18px;
+    font-size: 0.72rem;
+    line-height: 1;
+    cursor: pointer;
+    padding: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 0.7;
+    transition: opacity 0.2s, transform 0.2s;
+    margin-left: 2px;
+}
+.health-resync:hover:not(:disabled) { opacity: 1; transform: rotate(90deg); }
+.health-resync:disabled { cursor: default; opacity: 0.5; }
+.health-resync.spinning { animation: spin 0.9s linear infinite; }
+.health-resync.ok   { color: var(--color-green-bright); border-color: var(--color-green-bright); opacity: 1; }
+.health-resync.fail { color: var(--color-red); border-color: var(--color-red); opacity: 1; }
+
+@keyframes spin { to { transform: rotate(360deg); } }

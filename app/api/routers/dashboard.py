@@ -63,6 +63,8 @@ def get_push_stats(provider_key: str | None = None) -> dict:
 
 
 from app.core.auth import verify_dashboard_auth, security
+from app.core.provider_health import get_health_snapshot
+from app.core.resync import request_resync
 
 router = APIRouter(tags=["Dashboard"])
 templates = Jinja2Templates(directory="frontend/templates")
@@ -312,6 +314,7 @@ async def get_stats_data(
         "push_stats":              push_stats,
         "push_per_provider":       push_per_provider,
         "push_sla_target_ms":      PUSH_SLA_MS,
+        "provider_health":         get_health_snapshot(),
         "recent": recent_list,
         "throughput": throughput_per_provider,
         "all_providers": list(set([p.provider_name for p in providers])),
@@ -367,3 +370,22 @@ async def stats_stream(request: Request, _=Depends(verify_dashboard_auth)):
                                       "X-Accel-Buffering": "no"})
 
 
+
+
+@router.post("/api/integrations/{provider}/{env}/resync")
+async def force_resync(provider: str, env: str, _=Depends(verify_dashboard_auth)):
+    """
+    Fuerza la resincronización inmediata del diccionario de una integración.
+
+    Evita tener que esperar el intervalo de reintento (o reiniciar el servicio)
+    después de corregir credenciales o URLs desde el panel de configuración.
+    Es transversal: sirve para cualquier proveedor con diccionario habilitado.
+    """
+    ok = request_resync(provider, env)
+    if not ok:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No hay un worker activo para {provider}/{env}. "
+                   f"Verificá que la integración esté habilitada."
+        )
+    return {"status": "ok", "message": f"Resincronización solicitada para {provider}/{env}."}
