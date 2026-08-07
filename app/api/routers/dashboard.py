@@ -65,6 +65,7 @@ def get_push_stats(provider_key: str | None = None) -> dict:
 from app.core.auth import verify_dashboard_auth, security
 from app.core.provider_health import get_health_snapshot
 from app.core.resync import request_resync
+from app.core.log_stream import read_recent, tail_log
 
 router = APIRouter(tags=["Dashboard"])
 templates = Jinja2Templates(directory="frontend/templates")
@@ -389,3 +390,37 @@ async def force_resync(provider: str, env: str, _=Depends(verify_dashboard_auth)
                    f"Verificá que la integración esté habilitada."
         )
     return {"status": "ok", "message": f"Resincronización solicitada para {provider}/{env}."}
+
+
+# ─── Consola de logs en vivo ────────────────────────────────────────────────
+# Evita tener que entrar por SSH al servidor para diagnosticar. Los valores
+# sensibles (tokens, firmas, contraseñas) se enmascaran en log_stream antes de
+# salir del backend.
+
+@router.get("/api/logs/recent")
+async def logs_recent(
+    n: int = Query(200, ge=1, le=2000),
+    _=Depends(verify_dashboard_auth),
+):
+    """Últimas N líneas del log, para poblar la consola al abrirla."""
+    return {"logs": read_recent(n)}
+
+
+@router.get("/api/logs/stream")
+async def logs_stream(request: Request, _=Depends(verify_dashboard_auth)):
+    """Stream SSE de las líneas nuevas del log a medida que se escriben."""
+
+    async def event_generator():
+        try:
+            async for registro in tail_log():
+                if await request.is_disconnected():
+                    break
+                yield f"data: {json.dumps(registro, ensure_ascii=False)}\n\n"
+        except asyncio.CancelledError:
+            pass
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
