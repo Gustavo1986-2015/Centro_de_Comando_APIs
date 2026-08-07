@@ -5,73 +5,72 @@ Usa Fernet (AES-128-CBC + HMAC-SHA256) con una llave maestra en .env.
 import os
 import logging
 from cryptography.fernet import Fernet, InvalidToken
-from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
 _MASTER_KEY_CACHE = None
+_NO_KEY_WARNED = False
 
-def get_master_key() -> str:
+def get_master_key() -> str | None:
     """
-    Obtiene la llave maestra de .env. Si no existe, la genera automáticamente,
-    la persiste en .env y la cachea en memoria.
+    Obtiene la llave maestra Fernet desde la variable de entorno MASTER_ENC_KEY.
+
+    Devuelve None si no está definida: en ese caso el sistema opera SIN cifrado
+    (las credenciales se guardan y leen en texto plano).
+
+    Lo que NUNCA hace es auto-generar una llave. Generar una llave nueva cuando
+    falta la variable deja ilegibles todas las credenciales cifradas con la
+    llave anterior, sin ningún error evidente: la app arranca bien y los
+    proveedores simplemente dejan de autenticar.
     """
-    global _MASTER_KEY_CACHE
+    global _MASTER_KEY_CACHE, _NO_KEY_WARNED
     if _MASTER_KEY_CACHE:
         return _MASTER_KEY_CACHE
-    
+
     key = os.getenv("MASTER_ENC_KEY")
     if not key:
-        # Auto-generar
-        key = Fernet.generate_key().decode()
-        _persist_key_to_env(key)
-        logger.info("MASTER_ENC_KEY generada automaticamente y guardada en .env")
-        logger.warning("Backupea MASTER_ENC_KEY en un gestor de passwords seguro.")
-    
+        if not _NO_KEY_WARNED:
+            logger.warning(
+                "MASTER_ENC_KEY no está definida: las credenciales de proveedores "
+                "se guardarán SIN cifrar. Para habilitar el cifrado, definí la "
+                "variable en .env. Generar una nueva (solo en instalación limpia): "
+                'python -c "from cryptography.fernet import Fernet; '
+                'print(Fernet.generate_key().decode())"'
+            )
+            _NO_KEY_WARNED = True
+        return None
+
+    # Validar el formato antes de cachear: una llave malformada produciría
+    # errores confusos recién al primer cifrado o descifrado.
+    try:
+        Fernet(key.encode())
+    except Exception as e:
+        raise RuntimeError(
+            f"MASTER_ENC_KEY tiene un formato inválido para Fernet: {e}. "
+            "Debe ser una clave base64 url-safe de 32 bytes. "
+            "Corregila o quitala del entorno para operar sin cifrado."
+        )
+
     _MASTER_KEY_CACHE = key
     return key
 
-def _persist_key_to_env(key: str):
-    """Guarda la llave en .env, reemplazando la entrada vacía si existe, o haciendo append."""
-    env_path = Path(".env")
-    
-    # Verificar si ya existe (race condition safety)
-    if env_path.exists():
-        content = env_path.read_text(encoding="utf-8")
-        if "MASTER_ENC_KEY=" in content:
-            new_lines = []
-            replaced = False
-            for line in content.splitlines():
-                if line.startswith("MASTER_ENC_KEY="):
-                    if line.strip() == "MASTER_ENC_KEY=":
-                        new_lines.append(f"MASTER_ENC_KEY={key}")
-                        replaced = True
-                    else:
-                        return # Ya tiene un valor, no sobreescribir
-                else:
-                    new_lines.append(line)
-            
-            if replaced:
-                env_path.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
-                return
 
-    marker = "# === Auto-generada por app/core/crypto.py ==="
-    with open(env_path, "a", encoding="utf-8") as f:
-        f.write(f"\n{marker}\n")
-        f.write(f"# Llave maestra para cifrar credenciales de proveedores en DB.\n")
-        f.write(f"# SI LA PIERDES, todas las credenciales se vuelven ilegibles.\n")
-        f.write(f"# Backupeala en un gestor de passwords seguro.\n")
-        f.write(f"MASTER_ENC_KEY={key}\n")
-
-def _get_fernet() -> Fernet:
-    return Fernet(get_master_key().encode())
+def _get_fernet() -> Fernet | None:
+    """Instancia de Fernet, o None si el sistema opera sin cifrado."""
+    key = get_master_key()
+    return Fernet(key.encode()) if key else None
 
 def encrypt(plaintext) -> str:
     """Cifra un string. Retorna None/empty si input es None/vacio."""
     if not plaintext:
         return plaintext
+    f = _get_fernet()
+    if f is None:
+        # Sin llave configurada: se guarda en claro. decrypt() lo devolverá
+        # tal cual porque no tiene el prefijo de ciphertext Fernet.
+        return plaintext
     try:
-        return _get_fernet().encrypt(plaintext.encode()).decode()
+        return f.encrypt(plaintext.encode()).decode()
     except Exception as e:
         logger.error(f"Error cifrando campo: {e}")
         raise
@@ -85,8 +84,20 @@ def decrypt(ciphertext) -> str:
     # Si no parece ciphertext Fernet, asumir plaintext legacy
     if not ciphertext.startswith("gAAAAAB"):
         return ciphertext
+
+    f = _get_fernet()
+    if f is None:
+        # Hay datos cifrados pero no hay llave para descifrarlos. Suele indicar
+        # que se quitó MASTER_ENC_KEY de un entorno que ya tenía credenciales
+        # cifradas: hay que restaurar la llave original.
+        logger.error(
+            "Se encontró un valor cifrado pero MASTER_ENC_KEY no está definida. "
+            "Restaurá la llave original para poder leer estas credenciales."
+        )
+        return None
+
     try:
-        return _get_fernet().decrypt(ciphertext.encode()).decode()
+        return f.decrypt(ciphertext.encode()).decode()
     except InvalidToken:
         logger.warning("Campo cifrado no pudo ser descifrado (clave rotada?).")
         return None
