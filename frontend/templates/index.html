@@ -77,28 +77,28 @@
     <!-- VISTA DASHBOARD -->
     <main id="view-dashboard">
         <div class="stats-grid">
-            <div class="card pending-card" style="cursor: pointer; transition: transform 0.2s;" onclick="setFilterStatus('pending')" onmouseover="this.style.transform='scale(1.02)'" onmouseout="this.style.transform='scale(1)'" title="Clic para filtrar pendientes">
+            <div class="card pending-card" data-metric="pending" style="cursor: pointer; transition: transform 0.2s;" onclick="setFilterStatus('pending')" onmouseover="this.style.transform='scale(1.02)'" onmouseout="this.style.transform='scale(1)'" title="Clic para filtrar pendientes">
                 <div class="card-title">En Cola (Pendientes)</div>
                 <div class="card-value" id="val-pending">0</div>
                 <div class="sparkline-wrap">
                     <svg class="sparkline" id="spark-pending" viewBox="0 0 120 30" preserveAspectRatio="none"></svg>
                 </div>
             </div>
-            <div class="card" style="cursor: pointer; transition: transform 0.2s;" onclick="setFilterStatus('sent')" onmouseover="this.style.transform='scale(1.02)'" onmouseout="this.style.transform='scale(1)'" title="Clic para filtrar enviados">
+            <div class="card" data-metric="sent" style="cursor: pointer; transition: transform 0.2s;" onclick="setFilterStatus('sent')" onmouseover="this.style.transform='scale(1.02)'" onmouseout="this.style.transform='scale(1)'" title="Clic para filtrar enviados">
                 <div class="card-title">Enviados (Hoy)</div>
                 <div class="card-value" id="val-sent">0</div>
                 <div class="sparkline-wrap">
                     <svg class="sparkline" id="spark-sent" viewBox="0 0 120 30" preserveAspectRatio="none"></svg>
                 </div>
             </div>
-            <div class="card failed" style="cursor: pointer; transition: transform 0.2s;" onclick="setFilterStatus('failed')" onmouseover="this.style.transform='scale(1.02)'" onmouseout="this.style.transform='scale(1)'" title="Clic para filtrar fallidos">
+            <div class="card failed" data-metric="failed" style="cursor: pointer; transition: transform 0.2s;" onclick="setFilterStatus('failed')" onmouseover="this.style.transform='scale(1.02)'" onmouseout="this.style.transform='scale(1)'" title="Clic para filtrar fallidos">
                 <div class="card-title">Fallidos (Hoy)</div>
                 <div class="card-value" id="val-failed">0</div>
                 <div class="sparkline-wrap">
                     <svg class="sparkline" id="spark-failed" viewBox="0 0 120 30" preserveAspectRatio="none"></svg>
                 </div>
             </div>
-            <div class="card" style="border-top: 4px solid var(--color-yellow); cursor: pointer; transition: transform 0.2s;" onclick="setFilterStatus('pending')" onmouseover="this.style.transform='scale(1.02)'" onmouseout="this.style.transform='scale(1)'" title="Clic para filtrar pendientes en reintento">
+            <div class="card" data-metric="retries" style="border-top: 4px solid var(--color-yellow); cursor: pointer; transition: transform 0.2s;" onclick="setFilterStatus('pending')" onmouseover="this.style.transform='scale(1.02)'" onmouseout="this.style.transform='scale(1)'" title="Clic para filtrar pendientes en reintento">
                 <div class="card-title">En Reintento</div>
                 <div class="card-value" id="val-retries" style="color: var(--color-yellow);">0</div>
                 <div class="sparkline-wrap">
@@ -559,6 +559,126 @@
     </main>
 
     <main id="view-integrations" style="display: none; padding: 2rem; flex-direction: column; gap: 0; max-width: 98%; margin: 0 auto; width: 100%;">
+
+        <!-- Guía de onboarding: acompaña la configuración en lugar de vivir en
+             un documento aparte que se desactualiza. Plegada por defecto. -->
+        <details class="onboarding-panel">
+            <summary>
+                <span class="ob-icon">📋</span>
+                <span>¿Cómo integrar un proveedor nuevo?</span>
+                <span class="ob-hint">Guía paso a paso</span>
+            </summary>
+
+            <div class="ob-body">
+                <div class="ob-steps">
+
+                    <div class="ob-step">
+                        <div class="ob-num">1</div>
+                        <div>
+                            <strong>Determinar el modo de ingesta</strong>
+                            <p><b>PUSH</b> — el proveedor nos envía los datos. Definimos nosotros la
+                            <code>x-api-key</code> que le entregamos.<br>
+                            <b>PULL</b> — nosotros consultamos su API. Necesitamos su URL, credenciales
+                            y frecuencia de consulta.</p>
+                        </div>
+                    </div>
+
+                    <div class="ob-step">
+                        <div class="ob-num">2</div>
+                        <div>
+                            <strong>Probar con el Inspector antes de configurar</strong>
+                            <p>Pestaña <b>3. Inspector y Mapeo</b>. Pegá un payload real de ejemplo y
+                            verificá qué campos trae de verdad. Configurar sin ver el payload real es
+                            la causa más común de mapeos incorrectos.</p>
+                        </div>
+                    </div>
+
+                    <div class="ob-step">
+                        <div class="ob-num">3</div>
+                        <div>
+                            <strong>Mapear al modelo canónico</strong>
+                            <p>Recurso Confiable exige como mínimo:
+                            <code>chassis_number</code>, <code>latitude</code>,
+                            <code>longitude</code> y <code>date</code>.
+                            El resto es opcional y se envía si el proveedor lo provee.</p>
+                        </div>
+                    </div>
+
+                    <div class="ob-step">
+                        <div class="ob-num">4</div>
+                        <div>
+                            <strong>¿Identifica por IMEI en lugar de patente?</strong>
+                            <p>Configurá la pestaña <b>4. Diccionario</b> con la URL de su catálogo de
+                            dispositivos. <b>Importante:</b> los equipos sin patente asignada del lado
+                            del proveedor <u>no se envían a RC</u>: mandarlos sin identificar produce
+                            activos que el cliente no puede reconocer.</p>
+                        </div>
+                    </div>
+
+                    <div class="ob-step">
+                        <div class="ob-num">5</div>
+                        <div>
+                            <strong>Definir las reglas de disparo</strong>
+                            <p>Pestaña <b>2. Reglas de Disparo</b>. Siempre se emite un evento base de
+                            posición. Las reglas adicionales son para alarmas (ignición, puerta,
+                            pánico). Un payload puede generar varios eventos.</p>
+                        </div>
+                    </div>
+
+                    <div class="ob-step">
+                        <div class="ob-num">6</div>
+                        <div>
+                            <strong>Probar en TEST antes de PROD</strong>
+                            <p>Configurá primero el entorno <b>test</b> y verificá en el chip de salud
+                            de la barra superior que quede en verde. Recién ahí replicá en
+                            <b>prod</b>.</p>
+                        </div>
+                    </div>
+
+                    <div class="ob-step">
+                        <div class="ob-num">7</div>
+                        <div>
+                            <strong>Entregar la URL al proveedor (solo PUSH)</strong>
+                            <p>Producción:
+                            <code>https://api.telemetria.assistcargo.com/webhook/dynamic/{nombre}</code><br>
+                            Test:
+                            <code>https://apiTest.telemetria.assistcargo.com/webhook/dynamic/{nombre}</code><br>
+                            Los proveedores PULL no reciben ninguna URL nuestra.</p>
+                        </div>
+                    </div>
+
+                </div>
+
+                <div class="ob-ask">
+                    <div class="ob-ask-head">
+                        <strong>Qué pedirle al proveedor</strong>
+                        <button onclick="copiarChecklistProveedor(event)" class="ob-copy-btn">Copiar</button>
+                    </div>
+                    <pre id="ob-checklist">Para integrar su plataforma con nuestro hub telemático necesitamos:
+
+1. Modo de integración
+   ¿Ustedes envían los datos (PUSH) o nosotros consultamos su API (PULL)?
+
+2. Si es PULL:
+   - URL del endpoint de telemetría
+   - Método de autenticación y credenciales
+   - Frecuencia de consulta recomendada
+   - Límite de dispositivos por petición
+   - URL del catálogo de dispositivos (para traducir ID a patente)
+
+3. Si es PUSH:
+   - Confirmar que pueden enviar el header x-api-key que les demos
+   - Frecuencia estimada de envío (eventos por minuto)
+
+4. En ambos casos:
+   - Un payload JSON de ejemplo con datos reales
+   - Documentación de los códigos de evento/alarma
+   - Confirmar que todos los dispositivos tienen patente asignada
+     (los que no la tengan no se pueden reportar al cliente)
+   - Contacto técnico para incidencias</pre>
+                </div>
+            </div>
+        </details>
 
         <!-- Selector de proveedor (siempre visible) -->
         <div style="display: flex; align-items: center; gap: 1rem; margin-bottom: 1.5rem; flex-wrap: wrap;">

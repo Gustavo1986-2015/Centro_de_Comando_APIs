@@ -1229,3 +1229,167 @@ body.compact-mode .health-chip .health-env    { font-size: 0.55rem; padding: 1px
 }
 
 body.compact-mode .console-output { height: 70vh; font-size: 0.72rem; }
+
+/* ── Jerarquía visual de las cards de métricas ───────────────────────────────
+   Una métrica de problema en cero es una buena noticia: se atenúa para que el
+   ojo vaya directo a lo que sí requiere atención. Las de volumen no se tocan. */
+.card[data-metric] {
+    transition: opacity 0.35s ease, border-color 0.35s ease, box-shadow 0.35s ease;
+}
+
+/* Todo en orden: presente pero en segundo plano */
+.card-idle {
+    opacity: 0.55;
+    border-top-color: var(--card-border) !important;
+}
+.card-idle .card-value { color: var(--color-gray-label) !important; }
+.card-idle:hover { opacity: 0.85; }
+
+/* Hay carga en cola o reintentos: merece atención, no alarma */
+.card-warn {
+    opacity: 1;
+    border-top-color: var(--color-yellow) !important;
+}
+.card-warn .card-value { color: var(--color-yellow) !important; }
+
+/* Eventos fallidos: siempre crítico, sin importar la cantidad */
+.card-alert {
+    opacity: 1;
+    border-top-color: var(--color-red) !important;
+    box-shadow: 0 0 0 1px rgba(239, 68, 68, 0.25), 0 4px 20px rgba(239, 68, 68, 0.12);
+}
+.card-alert .card-value {
+    color: var(--color-red) !important;
+    animation: pulsing 2.5s infinite;
+}
+
+/* En modo compacto la atenuación se suaviza: hay menos espacio y más densidad */
+body.compact-mode .card-idle { opacity: 0.65; }
+
+/* ── Guía de onboarding en el Integration Studio ─────────────────────────────
+   Vive junto a los campos que describe en lugar de en un documento aparte:
+   así no se desactualiza y está donde se necesita. */
+.onboarding-panel {
+    background: var(--level-1);
+    border: 1px solid var(--card-border);
+    border-left: 3px solid var(--color-green-vibrant);
+    border-radius: 10px;
+    margin-bottom: 1.5rem;
+}
+.onboarding-panel summary {
+    padding: 0.85rem 1.2rem;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    font-weight: 600;
+    font-size: 0.92rem;
+    color: var(--color-text);
+    user-select: none;
+    list-style: none;
+}
+.onboarding-panel summary::-webkit-details-marker { display: none; }
+.onboarding-panel summary::before {
+    content: "▸";
+    color: var(--color-green-vibrant);
+    transition: transform 0.2s;
+    display: inline-block;
+}
+.onboarding-panel[open] summary::before { transform: rotate(90deg); }
+.onboarding-panel summary:hover { background: var(--level-2); border-radius: 10px; }
+
+.onboarding-panel .ob-hint {
+    margin-left: auto;
+    font-size: 0.75rem;
+    font-weight: 400;
+    color: var(--color-gray-label);
+}
+
+.ob-body {
+    padding: 0.5rem 1.5rem 1.5rem;
+    border-top: 1px solid var(--card-border);
+    display: grid;
+    grid-template-columns: 1.4fr 1fr;
+    gap: 2rem;
+}
+@media (max-width: 1100px) {
+    .ob-body { grid-template-columns: 1fr; }
+}
+
+.ob-steps { display: flex; flex-direction: column; gap: 1rem; padding-top: 1rem; }
+
+.ob-step { display: flex; gap: 0.9rem; align-items: flex-start; }
+.ob-step .ob-num {
+    flex-shrink: 0;
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    background: rgba(0, 255, 102, 0.12);
+    border: 1px solid rgba(0, 255, 102, 0.3);
+    color: var(--color-green-bright);
+    font-size: 0.75rem;
+    font-weight: 700;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+.ob-step strong { font-size: 0.86rem; color: var(--color-text); }
+.ob-step p {
+    margin: 0.25rem 0 0;
+    font-size: 0.8rem;
+    line-height: 1.55;
+    color: var(--color-gray-label);
+}
+.ob-step code {
+    background: var(--level-0);
+    border: 1px solid var(--card-border);
+    border-radius: 4px;
+    padding: 1px 5px;
+    font-size: 0.75rem;
+    color: var(--color-green-bright);
+    word-break: break-all;
+}
+
+.ob-ask {
+    background: var(--level-0);
+    border: 1px solid var(--card-border);
+    border-radius: 8px;
+    padding: 1rem;
+    margin-top: 1rem;
+    height: fit-content;
+}
+.ob-ask-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 0.8rem;
+}
+.ob-ask-head strong { font-size: 0.85rem; color: var(--color-text); }
+
+.ob-copy-btn {
+    background: var(--level-2);
+    border: 1px solid var(--card-border);
+    color: var(--color-gray-label);
+    border-radius: 6px;
+    padding: 4px 12px;
+    font-size: 0.75rem;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+.ob-copy-btn:hover { border-color: var(--color-green-vibrant); color: var(--color-green-bright); }
+.ob-copy-btn.ok {
+    border-color: var(--color-green-vibrant);
+    color: var(--color-green-bright);
+    background: rgba(0, 255, 102, 0.1);
+}
+
+.ob-ask pre {
+    margin: 0;
+    font-family: "Cascadia Code", "Consolas", monospace;
+    font-size: 0.72rem;
+    line-height: 1.6;
+    color: var(--color-gray-label);
+    white-space: pre-wrap;
+    max-height: 420px;
+    overflow-y: auto;
+}

@@ -452,6 +452,63 @@
             document.body.removeChild(link);
         }
 
+
+        // ─── Jerarquía visual de las cards ───────────────────────────────────
+        // Las siete métricas tenían el mismo peso visual: "Fallidos: 0" resaltaba
+        // igual que "Enviados: 25.277". El ojo tenía que leerlas todas para saber
+        // si algo andaba mal.
+        //
+        // Criterio: una métrica de problema (fallidos, reintentos, cola) en cero
+        // es una buena noticia y se atenúa; con valor se enciende. Las de volumen
+        // (enviados) mantienen su peso normal siempre.
+        function applyCardHierarchy(data) {
+            const estado = {
+                pending: data.pending || 0,
+                sent:    data.sent    || 0,
+                failed:  data.failed  || 0,
+                retries: data.retries || 0,
+            };
+
+            document.querySelectorAll('.card[data-metric]').forEach(card => {
+                const metrica = card.dataset.metric;
+                const valor   = estado[metrica] ?? 0;
+
+                card.classList.remove('card-idle', 'card-alert', 'card-warn');
+
+                if (metrica === 'sent') return;   // el volumen no se atenúa
+
+                if (valor === 0) {
+                    card.classList.add('card-idle');
+                } else if (metrica === 'failed') {
+                    card.classList.add('card-alert');   // fallidos: siempre crítico
+                } else {
+                    card.classList.add('card-warn');    // cola o reintentos con carga
+                }
+            });
+        }
+
+
+        // Copia al portapapeles el listado de datos a solicitar al proveedor,
+        // para pegarlo directamente en un mail sin reescribirlo cada vez.
+        function copiarChecklistProveedor(ev) {
+            const texto = document.getElementById('ob-checklist')?.textContent || '';
+            const btn = ev ? ev.currentTarget : null;
+            const original = btn ? btn.textContent : '';
+
+            navigator.clipboard.writeText(texto).then(() => {
+                if (btn) {
+                    btn.textContent = 'Copiado';
+                    btn.classList.add('ok');
+                    setTimeout(() => { btn.textContent = original; btn.classList.remove('ok'); }, 2000);
+                }
+            }).catch(() => {
+                if (btn) {
+                    btn.textContent = 'Error';
+                    setTimeout(() => { btn.textContent = original; }, 2000);
+                }
+            });
+        }
+
         // Vistas
         function switchView(view) {
             document.getElementById('view-dashboard').style.display = view === 'dashboard' ? 'flex' : 'none';
@@ -811,6 +868,7 @@
                 updateValue('val-sent', data.sent);
                 updateValue('val-failed', data.failed);
                 updateValue('val-retries', data.retries);
+                applyCardHierarchy(data);
                 
                 // Filtrar push stats por proveedor activo en el selector
                 const currentFilter = document.getElementById('filter-provider')?.value || 'all';
