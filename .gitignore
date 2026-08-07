@@ -91,6 +91,7 @@ simulador_vivo.py
 # docs/ se vuelve a ignorar por privacidad
 docs/
 PLAYBOOK_NEW_API.md
+GUIA_INTEGRACION.md
 
 # Configuración local de LLM / Agentes
 .agents/
