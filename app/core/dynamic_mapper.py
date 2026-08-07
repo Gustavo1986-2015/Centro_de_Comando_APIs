@@ -79,7 +79,7 @@ class DynamicMapper:
         return False
 
     @staticmethod
-    def map_payload(payload: Dict[str, Any], schema: Dict[str, str], provider_name: str = None, env: str = None) -> RCCanonicalModel:
+    def map_payload(payload: Dict[str, Any], schema: Dict[str, str], provider_name: str = None, env: str = None, require_dict_match: bool = False) -> RCCanonicalModel:
         """
         Mapea dinámicamente un payload JSON entrante al modelo estándar (RCCanonicalModel)
         basándose en un esquema de rutas configurado en la base de datos por el usuario.
@@ -140,6 +140,17 @@ class DynamicMapper:
                 if dict_entry and dict_entry.dict_value:
                     chassis_number = dict_entry.dict_value
                     logger.debug(f"Inyección al vuelo: {chassis_val} reemplazado por {chassis_number}")
+                elif require_dict_match:
+                    # El proveedor usa diccionario y este ID no tiene traducción.
+                    # Enviar el ID crudo a RC generaría un activo no identificable
+                    # (o peor, varios distintos colapsados en el mismo valor).
+                    # Se descarta el evento: es responsabilidad del proveedor
+                    # completar la asignación en su plataforma.
+                    logger.warning(
+                        f"[{provider_name}-{env}] ID '{chassis_number}' sin traducción "
+                        f"en el diccionario. Evento descartado, no se envía a RC."
+                    )
+                    return None
             except Exception as e:
                 logger.warning(f"Excepción capturada en dynamic_mapper: {e}")
                 logger.error(f"Error en inyección al vuelo para {provider_name}_{env}: {e}")
@@ -204,7 +215,8 @@ class DynamicMapper:
         payload: Dict[str, Any],
         full_schema: Dict[str, Any],
         provider_name: str = None,
-        env: str = None
+        env: str = None,
+        require_dict_match: bool = False
     ) -> list:
         """
         Motor de Reglas de Disparo.
@@ -233,7 +245,14 @@ class DynamicMapper:
         # 1. Generar evento base (posición GPS)
         if default_rule.get("enabled", True):
             base_schema_with_code = dict(base_schema)
-            base_event = DynamicMapper.map_payload(payload, base_schema_with_code, provider_name, env)
+            base_event = DynamicMapper.map_payload(
+                payload, base_schema_with_code, provider_name, env, require_dict_match
+            )
+            # Sin traducción en el diccionario: se descarta el payload completo.
+            # No tiene sentido emitir los eventos de trigger de un activo que RC
+            # no puede identificar.
+            if base_event is None:
+                return []
             
             # ¿El usuario mapeó explícitamente el 'code' en Tab 3 y NO está usando reglas dinámicas?
             mapped_code_key = base_schema.get("code")
@@ -265,15 +284,21 @@ class DynamicMapper:
                 # Clonar el evento base y cambiar solo el code
                 trigger_event = DynamicMapper.map_payload(
                     payload, base_schema_with_code if "base_mapping" in full_schema else full_schema,
-                    provider_name, env
+                    provider_name, env, require_dict_match
                 )
+                if trigger_event is None:
+                    continue
                 trigger_event.code = str(rc_code)
                 results.append(trigger_event)
 
         # Garantía: si nada generó eventos (default desactivado y sin matches),
         # generar al menos el evento base con code="1"
         if not results:
-            fallback = DynamicMapper.map_payload(base_schema, base_schema, provider_name, env)
+            fallback = DynamicMapper.map_payload(
+                base_schema, base_schema, provider_name, env, require_dict_match
+            )
+            if fallback is None:
+                return []
             fallback.code = "1"
             results.append(fallback)
 
