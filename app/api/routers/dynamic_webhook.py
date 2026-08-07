@@ -9,6 +9,7 @@ import asyncio
 from app.database import get_db_provider, get_session
 from app.models.config_models import ProviderConfig
 from app.core.dynamic_mapper import DynamicMapper
+from app.core.rate_limit import check_rate_limit
 from app.core.queue_factory import QueueFactory
 from app.models.db_models import NormalizedRCEvent
 from app.core.auditor import log_raw_payload
@@ -61,6 +62,7 @@ def _validate_dynamic_auth(
         return {
             "mapping_schema": mapping_schema,
             "enable_state_dedup": bool(getattr(config, 'enable_state_dedup', False)),
+            "dict_enabled": bool((getattr(config, 'enrichment_config', None) or {}).get("enabled")),
         }
     finally:
         db_global.close()
@@ -123,6 +125,8 @@ async def dynamic_webhook_receive(
     """
     mapping_schema = auth_config["mapping_schema"]
     enable_dedup = auth_config["enable_state_dedup"]
+    # Si el proveedor usa diccionario, los IDs sin traducción no se envían a RC
+    require_dict_match = auth_config.get("dict_enabled", False)
 
     # 2. Atrapar el Payload JSON
     try:
@@ -131,6 +135,19 @@ async def dynamic_webhook_receive(
         logger.warning(f"Excepción capturada en dynamic_webhook: {e}")
         raise HTTPException(status_code=400, detail="El cuerpo de la petición debe ser un JSON válido.")
 
+    # 2.2 Rate limiting por integración (transversal a todos los proveedores)
+    allowed, remaining, retry_after = check_rate_limit(provider_name, env)
+    if not allowed:
+        logger.warning(
+            f"[{provider_name}-{env}] Rate limit superado ({retry_after}s para reintentar)."
+        )
+        raise HTTPException(
+            status_code=429,
+            detail=f"Límite de peticiones superado para {provider_name}/{env}. "
+                   f"Reintentar en {retry_after} segundos.",
+            headers={"Retry-After": str(retry_after)},
+        )
+
     # 2.5 Auditoría cruda (fire-and-forget asíncrona)
     asyncio.create_task(asyncio.to_thread(log_raw_payload, provider_name, env, payload))
 
@@ -138,12 +155,19 @@ async def dynamic_webhook_receive(
     try:
         canonical_events = await run_in_threadpool(
             DynamicMapper.map_payload_multi, 
-            payload, mapping_schema, provider_name, env
+            payload, mapping_schema, provider_name, env, require_dict_match
         )
     except Exception as e:
         logger.warning(f"Excepción capturada en dynamic_webhook: {e}")
         logger.error(f"Error en DynamicMapper para {provider_name}: {e}")
         raise HTTPException(status_code=422, detail=f"Fallo al mapear los datos: {e}")
+
+    if require_dict_match and not canonical_events:
+        logger.warning(
+            f"[{provider_name}-{env}] Payload descartado: el identificador no tiene "
+            f"traducción en el diccionario. No se envía a RC."
+        )
+        return {"status": "accepted", "note": "sin traducción en diccionario, descartado"}
 
     # 3.5 Deduplicación de Estado (Anti-State Flooding) — solo si el toggle está activo
     # NOTA: schmitz.py NO pasa por aquí (tiene su propio router /Json/Data con dedup interno).

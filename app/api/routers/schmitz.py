@@ -12,6 +12,8 @@ from app.core.auditor import log_raw_payload
 
 from app.models.config_models import ProviderConfig
 from app.core.crypto import decrypt
+from app.core import provider_health
+from app.core.rate_limit import check_rate_limit
 import secrets
 
 logger = logging.getLogger(__name__)
@@ -165,7 +167,20 @@ async def schmitz_webhook(
             # Schmitz manual dice "always return 200/202"
             return {"status": "accepted"}
 
+        allowed, remaining, retry_after = check_rate_limit("schmitz", env)
+        if not allowed:
+            # El spec de Schmitz exige responder 2xx siempre: un 429 podría
+            # hacer que marquen el endpoint como no confiable. Se responde 202
+            # y se descarta el excedente, dejando rastro en el log.
+            logger.warning(
+                f"[SCHMITZ-{env}] Rate limit superado, payload descartado. "
+                f"Reintentar en {retry_after}s."
+            )
+            return {"status": "accepted", "note": "rate limit"}
+
         _webhook_queue.put_nowait((payload, env))
+        provider_health.set_mode("schmitz", env, "push")
+        provider_health.report_fetch_ok("schmitz", env)
     except Exception as e:
         logger.warning(f"Excepción capturada en schmitz: {e}")
         logger.error(f"Error inesperado en webhook: {e}")
@@ -196,7 +211,20 @@ async def schmitz_json_data(
             logger.warning(f"Excepción capturada en schmitz: {e}")
             return {"status": "accepted"}
 
+        allowed, remaining, retry_after = check_rate_limit("schmitz", env)
+        if not allowed:
+            # El spec de Schmitz exige responder 2xx siempre: un 429 podría
+            # hacer que marquen el endpoint como no confiable. Se responde 202
+            # y se descarta el excedente, dejando rastro en el log.
+            logger.warning(
+                f"[SCHMITZ-{env}] Rate limit superado, payload descartado. "
+                f"Reintentar en {retry_after}s."
+            )
+            return {"status": "accepted", "note": "rate limit"}
+
         _webhook_queue.put_nowait((payload, env))
+        provider_health.set_mode("schmitz", env, "push")
+        provider_health.report_fetch_ok("schmitz", env)
     except Exception as e:
         logger.warning(f"Excepción capturada en schmitz: {e}")
         logger.error(f"Error inesperado en Json/Data: {e}")
