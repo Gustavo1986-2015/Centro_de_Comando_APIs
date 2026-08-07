@@ -57,16 +57,35 @@ class RCSOAPClient:
                 from zeep.transports import Transport
                 import requests
                 
-                # Configurar timeout explícito para que el worker no se quede colgado
+                # Timeouts de Zeep. IMPORTANTE: los dos parámetros del Transport
+                # NO son connect/read como sugiere la intuición:
+                #
+                #   timeout            -> load_timeout: descarga y parseo del WSDL.
+                #                         Ocurre una sola vez al construir el cliente
+                #                         y es la operación MÁS pesada de todas.
+                #   operation_timeout  -> cada llamada SOAP posterior.
+                #
+                # Tener load_timeout bajo hacía fallar el primer lote tras cada
+                # arranque (RC tarda varios segundos en servir el WSDL) y mandaba
+                # el lote completo a reintento sin necesidad.
+                #
+                # requests.Session no respeta un atributo `timeout`; solo lo usa
+                # si se pasa explícito en cada request. Por eso no se setea acá.
+                load_timeout = int(os.getenv("RC_WSDL_TIMEOUT", "45"))
+                op_timeout   = int(os.getenv("RC_OPERATION_TIMEOUT", "30"))
+
                 session = requests.Session()
-                session.timeout = (5, 25)  # (connect_timeout, read_timeout) — backup
                 transport = Transport(
                     session=session,
-                    timeout=5,           # connect timeout (segundos)
-                    operation_timeout=25  # read/operation timeout (segundos)
+                    timeout=load_timeout,
+                    operation_timeout=op_timeout,
                 )
-                
+
                 wsdl = endpoint + "?wsdl"
+                logger.info(
+                    f"Inicializando cliente SOAP RC (wsdl_timeout={load_timeout}s, "
+                    f"operation_timeout={op_timeout}s)"
+                )
                 cls._global_zeep_client = Client(wsdl, transport=transport)
         return cls._global_zeep_client
 

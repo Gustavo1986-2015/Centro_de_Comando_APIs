@@ -89,6 +89,11 @@
                 recentEvents.filter(e => e.status === 'failed').map(e => e.provider.toLowerCase())
             );
 
+            // Si ya hay datos de salud, la barra los usa (incluyen el throughput).
+            // Si todavia no llegaron, se muestran los pills clasicos como fallback.
+            const chips = renderHealthChips(failedProviders);
+            if (chips) { bar.innerHTML = chips; return; }
+
             bar.innerHTML = allProviders.map(key => {
                 const rate      = _providerEventCounts[key].length;
                 const hasFailed = failedProviders.has(key);
@@ -101,6 +106,114 @@
                     <span class="pill-rate">${label}</span>
                 </div>`;
             }).join('');
+        }
+
+        // ── Salud de integraciones ───────────────────────────────────────────
+        // Muestra el estado real de cada integracion (auth, diccionario, ultimo
+        // fetch) al lado de los pills de throughput. Un diccionario vacio o una
+        // autenticacion caida se ve al instante, sin abrir el Monitor Interno.
+        let _providerHealth = [];
+
+        function setProviderHealth(list) {
+            _providerHealth = Array.isArray(list) ? list : [];
+        }
+
+        function _fmtAge(sec) {
+            if (sec === null || sec === undefined) return 'nunca';
+            if (sec < 60)    return `hace ${sec}s`;
+            if (sec < 3600)  return `hace ${Math.floor(sec / 60)}m`;
+            if (sec < 86400) return `hace ${Math.floor(sec / 3600)}h`;
+            return `hace ${Math.floor(sec / 86400)}d`;
+        }
+
+        function renderHealthChips(failedProviders) {
+            if (!_providerHealth.length) return '';
+
+            return _providerHealth.map(h => {
+                const icon = h.status === 'error' ? '\u26A0'
+                           : h.status === 'warn'  ? '\u25D1'
+                           : '\u25CF';
+
+                // Throughput del proveedor (se cuenta por proveedor, no por env)
+                const rate = (_providerEventCounts[h.provider] || []).length;
+
+                // Detalle completo en el tooltip
+                const lines = [
+                    `${h.provider.toUpperCase()} (${h.env.toUpperCase()}) - ${h.detail}`,
+                    `Modo: ${(h.mode || 'n/d').toUpperCase()}`,
+                ];
+                if (h.dict_enabled) {
+                    lines.push(`Diccionario: ${h.dict_count} IDs, sync ${_fmtAge(h.dict_age_sec)}`);
+                    if (h.dict_error) lines.push(`  Error: ${h.dict_error}`);
+                }
+                if (h.auth_ok === false && h.auth_error) lines.push(`Auth: ${h.auth_error}`);
+                if (h.mode === 'pull') lines.push(`Ultimo fetch OK: ${_fmtAge(h.fetch_age_sec)}`);
+                if (h.fetch_error) lines.push(`  Error fetch: ${h.fetch_error}`);
+
+                // Resumen visible: si hay problema manda el detalle;
+                // si esta sano, se muestra throughput y tamano del diccionario.
+                let summary;
+                if (h.status !== 'ok') {
+                    summary = h.detail;
+                } else {
+                    const parts = [];
+                    if (rate > 0) parts.push(`${rate} ev/min`);
+                    if (h.dict_enabled && h.dict_count) parts.push(`${h.dict_count} IDs`);
+                    summary = parts.length ? parts.join(' \u00B7 ') : 'sin trafico';
+                }
+
+                // Boton de resincronizacion: solo cuando hay algo que reintentar
+                const showResync = h.status !== 'ok' && h.dict_enabled;
+                const resyncBtn = showResync
+                    ? `<button class="health-resync" onclick="forceResync('${h.provider}','${h.env}',event)"
+                               title="Reintentar la sincronizacion del diccionario ahora">\u21BB</button>`
+                    : '';
+
+                return `<div class="health-chip ${h.status}" title="${lines.join('\n').replace(/"/g, '&quot;')}">
+                    <span class="health-icon">${icon}</span>
+                    <span class="health-name">${h.provider.toUpperCase()}</span>
+                    <span class="health-env env-${h.env}">${h.env.toUpperCase()}</span>
+                    <span class="health-detail">${summary}</span>
+                    ${resyncBtn}
+                </div>`;
+            }).join('');
+        }
+
+        // Resincronizacion manual de una integracion. El feedback vive en el
+        // propio boton para no depender de un sistema de notificaciones global.
+        async function forceResync(provider, env, ev) {
+            if (ev) ev.stopPropagation();
+            const btn = ev ? ev.currentTarget : null;
+            if (!btn) return;
+
+            const original = btn.textContent;
+            btn.disabled = true;
+            btn.classList.add('spinning');
+
+            const restore = (text, cls) => {
+                btn.classList.remove('spinning');
+                btn.textContent = text;
+                if (cls) btn.classList.add(cls);
+                setTimeout(() => {
+                    btn.disabled = false;
+                    btn.textContent = original;
+                    btn.classList.remove('ok', 'fail');
+                }, 2500);
+            };
+
+            try {
+                const r = await fetch(`/api/integrations/${provider}/${env}/resync`, { method: 'POST' });
+                if (r.ok) {
+                    restore('\u2713', 'ok');
+                } else {
+                    const data = await r.json().catch(() => ({}));
+                    console.warn('Resync rechazado:', data.detail || r.status);
+                    restore('\u2717', 'fail');
+                }
+            } catch (e) {
+                console.warn('Error de red en resync:', e);
+                restore('\u2717', 'fail');
+            }
         }
 
         function injectSkeletonRows(tbodyId, cols, rowCount = 5) {
@@ -735,6 +848,7 @@
                 });
 
                 renderRecentTable();
+                setProviderHealth(data.provider_health);
                 updateProviderBar(data.recent || []);
 
                 document.getElementById('sync-status').textContent = 'Conectado y Escuchando';
