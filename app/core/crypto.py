@@ -5,7 +5,6 @@ Usa Fernet (AES-128-CBC + HMAC-SHA256) con una llave maestra en .env.
 import os
 import logging
 from cryptography.fernet import Fernet, InvalidToken
-from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -13,55 +12,45 @@ _MASTER_KEY_CACHE = None
 
 def get_master_key() -> str:
     """
-    Obtiene la llave maestra de .env. Si no existe, la genera automáticamente,
-    la persiste en .env y la cachea en memoria.
+    Obtiene la llave maestra Fernet desde la variable de entorno MASTER_ENC_KEY.
+
+    NO auto-genera la llave. En un despliegue con contenedores, generar una llave
+    nueva cuando falta la variable deja ilegibles TODAS las credenciales cifradas
+    de los proveedores (RC, webhooks, cuentas de AVL) sin ningún error evidente:
+    la app arranca bien y los proveedores simplemente dejan de autenticar.
+
+    Es preferible fallar al arrancar con un mensaje claro.
     """
     global _MASTER_KEY_CACHE
     if _MASTER_KEY_CACHE:
         return _MASTER_KEY_CACHE
-    
+
     key = os.getenv("MASTER_ENC_KEY")
     if not key:
-        # Auto-generar
-        key = Fernet.generate_key().decode()
-        _persist_key_to_env(key)
-        logger.info("MASTER_ENC_KEY generada automaticamente y guardada en .env")
-        logger.warning("Backupea MASTER_ENC_KEY en un gestor de passwords seguro.")
-    
+        raise RuntimeError(
+            "MASTER_ENC_KEY no está definida en el entorno. Es obligatoria para "
+            "cifrar y descifrar las credenciales de los proveedores.\n"
+            "  - En local: agregala al archivo .env\n"
+            "  - En Docker: verificá que .env esté en env_file y contenga la clave\n"
+            "Para generar una llave NUEVA (solo en una instalación limpia, sin "
+            "credenciales ya cifradas):\n"
+            '  python -c "from cryptography.fernet import Fernet; '
+            'print(Fernet.generate_key().decode())"'
+        )
+
+    # Validar el formato antes de cachear: una llave malformada produciría
+    # errores confusos recién al primer cifrado/descifrado.
+    try:
+        Fernet(key.encode())
+    except Exception as e:
+        raise RuntimeError(
+            f"MASTER_ENC_KEY tiene un formato inválido para Fernet: {e}. "
+            "Debe ser una clave base64 url-safe de 32 bytes."
+        )
+
     _MASTER_KEY_CACHE = key
     return key
 
-def _persist_key_to_env(key: str):
-    """Guarda la llave en .env, reemplazando la entrada vacía si existe, o haciendo append."""
-    env_path = Path(".env")
-    
-    # Verificar si ya existe (race condition safety)
-    if env_path.exists():
-        content = env_path.read_text(encoding="utf-8")
-        if "MASTER_ENC_KEY=" in content:
-            new_lines = []
-            replaced = False
-            for line in content.splitlines():
-                if line.startswith("MASTER_ENC_KEY="):
-                    if line.strip() == "MASTER_ENC_KEY=":
-                        new_lines.append(f"MASTER_ENC_KEY={key}")
-                        replaced = True
-                    else:
-                        return # Ya tiene un valor, no sobreescribir
-                else:
-                    new_lines.append(line)
-            
-            if replaced:
-                env_path.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
-                return
-
-    marker = "# === Auto-generada por app/core/crypto.py ==="
-    with open(env_path, "a", encoding="utf-8") as f:
-        f.write(f"\n{marker}\n")
-        f.write(f"# Llave maestra para cifrar credenciales de proveedores en DB.\n")
-        f.write(f"# SI LA PIERDES, todas las credenciales se vuelven ilegibles.\n")
-        f.write(f"# Backupeala en un gestor de passwords seguro.\n")
-        f.write(f"MASTER_ENC_KEY={key}\n")
 
 def _get_fernet() -> Fernet:
     return Fernet(get_master_key().encode())
