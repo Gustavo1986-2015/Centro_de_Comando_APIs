@@ -2,6 +2,7 @@ from fastapi import APIRouter, Request, Depends, status, Query, HTTPException, H
 import asyncio
 import json
 import logging
+import os
 
 from app.database import get_session
 from app.models.db_models import NormalizedRCEvent
@@ -23,7 +24,15 @@ router = APIRouter(prefix="/schmitz", tags=["Schmitz"])
 router_spec = APIRouter(tags=["Schmitz"])
 
 # In-memory queue for webhook batching
-_webhook_queue = asyncio.Queue()
+# Cola acotada a propósito. Sin techo, si el consumidor se atasca (BD lenta,
+# disco saturado) la cola crece sin límite hasta agotar la memoria del proceso.
+#
+# Dimensionada para la prueba de Schmitz: 80 ev/s sostenidos. El consumidor
+# drena hasta 200 ev/s, así que 20.000 posiciones equivalen a ~4 minutos de
+# tráfico acumulado — margen de sobra para un pico o una pausa del disco, y
+# techo firme para no caer por memoria.
+_WEBHOOK_QUEUE_MAXSIZE = int(os.getenv("WEBHOOK_QUEUE_MAXSIZE", "20000"))
+_webhook_queue = asyncio.Queue(maxsize=_WEBHOOK_QUEUE_MAXSIZE)
 _batch_task = None
 
 def _validate_schmitz_auth(request: Request, env: str = Query("prod")):
@@ -137,8 +146,11 @@ async def _batch_processor_loop():
             # Despertar worker de forma segura en el main thread
             try:
                 from app.worker.processor import trigger_worker
-                # Avisar al worker que hay datos listos, el env es el del primer elemento del batch
-                trigger_worker("schmitz", batch[0][1])
+                # Un mismo lote puede mezclar entornos (prod y test llegan por el
+                # mismo endpoint). Despertar solo el del primer elemento dejaba
+                # los del otro entorno esperando al ciclo natural del worker.
+                for env_despertar in {env_val for _, env_val in batch}:
+                    trigger_worker("schmitz", env_despertar)
             except Exception as e:
                 logger.warning(f"Excepción capturada en schmitz: {e}")
             
@@ -175,7 +187,17 @@ async def schmitz_webhook(
             )
             return {"status": "accepted", "note": "rate limit"}
 
-        _webhook_queue.put_nowait((payload, env))
+        try:
+            _webhook_queue.put_nowait((payload, env))
+        except asyncio.QueueFull:
+            # El consumidor no da abasto. Se descarta el payload dejando rastro:
+            # aceptar y perder en silencio sería peor que un log explícito.
+            logger.error(
+                f"[SCHMITZ-{env}] Cola de ingesta llena ({_WEBHOOK_QUEUE_MAXSIZE}). "
+                f"Payload descartado. Revisar si el worker o la BD están atascados."
+            )
+            return {"status": "accepted", "note": "cola saturada"}
+
         provider_health.set_mode("schmitz", env, "push")
         provider_health.report_fetch_ok("schmitz", env)
     except Exception as e:
@@ -219,7 +241,17 @@ async def schmitz_json_data(
             )
             return {"status": "accepted", "note": "rate limit"}
 
-        _webhook_queue.put_nowait((payload, env))
+        try:
+            _webhook_queue.put_nowait((payload, env))
+        except asyncio.QueueFull:
+            # El consumidor no da abasto. Se descarta el payload dejando rastro:
+            # aceptar y perder en silencio sería peor que un log explícito.
+            logger.error(
+                f"[SCHMITZ-{env}] Cola de ingesta llena ({_WEBHOOK_QUEUE_MAXSIZE}). "
+                f"Payload descartado. Revisar si el worker o la BD están atascados."
+            )
+            return {"status": "accepted", "note": "cola saturada"}
+
         provider_health.set_mode("schmitz", env, "push")
         provider_health.report_fetch_ok("schmitz", env)
     except Exception as e:

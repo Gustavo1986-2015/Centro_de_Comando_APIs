@@ -5,6 +5,7 @@ cualquier import de app.* que suceda en los módulos de test ya vea los valores 
 import os
 import sys
 import pytest
+import tempfile
 from pathlib import Path
 from cryptography.fernet import Fernet
 
@@ -20,6 +21,14 @@ os.environ["DASHBOARD_PASSWORD"] = "test_pass_123"
 os.environ["MASTER_ENC_KEY"] = _TEST_FERNET_KEY
 os.environ["RC_TOKEN_ENC_KEY"] = _TEST_FERNET_KEY
 
+# Log aislado: la suite provoca errores a propósito (descifrados que fallan,
+# respuestas de error de proveedores, tokens inválidos). Sin esto se escriben
+# en el mismo archivo que la aplicación y aparecen en la consola del panel
+# mezclados con los errores reales, que es lo que hay que poder distinguir.
+_TEST_LOG_DIR = Path(tempfile.gettempdir()) / "cca_test_logs"
+_TEST_LOG_DIR.mkdir(parents=True, exist_ok=True)
+os.environ["LOG_FILE_PATH"] = str(_TEST_LOG_DIR / "tests.jsonl")
+
 # Limpiar caché interno de crypto.py para que use la key de test (no la de .env)
 try:
     import app.core.crypto as _crypto
@@ -28,6 +37,18 @@ except Exception:
     pass
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
+
+
+@pytest.fixture(scope="session", autouse=True)
+def limpiar_log_de_tests():
+    """Arranca cada sesión con el log de tests vacío."""
+    destino = Path(os.environ["LOG_FILE_PATH"])
+    try:
+        if destino.exists():
+            destino.unlink()
+    except OSError:
+        pass
+    yield destino
 
 
 @pytest.fixture
