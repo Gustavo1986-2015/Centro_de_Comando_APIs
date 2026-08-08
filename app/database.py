@@ -262,6 +262,19 @@ def get_engine(provider: str, env: str = "prod"):
             
         # Crear tablas
         Base.metadata.create_all(bind=engine, tables=target_tables)
+
+        # Índice para purga y estadísticas en bases creadas antes de su
+        # incorporación al modelo. CREATE INDEX IF NOT EXISTS es idempotente.
+        if provider != "system_config":
+            try:
+                with engine.connect() as conn:
+                    conn.exec_driver_sql(
+                        "CREATE INDEX IF NOT EXISTS idx_status_created "
+                        "ON normalized_rc_events (status, created_at)"
+                    )
+                    conn.commit()
+            except Exception as e:
+                logger.warning(f"No se pudo crear idx_status_created en {provider}/{env}: {e}")
         
         # Migración automática
         if provider == "system_config":
