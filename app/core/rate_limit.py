@@ -30,12 +30,93 @@ _LOCK = threading.Lock()
 WINDOW_SECONDS = 60
 
 
-def _limit() -> int:
-    """Peticiones permitidas por ventana. Configurable sin tocar código."""
+# Límite por defecto: 12.000 req/min = 200 req/s.
+#
+# Dimensionado sobre la prueba de certificación de Schmitz: 80 eventos/segundo
+# sostenidos durante 24 horas (4.800/min). El default deja 2,5x de margen sobre
+# ese pico para absorber ráfagas sin rechazar tráfico legítimo, y aun así corta
+# un reenvío descontrolado.
+#
+# Un límite por debajo del volumen real del proveedor no protege nada: hace
+# fallar la integración. Antes estaba en 600/min, que habría rechazado el 87%
+# del tráfico de esa prueba.
+_DEFAULT_LIMIT = 12000
+
+
+# Caché del límite configurado por proveedor en la base.
+# Consultar la BD en cada petición sería inviable con caudales de decenas de
+# peticiones por segundo, y el valor cambia solo cuando alguien lo edita en el
+# panel: 30 segundos de desfase es un intercambio razonable.
+_DB_LIMIT_TTL = 30
+_db_limit_cache: dict[str, tuple[float, int | None]] = {}
+
+
+def _limit_desde_db(provider: str) -> int | None:
+    """Límite configurado en el panel para este proveedor, o None si no hay."""
+    ahora = time.time()
+    cacheado = _db_limit_cache.get(provider)
+    if cacheado and cacheado[0] > ahora:
+        return cacheado[1]
+
+    valor = None
     try:
-        return max(int(os.getenv("WEBHOOK_RATE_LIMIT_PER_MIN", "600")), 1)
+        from app.database import get_session
+        from app.models.config_models import ProviderConfig
+        db = get_session("system_config", "global")
+        try:
+            fila = (
+                db.query(ProviderConfig.rate_limit_per_min)
+                .filter(ProviderConfig.provider_name == provider.lower())
+                .filter(ProviderConfig.rate_limit_per_min.isnot(None))
+                .first()
+            )
+            if fila and fila[0]:
+                valor = max(int(fila[0]), 1)
+        finally:
+            db.close()
+    except Exception:
+        # Ante cualquier problema con la base se cae al límite por entorno:
+        # el control de caudal no debe depender de que la BD responda.
+        valor = None
+
+    _db_limit_cache[provider] = (ahora + _DB_LIMIT_TTL, valor)
+    return valor
+
+
+def invalidate_limit_cache(provider: str | None = None):
+    """Fuerza la relectura tras guardar la configuración desde el panel."""
+    if provider:
+        _db_limit_cache.pop(provider.lower(), None)
+    else:
+        _db_limit_cache.clear()
+
+
+def _limit(provider: str | None = None) -> int:
+    """
+    Peticiones permitidas por ventana para una integración.
+
+    Precedencia:
+      1. Lo configurado en el panel para ese proveedor (columna rate_limit_per_min)
+      2. Variable de entorno por proveedor:  WEBHOOK_RATE_LIMIT_SCHMITZ=20000
+      3. Variable de entorno global:         WEBHOOK_RATE_LIMIT_PER_MIN=12000
+      4. Default del código
+    """
+    if provider:
+        de_db = _limit_desde_db(provider)
+        if de_db:
+            return de_db
+
+        especifico = os.getenv(f"WEBHOOK_RATE_LIMIT_{provider.upper()}")
+        if especifico:
+            try:
+                return max(int(especifico), 1)
+            except (TypeError, ValueError):
+                pass
+
+    try:
+        return max(int(os.getenv("WEBHOOK_RATE_LIMIT_PER_MIN", str(_DEFAULT_LIMIT))), 1)
     except (TypeError, ValueError):
-        return 600
+        return _DEFAULT_LIMIT
 
 
 def _key(provider: str, env: str) -> str:
@@ -50,7 +131,7 @@ def check_rate_limit(provider: str, env: str) -> tuple[bool, int, int]:
     Cuando se supera el límite, retry_after indica cuántos segundos faltan para
     que la petición más antigua salga de la ventana.
     """
-    limit = _limit()
+    limit = _limit(provider)
     now = time.time()
     k = _key(provider, env)
 
@@ -74,7 +155,7 @@ def check_rate_limit(provider: str, env: str) -> tuple[bool, int, int]:
 
 def get_usage(provider: str, env: str) -> dict:
     """Uso actual de una integración, para exponer en el panel de salud."""
-    limit = _limit()
+    limit = _limit(provider)
     now = time.time()
     k = _key(provider, env)
 
@@ -92,3 +173,4 @@ def reset():
     """Solo para tests."""
     with _LOCK:
         _HITS.clear()
+    _db_limit_cache.clear()

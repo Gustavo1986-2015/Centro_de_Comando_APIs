@@ -215,6 +215,7 @@
                             <th title="Contraseña para RC. Dejar en blanco para no modificar. (Cifrado en BD)">RC Password</th>
                             <th title="Frecuencia en minutos para purgar datos viejos de la base de datos interna.">Purga (min)</th>
                             <th title="Frecuencia en segundos en que el worker escanea y procesa datos nuevos.">Ejecución (seg)</th>
+                            <th title="Peticiones por minuto que acepta el webhook de este proveedor. Vacío = usar el límite global del sistema. No aplica a proveedores PULL.">Límite Push (req/min)</th>
                             <th title="Motor de base de datos usado para la cola interna de procesamiento.">Motor Cola</th>
 
                         </tr>
@@ -226,6 +227,45 @@
             </div>
         </div>
         
+        <!-- Mantenimiento de bases de datos. La cola SQLite crece durante el día
+             y solo se purga en el intervalo configurado; bajo carga sostenida
+             conviene ver el tamaño real y poder forzar la purga. -->
+        <div class="recent-section" style="margin-top: 2rem;">
+            <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:1rem;">
+                <h2 style="margin:0;">Almacenamiento por Integración</h2>
+                <div style="display:flex; align-items:center; gap:0.8rem;">
+                    <span id="db-total-size" style="font-size:0.85rem; color:var(--color-gray-label);"></span>
+                    <button class="btn-save" onclick="loadDbStats()" style="padding:0.4rem 0.9rem; font-size:0.82rem;">Actualizar</button>
+                </div>
+            </div>
+
+            <div style="font-size:0.78rem; color:var(--color-gray-label); margin:0.6rem 0 1rem;">
+                La purga respalda a JSONL y elimina solo eventos ya despachados.
+                Los pendientes y los que están en proceso nunca se tocan.
+            </div>
+
+            <div style="overflow-x:auto;">
+                <table class="db-maint-table">
+                    <thead>
+                        <tr>
+                            <th>Integración</th>
+                            <th>Tamaño</th>
+                            <th>Total eventos</th>
+                            <th>Pendientes</th>
+                            <th>En proceso</th>
+                            <th>Enviados</th>
+                            <th>Fallidos</th>
+                            <th>Purgable</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody id="db-maint-body">
+                        <tr><td colspan="9" style="text-align:center; color:var(--color-gray-label); padding:1.5rem;">Cargando...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
         <div class="recent-section" style="margin-top: 2rem;">
             <h2>Retención de Logs</h2>
             <div style="display: flex; flex-direction: column; gap: 1rem; margin-top: 1rem;">
@@ -461,7 +501,7 @@
                 <div style="display:flex; gap:0.6rem; align-items:center; flex-wrap:wrap;">
                     <input type="text" id="console-filter" placeholder="Filtrar texto..." oninput="renderConsole()"
                            class="form-control" style="width:200px; padding:0.4rem 0.7rem; font-size:0.82rem;">
-                    <select id="console-level" class="form-control" onchange="renderConsole()"
+                    <select id="console-level" class="form-control" onchange="recargarConsolaPorNivel()"
                             style="width:auto; padding:0.4rem 0.7rem; font-size:0.82rem; background-color:var(--color-black); cursor:pointer;">
                         <option value="ALL">Todos los niveles</option>
                         <option value="ERROR">Solo errores</option>
@@ -470,6 +510,17 @@
                     </select>
                     <label class="console-toggle" title="Seguir la salida automáticamente">
                         <input type="checkbox" id="console-autoscroll" checked> Auto-scroll
+                    </label>
+                    <span class="console-sep"></span>
+                    <label class="console-toggle" title="Detalle que el servidor escribe al log. No persiste al reiniciar.">
+                        Detalle servidor:
+                        <select id="server-log-level" class="form-control" onchange="cambiarNivelServidor()"
+                                style="width:auto; padding:0.4rem 0.6rem; font-size:0.8rem; background-color:var(--color-black); cursor:pointer; margin-left:0.3rem;">
+                            <option value="ERROR">Solo errores</option>
+                            <option value="WARNING">Advertencias</option>
+                            <option value="INFO">Normal</option>
+                            <option value="DEBUG">Detallado</option>
+                        </select>
                     </label>
                     <button class="btn-save" onclick="clearConsole()" style="padding:0.4rem 0.9rem; font-size:0.82rem;">Limpiar</button>
                 </div>

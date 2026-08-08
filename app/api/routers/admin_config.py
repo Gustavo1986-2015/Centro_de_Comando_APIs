@@ -34,6 +34,8 @@ class ConfigUpdate(BaseModel):
     webhook_auth_header: str | None = None
     fetch_config: str | None = None
     enable_state_dedup: bool = True
+    # Techo de peticiones por minuto del webhook. None = usar el límite global.
+    rate_limit_per_min: int | None = None
     # Contraseña de administrador, requerida solo al ACTIVAR el modo simulado.
     # No se envía en operaciones que no lo activan.
     admin_password: str | None = None
@@ -237,6 +239,8 @@ def get_all_configs(_: None = Depends(verify_dashboard_auth)):
             "run_interval_sec": c.run_interval_sec,
             "queue_backend": c.queue_backend if hasattr(c, 'queue_backend') and c.queue_backend else "sqlite",
             "provider_type": getattr(c, 'provider_type', 'pull') or 'pull',
+            # NULL = usar el límite global; solo aplica a proveedores PUSH
+            "rate_limit_per_min": getattr(c, 'rate_limit_per_min', None),
             "enable_state_dedup": bool(getattr(c, 'enable_state_dedup', True))
         } for c in configs]
     finally:
@@ -297,6 +301,18 @@ def update_configs(updates: List[ConfigUpdate], _: None = Depends(verify_dashboa
                         f"Modo simulado desactivado para {conf.provider_name}/{conf.env}. "
                         f"Los eventos vuelven a enviarse a Recurso Confiable."
                     )
+
+                # Un valor <= 0 se interpreta como "sin límite propio": vuelve al global
+                nuevo_limite = u.rate_limit_per_min if (u.rate_limit_per_min or 0) > 0 else None
+                if nuevo_limite != getattr(conf, 'rate_limit_per_min', None):
+                    conf.rate_limit_per_min = nuevo_limite
+                    # El limitador cachea este valor 30s: invalidar para que el
+                    # cambio tenga efecto inmediato y no a mitad de una prueba.
+                    try:
+                        from app.core.rate_limit import invalidate_limit_cache
+                        invalidate_limit_cache(conf.provider_name)
+                    except Exception as e:
+                        logger.warning(f"No se pudo invalidar la caché del limitador: {e}")
 
                 conf.use_mock = u.use_mock
                 conf.purge_interval_min = u.purge_interval_min

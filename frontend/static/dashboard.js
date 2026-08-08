@@ -538,6 +538,91 @@
             banner.style.display = 'flex';
         }
 
+
+        // ─── Mantenimiento de bases de datos ─────────────────────────────────
+        async function loadDbStats() {
+            const tbody = document.getElementById('db-maint-body');
+            if (!tbody) return;
+            tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;color:var(--color-gray-label);padding:1.5rem;">Cargando...</td></tr>';
+
+            try {
+                const res = await fetch('/api/maintenance/db-stats');
+                const data = await res.json();
+
+                const total = document.getElementById('db-total-size');
+                if (total) total.textContent = `${data.total_mb} MB en total`;
+
+                if (!data.databases || !data.databases.length) {
+                    tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;color:var(--color-gray-label);padding:1.5rem;">Sin bases de datos operativas.</td></tr>';
+                    return;
+                }
+
+                tbody.innerHTML = data.databases.map(db => {
+                    const b = db.by_status;
+                    // El color acompaña el tamaño: a partir de 1 GB conviene mirarlo.
+                    const cls = db.size_mb > 1024 ? 'size-alto'
+                              : db.size_mb > 256  ? 'size-medio' : '';
+                    const puedePurgar = db.purgeable > 0;
+                    return `<tr>
+                        <td><strong>${db.provider.toUpperCase()}</strong>
+                            <span class="env-tag env-${db.env}">${db.env.toUpperCase()}</span></td>
+                        <td class="${cls}"><strong>${db.size_mb.toLocaleString()} MB</strong></td>
+                        <td>${db.total_events.toLocaleString()}</td>
+                        <td>${b.pending.toLocaleString()}</td>
+                        <td>${b.processing.toLocaleString()}</td>
+                        <td>${b.sent.toLocaleString()}</td>
+                        <td class="${b.failed > 0 ? 'size-alto' : ''}">${b.failed.toLocaleString()}</td>
+                        <td><strong>${db.purgeable.toLocaleString()}</strong></td>
+                        <td>
+                            <button class="btn-purge" ${puedePurgar ? '' : 'disabled'}
+                                    onclick="purgeNow('${db.provider}','${db.env}',${db.purgeable},event)"
+                                    title="${puedePurgar ? 'Respalda a JSONL y elimina los eventos ya despachados' : 'No hay eventos despachados para purgar'}">
+                                Purgar
+                            </button>
+                        </td>
+                    </tr>`;
+                }).join('');
+            } catch (e) {
+                console.error('Error cargando estadisticas de BD', e);
+                tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;color:var(--color-red);padding:1.5rem;">Error al cargar las estadísticas.</td></tr>';
+            }
+        }
+
+        async function purgeNow(provider, env, purgeable, ev) {
+            const ok = confirm(
+                `Purgar ${provider.toUpperCase()}/${env.toUpperCase()}\n\n` +
+                `Se respaldarán a JSONL y se eliminarán ${purgeable.toLocaleString()} eventos ya despachados.\n` +
+                `Los pendientes y los que están en proceso no se tocan.\n\n¿Continuar?`
+            );
+            if (!ok) return;
+
+            const btn = ev ? ev.currentTarget : null;
+            const original = btn ? btn.textContent : '';
+            if (btn) { btn.disabled = true; btn.textContent = 'Purgando...'; }
+
+            try {
+                const res = await fetch(`/api/maintenance/purge/${provider}/${env}`, { method: 'POST' });
+                const data = await res.json().catch(() => ({}));
+                if (res.ok) {
+                    if (btn) btn.textContent = 'Listo';
+                    // El VACUUM devuelve al sistema el espacio de las filas borradas:
+                    // mostrar cuánto se recuperó hace visible el efecto real.
+                    if (data.freed_mb > 0) {
+                        alert(`Purga completada.\n\n` +
+                              `Espacio liberado: ${data.freed_mb} MB\n` +
+                              `${data.size_before_mb} MB  ->  ${data.size_after_mb} MB`);
+                    }
+                    setTimeout(loadDbStats, 800);
+                } else {
+                    alert('No se pudo purgar:\n\n' + (data.detail || `HTTP ${res.status}`));
+                    if (btn) { btn.disabled = false; btn.textContent = original; }
+                }
+            } catch (e) {
+                alert('Error de red durante la purga.');
+                if (btn) { btn.disabled = false; btn.textContent = original; }
+            }
+        }
+
         // Vistas
         function switchView(view) {
             document.getElementById('view-dashboard').style.display = view === 'dashboard' ? 'flex' : 'none';
@@ -576,6 +661,7 @@
             if (view === 'config') {
                 loadConfig();
                 loadRetentionConfig();
+                loadDbStats();
             } else if (view === 'simulator') {
                 loadSimulator();
             } else if (view === 'history') {
@@ -1279,6 +1365,14 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
         
         // UI Helpers
         // Configuración
+        // Un proveedor PULL no recibe peticiones entrantes: es el Hub quien sale
+        // a consultarlo. Se determina por su tipo declarado, no por su nombre:
+        // antes estaba hardcodeado a 'protrack' y cualquier PULL nuevo se
+        // habría mostrado como si aceptara webhooks.
+        function esPull(c) {
+            return (c.provider_type || 'pull').toLowerCase() === 'pull';
+        }
+
         async function loadConfig() {
             try {
                 const res = await fetch('/api/config');
@@ -1339,12 +1433,19 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
                                     <span class="slider"></span>
                                 </label>
                             </td>
-                            <td>${c.provider_name.toLowerCase() === 'protrack' ? '<input class="form-control" type="text" disabled value="--- N/A ---" style="width: 100px; color: var(--color-gray); background: var(--level-1); text-align: center; border: 1px dashed var(--card-border);" title="No aplica para proveedores PULL">' : `<input class="form-control" type="text" id="webhook_header_${c._originalIdx}" value="${c.webhook_auth_header || 'x-api-key'}" style="width: 100px;">`}</td>
-                            <td>${c.provider_name.toLowerCase() === 'protrack' ? '<input class="form-control" type="text" disabled value="--- N/A (Es PULL) ---" style="color: var(--color-gray); background: var(--level-1); font-style: italic; border: 1px dashed var(--card-border);" title="No aplica para proveedores PULL">' : `<input class="form-control" type="password" id="webhook_auth_${c._originalIdx}" placeholder="${c.has_webhook_auth ? '•••••••• (Cifrado)' : ''}" title="Dejar vacío para mantener el actual">`}</td>
+                            <td>${esPull(c) ? '<input class="form-control" type="text" disabled value="--- N/A ---" style="width: 100px; color: var(--color-gray); background: var(--level-1); text-align: center; border: 1px dashed var(--card-border);" title="No aplica para proveedores PULL">' : `<input class="form-control" type="text" id="webhook_header_${c._originalIdx}" value="${c.webhook_auth_header || 'x-api-key'}" style="width: 100px;">`}</td>
+                            <td>${esPull(c) ? '<input class="form-control" type="text" disabled value="--- N/A (Es PULL) ---" style="color: var(--color-gray); background: var(--level-1); font-style: italic; border: 1px dashed var(--card-border);" title="No aplica para proveedores PULL">' : `<input class="form-control" type="password" id="webhook_auth_${c._originalIdx}" placeholder="${c.has_webhook_auth ? '•••••••• (Cifrado)' : ''}" title="Dejar vacío para mantener el actual">`}</td>
                             <td><input class="form-control" type="text" id="user_${c._originalIdx}" value="${c.rc_user || ''}"></td>
                             <td><input class="form-control" type="password" id="pass_${c._originalIdx}" placeholder="${c.has_rc_password ? '•••••••• (Cifrado)' : ''}" title="Dejar vacío para mantener el actual"></td>
                             <td><input class="form-control" type="number" id="purge_${c._originalIdx}" value="${c.purge_interval_min}" style="width: 80px;"></td>
                             <td><input class="form-control" type="number" id="run_int_${c._originalIdx}" value="${c.run_interval_sec}" style="width: 80px;"></td>
+                            <td>${esPull(c)
+                                ? '<input class="form-control" type="text" disabled value="--- N/A (Es PULL) ---" style="width:110px; color: var(--color-gray); background: var(--level-1); font-style: italic; border: 1px dashed var(--card-border);" title="Los proveedores PULL no reciben peticiones: es el Hub quien los consulta">'
+                                : `<input class="form-control" type="number" id="ratelimit_${c._originalIdx}" min="0" step="100"
+                                          value="${c.rate_limit_per_min || ''}" placeholder="Global"
+                                          style="width:110px;"
+                                          title="Peticiones por minuto que acepta este webhook. Vacío o 0 = usar el límite global del sistema.">`}
+                            </td>
                             <td>
                                 <select id="queue_${c._originalIdx}" class="form-control" style="width: 100px; background-color: var(--level-0); color: var(--color-text); cursor: pointer;">
                                     <option value="sqlite" ${c.queue_backend === 'sqlite' ? 'selected' : ''}>SQLite</option>
@@ -1373,6 +1474,9 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
                 webhook_auth_header: document.getElementById(`webhook_header_${idx}`) ? document.getElementById(`webhook_header_${idx}`).value : null,
                 purge_interval_min: parseInt(document.getElementById(`purge_${idx}`).value) || 15,
                 run_interval_sec: parseInt(document.getElementById(`run_int_${idx}`).value) || 5,
+                rate_limit_per_min: document.getElementById(`ratelimit_${idx}`)
+                    ? (parseInt(document.getElementById(`ratelimit_${idx}`).value) || null)
+                    : null,
                 queue_backend: document.getElementById(`queue_${idx}`).value,
                 enable_state_dedup: document.getElementById(`dedup_${idx}`) ? document.getElementById(`dedup_${idx}`).checked : c.enable_state_dedup
             }));
@@ -1643,6 +1747,8 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
             const nivel  = document.getElementById('console-level')?.value || 'ALL';
             const minimo = nivel === 'ALL' ? -1 : (_LEVEL_RANK[nivel] ?? -1);
 
+            // El historial ya viene filtrado por nivel desde el servidor; este
+            // filtro cubre las líneas nuevas que llegan por el stream en vivo.
             const visibles = _consoleLines.filter(l => {
                 if (minimo >= 0 && (_LEVEL_RANK[l.level] ?? 1) < minimo) return false;
                 if (filtro && !(`${l.message} ${l.logger}`.toLowerCase().includes(filtro))) return false;
@@ -1682,9 +1788,78 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
             renderConsole();
         }
 
+        // Al cambiar el nivel se recarga desde el servidor: el filtro del lado del
+        // cliente solo veía las líneas ya cargadas, así que buscar errores de hace
+        // unos minutos devolvía una consola vacía aunque existieran en el archivo.
+        async function recargarConsolaPorNivel() {
+            const nivel = document.getElementById('console-level')?.value || 'ALL';
+            const cont = document.getElementById('console-output');
+            if (cont) cont.innerHTML = '<div class="console-line"><span class="c-msg">Buscando en el historial...</span></div>';
+
+            try {
+                const url = nivel === 'ALL'
+                    ? '/api/logs/recent?n=300'
+                    : `/api/logs/recent?n=300&level=${encodeURIComponent(nivel)}`;
+                const res = await fetch(url);
+                const data = await res.json();
+                _consoleLines = data.logs || [];
+            } catch (e) {
+                console.warn('No se pudo recargar el historial de logs:', e);
+            }
+            renderConsole();
+        }
+
+
+        // Nivel de detalle que el SERVIDOR escribe al log. Distinto del selector
+        // de arriba, que filtra lo que ya está escrito: esto cambia qué se
+        // registra de ahora en adelante, sin reiniciar el contenedor ni tocar
+        // el .env del servidor.
+        async function cargarNivelServidor() {
+            try {
+                const res = await fetch('/api/logs/level');
+                const data = await res.json();
+                const sel = document.getElementById('server-log-level');
+                if (sel && data.app) sel.value = data.app;
+            } catch (e) {
+                console.warn('No se pudo leer el nivel de log del servidor:', e);
+            }
+        }
+
+        async function cambiarNivelServidor() {
+            const sel = document.getElementById('server-log-level');
+            if (!sel) return;
+            const nivel = sel.value;
+
+            if (nivel === 'DEBUG') {
+                const ok = confirm(
+                    'Modo detallado\n\n' +
+                    'El servidor registrará el detalle interno del procesamiento. ' +
+                    'Genera mucho más volumen de log.\n\n' +
+                    'No persiste: al reiniciar vuelve al nivel configurado.\n\n¿Continuar?'
+                );
+                if (!ok) { cargarNivelServidor(); return; }
+            }
+
+            sel.disabled = true;
+            try {
+                const res = await fetch(`/api/logs/level?level=${encodeURIComponent(nivel)}`, { method: 'POST' });
+                if (!res.ok) {
+                    const d = await res.json().catch(() => ({}));
+                    alert('No se pudo cambiar el nivel:\n\n' + (d.detail || `HTTP ${res.status}`));
+                    cargarNivelServidor();
+                }
+            } catch (e) {
+                alert('Error de red al cambiar el nivel de log.');
+                cargarNivelServidor();
+            } finally {
+                sel.disabled = false;
+            }
+        }
+
         async function startConsole() {
             if (_consoleSource) return;   // ya está conectada
             _consoleStatus('connecting');
+            cargarNivelServidor();
 
             // Carga inicial: últimas líneas para no arrancar en blanco
             try {

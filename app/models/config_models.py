@@ -28,6 +28,11 @@ class ProviderConfig(Base):
     provider_type = Column(String, default="pull")       # "push" | "pull"
     enable_state_dedup = Column(Boolean, default=True)   # Anti-State Flooding (PULL ON, PUSH OFF por migración)
 
+    # Techo de peticiones por minuto del webhook de este proveedor.
+    # NULL = usar el límite global. Solo aplica a proveedores PUSH: los PULL no
+    # reciben peticiones entrantes, es el Hub quien sale a consultarlos.
+    rate_limit_per_min = Column(Integer, nullable=True)
+
 class ProviderDictionary(Base):
     """Almacena pares Key-Value del diccionario de metadatos (Ej. IMEI -> Placa)."""
     __tablename__ = "provider_dictionary"
