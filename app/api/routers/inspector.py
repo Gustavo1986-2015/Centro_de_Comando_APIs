@@ -1,10 +1,9 @@
 from fastapi import APIRouter, Request, Body, HTTPException, Depends
 from app.api.routers.dashboard import verify_dashboard_auth
-from typing import Dict, Any, Optional
+from typing import Dict, Any
 from datetime import datetime, timezone
 import asyncio
 import requests
-import uuid
 import ipaddress
 import socket
 import urllib.parse

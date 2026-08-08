@@ -94,7 +94,7 @@ async def measure_push_latency(request: Request, call_next):
 
 
 if __name__ == "__main__":
-    import uvicorn, os
+    import uvicorn
     is_dev = os.getenv("APP_ENV", "production").lower() == "development"
     uvicorn.run(
         "main:app",

@@ -2,7 +2,6 @@ import os
 import logging
 from app.core.queue_interface import MessageQueueInterface
 from app.core.sqlite_queue import SQLiteQueue
-from app.core.redis_queue import RedisQueue
 
 logger = logging.getLogger(__name__)
 

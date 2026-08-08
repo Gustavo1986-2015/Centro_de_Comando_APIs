@@ -193,7 +193,6 @@ def check_and_migrate_db():
                 conn.commit()
     except Exception as e:
         logger.debug(f"Migración idempotente omitida o error esperado BD: {e}")
-        pass
 
 def check_and_migrate_provider_db(provider: str, env: str):
     """Ejecuta una migración automática para agregar campos faltantes en normalized_rc_events."""
@@ -225,7 +224,6 @@ def check_and_migrate_provider_db(provider: str, env: str):
             conn.commit()
     except Exception as e:
         logger.warning(f"Migracion idempotente omitida: {e}")
-        pass
 
 def get_engine(provider: str, env: str = "prod"):
     """Devuelve (y crea si no existe) el motor SQLite para el proveedor y entorno dados."""

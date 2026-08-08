@@ -117,10 +117,3 @@ def cleanup_stale_entries():
         logger.info(f"Dedup cache cleanup: {len(stale)} entradas expiradas eliminadas.")
 
 
-def get_cache_stats() -> dict:
-    """Retorna estadísticas del cache (para dashboard/monitoring)."""
-    with _LOCK:
-        return {
-            "total_entries": len(_STATE_CACHE),
-            "ttl_seconds": _TTL_SECONDS
-        }
