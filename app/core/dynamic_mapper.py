@@ -7,6 +7,38 @@ from app.schemas.canonical import RCCanonicalModel
 
 logger = logging.getLogger("DynamicMapper")
 
+_VALORES_VERDADEROS = {"true", "1", "on", "yes", "y", "si", "sí", "t"}
+_VALORES_FALSOS = {"false", "0", "off", "no", "n", "f", ""}
+
+
+def _a_booleano(valor):
+    """
+    Interpreta el estado de un sensor booleano tolerando las formas en que los
+    proveedores lo reportan: booleano nativo, número, o texto.
+
+    bool() no sirve acá: bool("false") y bool("0") son True, así que un
+    proveedor que reporte la ignición como cadena mandaría a RC el estado
+    invertido. Es dato incorrecto, no ausente, que es peor.
+    """
+    if valor is None:
+        return None
+    if isinstance(valor, bool):
+        return valor
+    if isinstance(valor, (int, float)):
+        return valor != 0
+
+    texto = str(valor).strip().lower()
+    if texto in _VALORES_VERDADEROS:
+        return True
+    if texto in _VALORES_FALSOS:
+        return False
+
+    # Valor no reconocido: se informa y se trata como no disponible en lugar de
+    # inventar un estado que el operador podría leer como real.
+    logger.warning(f"Valor booleano no reconocido en telemetría: {valor!r}. Se envía como nulo.")
+    return None
+
+
 class DynamicMapper:
     """
     Clase utilitaria para transformar dinámicamente un payload crudo de un proveedor
@@ -177,7 +209,7 @@ class DynamicMapper:
         temperature = parse_float(DynamicMapper._extract_value(payload, schema.get("temperature", "")))
         
         ignition_raw = DynamicMapper._extract_value(payload, schema.get("ignition", ""))
-        ignition = bool(ignition_raw) if ignition_raw is not None else None
+        ignition = _a_booleano(ignition_raw)
         
         serial_num = DynamicMapper._extract_value(payload, schema.get("serial_number", ""))
         if serial_num is None and original_imei != "UNKNOWN":
@@ -293,8 +325,14 @@ class DynamicMapper:
         # Garantía: si nada generó eventos (default desactivado y sin matches),
         # generar al menos el evento base con code="1"
         if not results:
+            # El primer argumento es el payload, no el schema. Pasar el schema
+            # hacía que no se encontrara ningún campo: el evento salía con
+            # chassis_number="UNKNOWN" y coordenadas nulas, y además esquivaba
+            # el control de traducción del diccionario (que se saltea cuando el
+            # chassis ya es "UNKNOWN"). Resultado: un activo no identificable
+            # llegaba a RC pese a la regla de "sin traducción no se envía".
             fallback = DynamicMapper.map_payload(
-                base_schema, base_schema, provider_name, env, require_dict_match
+                payload, base_schema, provider_name, env, require_dict_match
             )
             if fallback is None:
                 return []

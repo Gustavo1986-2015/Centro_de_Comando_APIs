@@ -20,6 +20,12 @@ from fastapi import Request
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # ----- STARTUP -----
+    # Se valida antes que nada: en producción, arrancar sin contraseña dejaría
+    # el panel, el visor de base de datos y las credenciales de los proveedores
+    # accesibles. Mejor no levantar el servicio que levantarlo desprotegido.
+    from app.core.auth import verificar_credenciales_al_arrancar
+    verificar_credenciales_al_arrancar()
+
     import concurrent.futures
     loop = asyncio.get_running_loop()
     thread_pool_size = int(os.getenv("THREAD_POOL_SIZE", "64"))

@@ -8,6 +8,7 @@ from app.database import get_session
 from app.models.db_models import NormalizedRCEvent
 from app.schemas.canonical import RCCanonicalModel
 import threading as _threading
+from collections import deque
 
 class CircuitBreaker:
     """
@@ -278,6 +279,10 @@ async def process_provider_events(provider: str, env: str):
             updates_to_fail = []
             updates_to_sent = []
             
+            # Debe existir en todos los caminos: si el lote falla entero no
+            # hay muestras que registrar, pero la variable se usa al retornar.
+            muestras_latencia = []
+
             if isinstance(batch_outcome, Exception):
                 logger.error(f"Excepción general en sub-lote {batch_idx + 1} para {provider}_{env}: {batch_outcome}")
                 for db_event in batch:
@@ -303,7 +308,7 @@ async def process_provider_events(provider: str, env: str):
                         })
             else:
                 results, elapsed_sec = batch_outcome
-                
+
                 for idx, db_event in enumerate(batch):
                     try:
                         success, job_id, rc_response = results[idx] if results and idx < len(results) else (False, f"rc_err_missing_{int(datetime.now().timestamp())}", "No response mapping for event")
@@ -315,6 +320,34 @@ async def process_provider_events(provider: str, env: str):
                                 "rc_response": rc_response,
                                 "job_id": job_id
                             })
+
+                            # Muestra para la ventana de latencias. Solo los que
+                            # salieron al primer intento: los reintentados miden
+                            # la indisponibilidad del destino, no el rendimiento
+                            # del hub, y distorsionarían la media.
+                            if not (db_event.retry_count or 0):
+                                hub_sec = None
+                                transmision_sec = None
+                                try:
+                                    if db_event.created_at:
+                                        hub_sec = max(
+                                            (datetime.now() - db_event.created_at).total_seconds() - elapsed_sec,
+                                            0.0,
+                                        )
+                                        if hub_sec > 300:      # descartar outliers
+                                            hub_sec = None
+                                    if db_event.date and db_event.created_at:
+                                        transmision_sec = max(
+                                            (db_event.created_at - db_event.date).total_seconds(), 0.0
+                                        )
+                                except (TypeError, AttributeError):
+                                    pass
+
+                                muestras_latencia.append({
+                                    "rc": elapsed_sec,
+                                    "hub": hub_sec,
+                                    "transmission": transmision_sec,
+                                })
                         else:
                             err_lower = str(rc_response).lower()
                             is_auth_error = any(w in err_lower for w in ["unknown_token", "userunk", "autentica", "token", "incorrecta", "contrase", "conn_err", "connection"])
@@ -358,6 +391,11 @@ async def process_provider_events(provider: str, env: str):
             metrics["retry"] = len(updates_to_retry)
             metrics["failed"] = len(updates_to_fail)
             metrics["sent"] = len(updates_to_sent)
+
+            # Alimenta la ventana usada por las estadísticas, que así no
+            # necesitan recorrer la tabla del día.
+            registrar_latencias(provider, env, muestras_latencia)
+
             return metrics, updates_to_retry, updates_to_fail, updates_to_sent
 
         async def bounded_process_single_batch(batch, batch_idx):
@@ -426,48 +464,87 @@ async def process_provider_events(provider: str, env: str):
     except Exception as e:
         logger.error(f"Error general en process_provider_events para {provider}_{env}: {str(e)}")
 
+# ─── Ventana móvil de latencias para estadísticas ───────────────────────────
+# Las medias diarias se calculaban agregando toda la tabla del día cada 5
+# segundos. El costo crece con el tráfico: medido en 31 ms con 15.000 filas,
+# proyecta a varios segundos con los millones de una jornada de carga
+# sostenida — más de lo que dura el propio intervalo.
+#
+# En su lugar se acumulan las latencias de los eventos a medida que se
+# despachan, igual que ya se hace con la latencia de recepción PUSH. El cálculo
+# pasa a ser O(ventana) y no toca la base.
+_LATENCY_WINDOW: dict[str, deque] = {}
+_LATENCY_LOCK = _threading.Lock()
+
+# Una hora de muestras: suficiente para una media representativa sin que la
+# memoria crezca con el tráfico.
+_LATENCY_WINDOW_SEC = 3600
+_LATENCY_MAX_SAMPLES = 20000
+
+
+def registrar_latencias(provider: str, env: str, muestras: list[dict]):
+    """
+    Acumula las latencias de un lote despachado con éxito.
+
+    Solo entran eventos sin reintentos: incluir los reintentados distorsionaría
+    la media con el tiempo de espera del backoff, que no mide el rendimiento
+    del sistema sino la indisponibilidad del destino.
+    """
+    if not muestras:
+        return
+
+    clave = f"{provider.lower()}|{env.lower()}"
+    ahora = time.time()
+
+    with _LATENCY_LOCK:
+        if clave not in _LATENCY_WINDOW:
+            _LATENCY_WINDOW[clave] = deque(maxlen=_LATENCY_MAX_SAMPLES)
+        ventana = _LATENCY_WINDOW[clave]
+        for m in muestras:
+            ventana.append((ahora, m))
+
+        corte = ahora - _LATENCY_WINDOW_SEC
+        while ventana and ventana[0][0] < corte:
+            ventana.popleft()
+
+
+def obtener_promedios(provider: str, env: str) -> dict:
+    """Medias de la ventana vigente. Devuelve None en cada campo si no hay datos."""
+    clave = f"{provider.lower()}|{env.lower()}"
+    corte = time.time() - _LATENCY_WINDOW_SEC
+
+    with _LATENCY_LOCK:
+        ventana = _LATENCY_WINDOW.get(clave)
+        if not ventana:
+            return {"avg_rc": None, "avg_hub": None, "avg_transmission": None, "muestras": 0}
+        vigentes = [m for ts, m in ventana if ts >= corte]
+
+    if not vigentes:
+        return {"avg_rc": None, "avg_hub": None, "avg_transmission": None, "muestras": 0}
+
+    def _media(campo):
+        valores = [v[campo] for v in vigentes if v.get(campo) is not None]
+        return round(sum(valores) / len(valores), 3) if valores else None
+
+    return {
+        "avg_rc": _media("rc"),
+        "avg_hub": _media("hub"),
+        "avg_transmission": _media("transmission"),
+        "muestras": len(vigentes),
+    }
+
+
 def update_daily_stats(provider: str, env: str):
-    """Calcula y actualiza las estadísticas de procesamiento del día de hoy en la BD global mediante agregación SQL."""
-    from datetime import datetime, timezone
-    from sqlalchemy import func
-    local_now = datetime.now().astimezone()
-    today_start_local = datetime.combine(local_now.date(), datetime.min.time()).replace(tzinfo=local_now.tzinfo)
-    today_start = today_start_local.astimezone(timezone.utc).replace(tzinfo=None)
-    
-    db_prov = get_session(provider, env)
-    # Umbral máximo de latencia aceptable para el promedio (5 minutos)
-    HUB_LATENCY_MAX_SEC = 300.0
-    hub_latency_expr = (
-        func.julianday(NormalizedRCEvent.updated_at) - func.julianday(NormalizedRCEvent.created_at)
-    ) * 86400.0 - func.coalesce(NormalizedRCEvent.rc_latency_sec, 0)
+    """Actualiza las medias de latencia del día en la base de configuración."""
+    # Las medias salen de la ventana en memoria alimentada al despachar, no de
+    # agregar la tabla del día. Con carga sostenida ese agregado llegaba a tardar
+    # más que el propio intervalo de actualización.
+    promedios = obtener_promedios(provider, env)
 
     try:
-        # Calcular promedios excluyendo eventos con reintentos para tener la latencia real (happy path)
-        success_stats = db_prov.query(
-            func.avg(NormalizedRCEvent.rc_latency_sec).label('avg_rc'),
-            func.avg(
-                func.max(0.0, hub_latency_expr)
-            ).label('avg_hub'),
-            func.avg(
-                func.max(
-                    0.0,
-                    (func.julianday(NormalizedRCEvent.created_at) - func.julianday(NormalizedRCEvent.date)) * 86400.0
-                )
-            ).label('avg_transmission')
-        ).filter(
-            NormalizedRCEvent.status == "sent",
-            NormalizedRCEvent.created_at >= today_start,
-            func.coalesce(NormalizedRCEvent.retry_count, 0) == 0,
-            # Excluir outliers: eventos con latencia Hub > 5 minutos
-            hub_latency_expr <= HUB_LATENCY_MAX_SEC
-        ).first()
-
-        # Conteos totales (Ya NO se recalculan aquí para evitar pérdida de datos si la cola se purga)
-        # sent_count y failed_count se incrementarán atómicamente en el process_pending_events
-        
-        avg_hub = success_stats.avg_hub if success_stats else None
-        avg_transmission = success_stats.avg_transmission if success_stats else None
-        avg_rc = success_stats.avg_rc if success_stats else None
+        avg_hub = promedios["avg_hub"]
+        avg_transmission = promedios["avg_transmission"]
+        avg_rc = promedios["avg_rc"]
         
         avg_push_ms = None
         try:
@@ -482,8 +559,6 @@ def update_daily_stats(provider: str, env: str):
     except Exception as e:
         logger.error(f"Error al contar estadísticas de hoy para {provider}_{env}: {e}")
         return
-    finally:
-        db_prov.close()
         
     db_global = get_session("system_config", "global")
     try:
@@ -766,13 +841,49 @@ def _get_rc_credentials_sync(provider: str, env: str):
     finally:
         db_conf.close()
 
+# Filas por transacción al purgar. Un DELETE único de millones de filas toma el
+# lock de escritura de SQLite durante todo su recorrido y frena la ingesta; en
+# tandas, la base queda libre entre commits.
+_PURGE_CHUNK_SIZE = 5000
+
+
 def _delete_purged_sync(db_session, today_start):
-    """Ejecuta DELETE + COMMIT de eventos purgados. Bloqueante — llamar con asyncio.to_thread."""
-    db_session.query(NormalizedRCEvent).filter(
-        NormalizedRCEvent.status.in_(["sent", "failed"]),
-        NormalizedRCEvent.created_at < today_start
-    ).delete(synchronize_session=False)
-    db_session.commit()
+    """
+    Elimina en tandas los eventos ya despachados de días anteriores.
+
+    Bloqueante — llamar con asyncio.to_thread.
+
+    Se borra por lotes de id en lugar de un DELETE masivo: con el volumen de una
+    jornada de carga sostenida (millones de filas), la transacción única
+    mantenía bloqueada la base el tiempo que durara el borrado, justo mientras
+    siguen entrando eventos.
+    """
+    total = 0
+    while True:
+        ids = [
+            fila[0]
+            for fila in db_session.query(NormalizedRCEvent.id)
+            .filter(
+                NormalizedRCEvent.status.in_(["sent", "failed"]),
+                NormalizedRCEvent.created_at < today_start,
+            )
+            .limit(_PURGE_CHUNK_SIZE)
+            .all()
+        ]
+        if not ids:
+            break
+
+        db_session.query(NormalizedRCEvent).filter(
+            NormalizedRCEvent.id.in_(ids)
+        ).delete(synchronize_session=False)
+        db_session.commit()      # libera el lock entre tandas
+        total += len(ids)
+
+        # Si la tanda vino incompleta, no queda nada más por borrar
+        if len(ids) < _PURGE_CHUNK_SIZE:
+            break
+
+    return total
 
 def _initialize_providers_sync():
     """Setup inicial: lee/crea proveedores en DB y recupera eventos atascados. Bloqueante — llamar con asyncio.to_thread."""
