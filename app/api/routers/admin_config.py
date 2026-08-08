@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.security import HTTPBasicCredentials
 from pydantic import BaseModel
 
-from app.core.auth import verify_dashboard_auth
+from app.core.auth import verify_dashboard_auth, get_dashboard_password
 from app.database import get_session
 from app.models.config_models import ProviderConfig, SystemSettings
 from app.core import config_cache
@@ -279,7 +279,7 @@ def update_configs(updates: List[ConfigUpdate], _: None = Depends(verify_dashboa
                 # queda registrada como despachada sin haber salido nunca.
                 # Por eso activarlo exige revalidar la contraseña de administrador.
                 if u.use_mock and not conf.use_mock:
-                    correct_pass = os.getenv("DASHBOARD_PASSWORD", "")
+                    correct_pass = get_dashboard_password()
                     provided = (u.admin_password or "")
                     if not correct_pass or not secrets.compare_digest(
                         provided.encode(), correct_pass.encode()
@@ -395,7 +395,7 @@ def manual_purge_logs(
     request: Request,
     _auth: HTTPBasicCredentials = Depends(verify_dashboard_auth)
 ):
-    expected_password = os.getenv("DASHBOARD_PASSWORD", "admin")
+    expected_password = get_dashboard_password()
     if body.admin_password != expected_password:
         raise HTTPException(status_code=401, detail="Contraseña incorrecta")
         

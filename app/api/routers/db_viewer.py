@@ -8,7 +8,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
-from app.core.auth import verify_dashboard_auth
+from app.core.auth import verify_dashboard_auth, get_dashboard_password
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["DB Viewer"])
@@ -241,7 +241,7 @@ def update_cell(body: CellUpdateRequest, _: None = Depends(verify_dashboard_auth
     Las tablas operativas (normalized_rc_events, etc.) son de SOLO LECTURA y siempre serán rechazadas.
     """
     # Ajuste 1 (Claude): Validar con la contraseña real del .env, no con un PIN cosmético
-    correct_pass = os.getenv("DASHBOARD_PASSWORD", "")
+    correct_pass = get_dashboard_password()
     if not secrets.compare_digest(body.password.encode(), correct_pass.encode()):
         raise HTTPException(status_code=403, detail="Contraseña de administrador incorrecta")
 
