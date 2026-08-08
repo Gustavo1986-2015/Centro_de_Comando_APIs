@@ -161,3 +161,191 @@ def test_read_recent_enmascara(tmp_path, monkeypatch):
     monkeypatch.setattr("app.core.log_stream.LOG_FILE", str(archivo))
 
     assert "TOKENSECRETO123456" not in read_recent(1)[0]["message"]
+
+
+# ── Filtro por nivel del lado del servidor ───────────────────────────────────
+
+def _escribir_log(ruta, entradas):
+    with open(ruta, "w", encoding="utf-8") as f:
+        for nivel, msg in entradas:
+            f.write(json.dumps({"levelname": nivel, "message": msg, "name": "test"}) + "\n")
+
+
+def test_filtro_por_nivel_recorre_todo_el_archivo(tmp_path, monkeypatch):
+    """
+    REGRESIÓN: el filtro se aplicaba en el navegador sobre las últimas N líneas
+    cargadas. Con tráfico alto, esas N líneas son unos segundos de log: buscar
+    errores devolvía una consola vacía aunque existieran más atrás en el archivo.
+    """
+    archivo = tmp_path / "app.jsonl"
+    # Un error viejo, sepultado bajo 500 líneas de INFO
+    entradas = [("ERROR", "fallo antiguo importante")]
+    entradas += [("INFO", f"ruido {i}") for i in range(500)]
+    _escribir_log(archivo, entradas)
+
+    monkeypatch.setattr("app.core.log_stream.LOG_FILE", str(archivo))
+
+    # Sin filtro, con un buffer chico el error queda fuera
+    recientes = read_recent(100)
+    assert not any(r["level"] == "ERROR" for r in recientes)
+
+    # Con filtro en el servidor, aparece
+    errores = read_recent(100, min_level="ERROR")
+    assert len(errores) == 1
+    assert "fallo antiguo" in errores[0]["message"]
+
+
+def test_filtro_incluye_los_niveles_superiores(tmp_path, monkeypatch):
+    """Pedir WARNING debe traer también los ERROR: son más graves, no menos."""
+    archivo = tmp_path / "app.jsonl"
+    _escribir_log(archivo, [
+        ("DEBUG", "detalle"), ("INFO", "normal"),
+        ("WARNING", "atencion"), ("ERROR", "problema"), ("CRITICAL", "grave"),
+    ])
+    monkeypatch.setattr("app.core.log_stream.LOG_FILE", str(archivo))
+
+    niveles = {r["level"] for r in read_recent(100, min_level="WARNING")}
+    assert niveles == {"WARNING", "ERROR", "CRITICAL"}
+
+
+def test_filtro_error_excluye_lo_menos_grave(tmp_path, monkeypatch):
+    archivo = tmp_path / "app.jsonl"
+    _escribir_log(archivo, [
+        ("INFO", "a"), ("WARNING", "b"), ("ERROR", "c"), ("CRITICAL", "d"),
+    ])
+    monkeypatch.setattr("app.core.log_stream.LOG_FILE", str(archivo))
+
+    niveles = {r["level"] for r in read_recent(100, min_level="ERROR")}
+    assert niveles == {"ERROR", "CRITICAL"}
+
+
+def test_sin_filtro_devuelve_todos_los_niveles(tmp_path, monkeypatch):
+    archivo = tmp_path / "app.jsonl"
+    _escribir_log(archivo, [("INFO", "a"), ("WARNING", "b"), ("ERROR", "c")])
+    monkeypatch.setattr("app.core.log_stream.LOG_FILE", str(archivo))
+
+    assert len(read_recent(100)) == 3
+    assert len(read_recent(100, min_level=None)) == 3
+
+
+def test_filtro_respeta_el_limite_y_devuelve_lo_mas_reciente(tmp_path, monkeypatch):
+    archivo = tmp_path / "app.jsonl"
+    _escribir_log(archivo, [("ERROR", f"error {i}") for i in range(50)])
+    monkeypatch.setattr("app.core.log_stream.LOG_FILE", str(archivo))
+
+    r = read_recent(10, min_level="ERROR")
+    assert len(r) == 10
+    assert "error 49" in r[-1]["message"]   # el más reciente al final
+
+
+def test_nivel_invalido_no_filtra(tmp_path, monkeypatch):
+    """Un nivel desconocido no debe ocultar todo el log."""
+    archivo = tmp_path / "app.jsonl"
+    _escribir_log(archivo, [("INFO", "a"), ("ERROR", "b")])
+    monkeypatch.setattr("app.core.log_stream.LOG_FILE", str(archivo))
+
+    assert len(read_recent(100, min_level="INEXISTENTE")) == 2
+
+
+# ── Cambio de nivel en caliente desde el panel ───────────────────────────────
+
+def test_cambio_de_nivel_en_caliente_afecta_a_la_aplicacion():
+    """
+    Permite diagnosticar en producción sin acceso al servidor: subir el detalle
+    desde el panel en lugar de editar el .env y reiniciar el contenedor.
+    """
+    import logging
+    from app.core.logging_config import set_runtime_level, get_current_levels
+
+    original = get_current_levels()["app"]
+    try:
+        set_runtime_level("DEBUG")
+        assert logging.getLogger("app.worker.processor").getEffectiveLevel() == logging.DEBUG
+        assert get_current_levels()["app"] == "DEBUG"
+    finally:
+        set_runtime_level(original)
+
+
+def test_subir_el_detalle_no_arrastra_a_las_librerias():
+    """
+    sqlalchemy en DEBUG imprime cada consulta y zeep cada XML SOAP: con decenas
+    de mensajes por segundo eso entierra la información propia y llena el disco.
+    """
+    import logging
+    from app.core.logging_config import set_runtime_level, get_current_levels
+
+    original = get_current_levels()["app"]
+    try:
+        set_runtime_level("DEBUG")
+        assert logging.getLogger("sqlalchemy").getEffectiveLevel() > logging.DEBUG
+        assert logging.getLogger("zeep").getEffectiveLevel() > logging.DEBUG
+    finally:
+        set_runtime_level(original)
+
+
+def test_las_librerias_se_pueden_subir_explicitamente():
+    import logging
+    from app.core.logging_config import set_runtime_level, get_current_levels
+
+    original = get_current_levels()
+    try:
+        set_runtime_level("DEBUG", "DEBUG")
+        assert logging.getLogger("sqlalchemy").getEffectiveLevel() == logging.DEBUG
+    finally:
+        set_runtime_level(original["app"], original["libs"])
+
+
+def test_nivel_invalido_es_rechazado():
+    from app.core.logging_config import set_runtime_level
+
+    with pytest.raises(ValueError):
+        set_runtime_level("NO_EXISTE")
+
+
+def test_el_cambio_informa_el_nivel_anterior():
+    """El operador debe poder ver desde dónde cambió, para volver atrás."""
+    from app.core.logging_config import set_runtime_level, get_current_levels
+
+    original = get_current_levels()["app"]
+    try:
+        set_runtime_level("INFO")
+        r = set_runtime_level("WARNING")
+        assert r["previous"] == "INFO"
+        assert r["app"] == "WARNING"
+    finally:
+        set_runtime_level(original)
+
+
+# ── Aislamiento del log de la suite ──────────────────────────────────────────
+
+def test_la_suite_no_escribe_en_el_log_de_la_aplicacion():
+    """
+    REGRESIÓN: los tests provocan errores a propósito (descifrados que fallan,
+    respuestas de error de proveedores, tokens inválidos). Cuando escribían en
+    logs/app.jsonl esos mensajes aparecían en la consola del panel junto a los
+    errores reales, y no había forma de distinguir unos de otros.
+    """
+    import os
+    from app.core.logging_config import get_log_file_path
+
+    ruta = get_log_file_path()
+    assert "app.jsonl" not in os.path.basename(ruta) or "test" in ruta.lower(), (
+        f"La suite está escribiendo en el log de la aplicación: {ruta}"
+    )
+    assert os.environ.get("LOG_FILE_PATH"), "LOG_FILE_PATH debe estar definida en la suite"
+
+
+def test_la_ruta_del_log_es_configurable(monkeypatch, tmp_path):
+    """Permite aislar el log en tests y reubicarlo en un despliegue si hace falta."""
+    from app.core.logging_config import get_log_file_path
+
+    destino = str(tmp_path / "otro.jsonl")
+    monkeypatch.setenv("LOG_FILE_PATH", destino)
+    assert get_log_file_path() == destino
+
+
+def test_sin_variable_usa_la_ruta_por_defecto(monkeypatch):
+    from app.core.logging_config import get_log_file_path
+
+    monkeypatch.delenv("LOG_FILE_PATH", raising=False)
+    assert get_log_file_path().replace("\\", "/").endswith("logs/app.jsonl")

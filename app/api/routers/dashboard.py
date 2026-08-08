@@ -1,3 +1,5 @@
+import os
+import re
 from fastapi import APIRouter, Request, Query, Depends, HTTPException
 from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
@@ -55,6 +57,7 @@ from app.core.auth import verify_dashboard_auth
 from app.core.provider_health import get_health_snapshot
 from app.core.resync import request_resync
 from app.core.log_stream import read_recent, tail_log
+from app.core.logging_config import get_current_levels, set_runtime_level
 from app.version import __version__, static_version
 
 router = APIRouter(tags=["Dashboard"])
@@ -420,10 +423,17 @@ async def force_resync(provider: str, env: str, _=Depends(verify_dashboard_auth)
 @router.get("/api/logs/recent")
 async def logs_recent(
     n: int = Query(200, ge=1, le=2000),
+    level: str = Query(None, description="Nivel mínimo: DEBUG, INFO, WARNING, ERROR"),
     _=Depends(verify_dashboard_auth),
 ):
-    """Últimas N líneas del log, para poblar la consola al abrirla."""
-    return {"logs": read_recent(n)}
+    """
+    Últimas N líneas del log, opcionalmente filtradas por nivel mínimo.
+
+    El filtro se aplica sobre el archivo completo: pedir los últimos errores
+    debe encontrarlos aunque hayan ocurrido hace rato y ya no estén entre las
+    últimas líneas escritas.
+    """
+    return {"logs": read_recent(n, min_level=level)}
 
 
 @router.get("/api/logs/stream")
@@ -444,3 +454,179 @@ async def logs_stream(request: Request, _=Depends(verify_dashboard_auth)):
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+# ─── Mantenimiento de bases de datos ────────────────────────────────────────
+# La cola SQLite crece durante el día y solo se purga en el intervalo
+# configurado. Bajo carga sostenida (una prueba de certificación de 24h genera
+# millones de eventos) conviene poder ver el tamaño real y forzar la purga sin
+# esperar al próximo ciclo.
+
+@router.get("/api/maintenance/db-stats")
+async def db_stats(_=Depends(verify_dashboard_auth)):
+    """Tamaño en disco y conteo de eventos por integración."""
+    import glob
+    from app.models.db_models import NormalizedRCEvent
+
+    resultado = []
+    for ruta in sorted(glob.glob("./db/*/*.db")):
+        rel = os.path.relpath(ruta, "./db").replace("\\", "/")
+        partes = rel.split("/")
+        if len(partes) != 2:
+            continue
+        provider, archivo = partes[0], partes[1]
+        env = archivo.replace(".db", "")
+
+        # Los archivos -wal y -shm también ocupan disco y pueden ser grandes
+        tamano = 0
+        for sufijo in ("", "-wal", "-shm"):
+            try:
+                tamano += os.path.getsize(ruta + sufijo)
+            except OSError:
+                pass
+
+        conteos = {"pending": 0, "processing": 0, "sent": 0, "failed": 0}
+        total = 0
+        try:
+            db = get_session(provider, env)
+            try:
+                filas = (
+                    db.query(NormalizedRCEvent.status, func.count(NormalizedRCEvent.id))
+                    .group_by(NormalizedRCEvent.status)
+                    .all()
+                )
+                for estado, n in filas:
+                    conteos[estado] = n
+                    total += n
+            finally:
+                db.close()
+        except Exception as e:
+            logger.warning(f"No se pudo contar eventos de {rel}: {e}")
+
+        resultado.append({
+            "provider": provider,
+            "env": env,
+            "path": rel,
+            "size_mb": round(tamano / (1024 * 1024), 2),
+            "total_events": total,
+            "by_status": conteos,
+            # Lo purgable es lo ya despachado: pendientes y en proceso no se tocan
+            "purgeable": conteos["sent"] + conteos["failed"],
+        })
+
+    resultado.sort(key=lambda x: x["size_mb"], reverse=True)
+    return {
+        "databases": resultado,
+        "total_mb": round(sum(d["size_mb"] for d in resultado), 2),
+    }
+
+
+@router.post("/api/maintenance/purge/{provider}/{env}")
+async def purge_now(provider: str, env: str, _=Depends(verify_dashboard_auth)):
+    """
+    Fuerza la purga de una integración sin esperar el intervalo configurado.
+
+    Respeta exactamente las mismas reglas que la purga automática: solo elimina
+    eventos ya despachados (sent/failed) y respalda a JSONL antes de borrar.
+    Los pendientes y los que están en proceso no se tocan nunca.
+    """
+    if not re.match(r"^[a-zA-Z0-9_]+$", provider) or not re.match(r"^[a-zA-Z0-9_]+$", env):
+        raise HTTPException(status_code=400, detail="Proveedor o entorno inválido")
+
+    from app.worker.processor import purge_provider_events
+
+    ruta = os.path.join("db", provider, f"{env}.db")
+    antes_mb = _tamano_db_mb(ruta)
+
+    logger.info(f"Purga manual solicitada para {provider}/{env} desde el panel.")
+    try:
+        await purge_provider_events(provider, env)
+    except Exception as e:
+        logger.error(f"Error en purga manual de {provider}/{env}: {e}")
+        raise HTTPException(status_code=500, detail=f"Error durante la purga: {e}")
+
+    # SQLite no devuelve al sistema el espacio de las filas borradas: marca las
+    # páginas como reutilizables y el archivo conserva su tamaño. Tras una purga
+    # grande eso deja el disco ocupado sin motivo, y en una prueba de 24 horas
+    # de carga sostenida esa diferencia son varios GB.
+    try:
+        await asyncio.to_thread(_vacuum_db, ruta, provider, env)
+    except Exception as e:
+        # El VACUUM es una optimización: si falla, la purga ya ocurrió igual.
+        logger.warning(f"No se pudo compactar {provider}/{env}: {e}")
+
+    despues_mb = _tamano_db_mb(ruta)
+    return {
+        "status": "ok",
+        "message": f"Purga ejecutada para {provider}/{env}.",
+        "size_before_mb": antes_mb,
+        "size_after_mb": despues_mb,
+        "freed_mb": round(max(antes_mb - despues_mb, 0), 2),
+    }
+
+
+def _tamano_db_mb(ruta: str) -> float:
+    """Tamaño del archivo más sus auxiliares -wal y -shm."""
+    total = 0
+    for sufijo in ("", "-wal", "-shm"):
+        try:
+            total += os.path.getsize(ruta + sufijo)
+        except OSError:
+            pass
+    return round(total / (1024 * 1024), 2)
+
+
+def _vacuum_db(ruta: str, provider: str, env: str) -> float:
+    """
+    Compacta el archivo para devolver al sistema el espacio de las filas
+    borradas. Bloquea la base mientras corre, por eso se ejecuta en un hilo
+    aparte y solo tras una purga manual, nunca en el ciclo automático.
+    """
+    import sqlite3
+
+    if not os.path.exists(ruta):
+        return 0.0
+
+    antes = _tamano_db_mb(ruta)
+    conn = sqlite3.connect(ruta)
+    try:
+        # Con WAL activo, los cambios viven en el archivo -wal hasta que se
+        # fusionan. Sin este checkpoint el VACUUM compacta el .db pero el -wal
+        # queda intacto, y el espacio total en disco no baja (puede incluso
+        # subir, porque el contenido termina duplicado en ambos archivos).
+        conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        conn.execute("VACUUM")
+        conn.commit()
+        conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+    finally:
+        conn.close()
+
+    liberado = antes - _tamano_db_mb(ruta)
+    if liberado > 0.01:
+        logger.info(f"VACUUM en {provider}/{env}: {liberado:.2f} MB liberados en disco.")
+    return round(max(liberado, 0), 2)
+
+
+@router.get("/api/logs/level")
+async def logs_level_get(_=Depends(verify_dashboard_auth)):
+    """Nivel de logging vigente en el proceso."""
+    return get_current_levels()
+
+
+@router.post("/api/logs/level")
+async def logs_level_set(
+    level: str = Query(..., description="DEBUG, INFO, WARNING o ERROR"),
+    libs: str = Query(None, description="Nivel de librerías de terceros"),
+    _=Depends(verify_dashboard_auth),
+):
+    """
+    Cambia el nivel de logging del proceso sin reiniciar el contenedor.
+
+    Permite diagnosticar en producción sin acceso al servidor. El cambio no se
+    persiste: al reiniciar vuelve a lo configurado en el entorno, de modo que un
+    DEBUG olvidado no quede activo indefinidamente llenando el disco.
+    """
+    try:
+        return set_runtime_level(level, libs)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
