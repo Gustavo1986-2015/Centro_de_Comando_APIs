@@ -10,6 +10,10 @@ class NormalizedRCEvent(Base):
     __tablename__ = "normalized_rc_events"
     __table_args__ = (
         Index('idx_retry_status', 'retry_count', 'status'),
+        # La purga filtra por (status, created_at) y las estadísticas por
+        # created_at. Sin este índice ambas hacían recorrido completo: el de
+        # status no sirve porque prácticamente todas las filas son 'sent'.
+        Index('idx_status_created', 'status', 'created_at'),
     )
 
     id = Column(Integer, primary_key=True, index=True)
