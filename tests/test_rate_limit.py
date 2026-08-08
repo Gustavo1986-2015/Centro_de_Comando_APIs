@@ -17,10 +17,12 @@ from app.core import rate_limit as rl
 @pytest.fixture(autouse=True)
 def _reset():
     rl.reset()
-    os.environ.pop("WEBHOOK_RATE_LIMIT_PER_MIN", None)
+    for k in [k for k in os.environ if k.startswith("WEBHOOK_RATE_LIMIT")]:
+        os.environ.pop(k, None)
     yield
     rl.reset()
-    os.environ.pop("WEBHOOK_RATE_LIMIT_PER_MIN", None)
+    for k in [k for k in os.environ if k.startswith("WEBHOOK_RATE_LIMIT")]:
+        os.environ.pop(k, None)
 
 
 # ── Comportamiento básico ────────────────────────────────────────────────────
@@ -106,18 +108,47 @@ def test_limite_configurable_por_entorno():
     assert rl._limit() == 10
 
 
-def test_limite_default_es_generoso():
+def test_limite_default_cubre_la_prueba_de_certificacion():
     """
-    Schmitz envía ~80 ev/min en el peor caso documentado (40 cada 30s).
-    El default debe dejar margen amplio para no rechazar tráfico legítimo.
+    REGRESIÓN: el default estaba en 600/min y la prueba de certificación de
+    Schmitz envía 80 eventos/segundo (4.800/min) durante 24 horas. Con aquel
+    valor se habría rechazado el 87% del tráfico y la prueba habría fallado.
+
+    Un límite por debajo del volumen real del proveedor no protege: rompe la
+    integración.
     """
     os.environ.pop("WEBHOOK_RATE_LIMIT_PER_MIN", None)
-    assert rl._limit() >= 600
+    necesario_schmitz = 80 * 60          # 80 ev/s sostenidos
+    assert rl._limit() >= necesario_schmitz * 2   # con margen para ráfagas
 
 
 def test_limite_invalido_cae_al_default():
     os.environ["WEBHOOK_RATE_LIMIT_PER_MIN"] = "no-es-un-numero"
-    assert rl._limit() == 600
+    assert rl._limit() == rl._DEFAULT_LIMIT
+
+
+def test_limite_por_proveedor_tiene_prioridad():
+    """
+    Permite subir el techo de un proveedor de alto volumen sin aflojar el
+    límite del resto.
+    """
+    os.environ["WEBHOOK_RATE_LIMIT_PER_MIN"] = "12000"
+    os.environ["WEBHOOK_RATE_LIMIT_SCHMITZ"] = "30000"
+    try:
+        assert rl._limit("schmitz") == 30000
+        assert rl._limit("protrack") == 12000
+        assert rl._limit() == 12000
+    finally:
+        os.environ.pop("WEBHOOK_RATE_LIMIT_SCHMITZ", None)
+
+
+def test_limite_por_proveedor_invalido_cae_al_global():
+    os.environ["WEBHOOK_RATE_LIMIT_PER_MIN"] = "12000"
+    os.environ["WEBHOOK_RATE_LIMIT_SCHMITZ"] = "invalido"
+    try:
+        assert rl._limit("schmitz") == 12000
+    finally:
+        os.environ.pop("WEBHOOK_RATE_LIMIT_SCHMITZ", None)
 
 
 def test_limite_cero_o_negativo_se_normaliza():

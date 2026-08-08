@@ -1425,3 +1425,80 @@ body.compact-mode .card-idle { opacity: 0.65; }
     margin-top: 0.15rem;
 }
 body.compact-mode .mock-banner { padding: 0.5rem 0.9rem; font-size: 0.78rem; }
+
+/* ── Mantenimiento de bases de datos ─────────────────────────────────────── */
+.db-maint-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.82rem;
+}
+.db-maint-table th {
+    text-align: left;
+    padding: 0.6rem 0.8rem;
+    color: var(--color-gray-label);
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    border-bottom: 1px solid var(--card-border);
+    white-space: nowrap;
+}
+.db-maint-table td {
+    padding: 0.65rem 0.8rem;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+    white-space: nowrap;
+}
+.db-maint-table tbody tr:hover { background: rgba(255, 255, 255, 0.03); }
+
+/* El color acompaña el tamaño: solo destaca lo que amerita mirarse */
+.db-maint-table .size-medio { color: var(--color-yellow); }
+.db-maint-table .size-alto  { color: var(--color-red); font-weight: 700; }
+
+.db-maint-table .env-tag {
+    font-size: 0.6rem;
+    font-weight: 700;
+    padding: 2px 6px;
+    border-radius: 4px;
+    margin-left: 0.4rem;
+    letter-spacing: 0.5px;
+}
+.db-maint-table .env-tag.env-prod {
+    background: rgba(59, 130, 246, 0.18);
+    color: #93c5fd;
+    border: 1px solid rgba(59, 130, 246, 0.3);
+}
+.db-maint-table .env-tag.env-test {
+    background: rgba(234, 179, 8, 0.15);
+    color: var(--color-yellow);
+    border: 1px solid rgba(234, 179, 8, 0.28);
+}
+
+/* Botón destructivo: rojo, pero deshabilitado cuando no hay nada que purgar */
+.btn-purge {
+    background: rgba(239, 68, 68, 0.12);
+    border: 1px solid rgba(239, 68, 68, 0.45);
+    color: var(--color-red);
+    border-radius: 6px;
+    padding: 5px 14px;
+    font-size: 0.76rem;
+    font-weight: 700;
+    cursor: pointer;
+    transition: background 0.2s, opacity 0.2s;
+    letter-spacing: 0.3px;
+}
+.btn-purge:hover:not(:disabled) { background: rgba(239, 68, 68, 0.25); }
+.btn-purge:disabled {
+    opacity: 0.3;
+    cursor: not-allowed;
+    border-color: var(--card-border);
+    color: var(--color-gray-label);
+    background: transparent;
+}
+
+/* Separador entre los controles de filtrado y los de configuración del servidor */
+.console-sep {
+    display: inline-block;
+    width: 1px;
+    height: 20px;
+    background: var(--card-border);
+    margin: 0 0.3rem;
+}

@@ -19,7 +19,9 @@ from collections import deque
 
 logger = logging.getLogger(__name__)
 
-LOG_FILE = os.path.join("logs", "app.jsonl")
+# Misma ruta que usa el logger. Configurable por entorno para poder aislar
+# el log de la suite de tests del de la aplicación.
+LOG_FILE = os.getenv("LOG_FILE_PATH", os.path.join("logs", "app.jsonl"))
 
 # Parámetros cuyo valor nunca debe salir del servidor. Se comparan en minúsculas
 # y cubren tanto query strings como pares clave-valor en texto libre.
@@ -88,25 +90,45 @@ def _parse_line(raw: str) -> dict | None:
         return {"time": "", "level": "INFO", "logger": "", "message": mask_secrets(raw)}
 
 
-def read_recent(limit: int = 200) -> list[dict]:
+# Orden de severidad, para poder pedir "warning o superior"
+LEVEL_RANK = {"DEBUG": 0, "INFO": 1, "WARNING": 2, "ERROR": 3, "CRITICAL": 4}
+
+
+def read_recent(limit: int = 200, min_level: str | None = None) -> list[dict]:
     """
     Últimas N líneas del log, para poblar la consola al abrirla.
 
-    Lee el archivo completo con un deque acotado en lugar de cargarlo en memoria:
-    el archivo rota a diario pero puede pesar decenas de MB en un día con tráfico.
+    El filtro por nivel se aplica ACÁ y no en el navegador. Filtrar del lado del
+    cliente sobre las últimas N líneas hacía que buscar errores no encontrara
+    nada: con tráfico alto, 300 líneas son unos segundos de log, y un error de
+    hace dos minutos ya no está en ese buffer. Filtrando en el servidor se
+    recorre el archivo entero y se devuelven las N coincidencias más recientes.
+
+    Lee con un deque acotado en lugar de cargar el archivo en memoria: rota a
+    diario pero puede pesar cientos de MB bajo carga sostenida.
     """
     if not os.path.exists(LOG_FILE):
         return []
 
     limit = max(1, min(limit, 2000))
+    umbral = LEVEL_RANK.get((min_level or "").upper()) if min_level else None
+
+    resultado: deque = deque(maxlen=limit)
     try:
         with open(LOG_FILE, "r", encoding="utf-8", errors="replace") as f:
-            ultimas = deque(f, maxlen=limit)
+            for linea in f:
+                registro = _parse_line(linea)
+                if not registro:
+                    continue
+                if umbral is not None:
+                    if LEVEL_RANK.get(registro["level"], 1) < umbral:
+                        continue
+                resultado.append(registro)
     except OSError as e:
         logger.warning(f"No se pudo leer el archivo de logs: {e}")
         return []
 
-    return [r for r in (_parse_line(l) for l in ultimas) if r]
+    return list(resultado)
 
 
 async def tail_log(poll_interval: float = 1.0):

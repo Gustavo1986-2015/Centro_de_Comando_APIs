@@ -42,6 +42,11 @@ def check_and_migrate_db():
             if "run_interval_sec" not in columns:
                 cursor.execute("ALTER TABLE provider_config ADD COLUMN run_interval_sec INTEGER DEFAULT 5")
                 conn.commit()
+
+            # Techo de peticiones por minuto configurable por proveedor desde el panel
+            if "rate_limit_per_min" not in columns:
+                cursor.execute("ALTER TABLE provider_config ADD COLUMN rate_limit_per_min INTEGER")
+                conn.commit()
             if "queue_backend" not in columns:
                 cursor.execute("ALTER TABLE provider_config ADD COLUMN queue_backend TEXT DEFAULT 'sqlite'")
                 conn.commit()
