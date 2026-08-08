@@ -515,6 +515,29 @@
             });
         }
 
+
+        // Advertencia de modo simulado. Se mantiene visible mientras haya al menos
+        // una integración con use_mock activo: en ese estado el dashboard muestra
+        // "ENVIADO" para eventos que nunca salieron hacia Recurso Confiable.
+        function updateMockBanner(mockProviders) {
+            const banner = document.getElementById('mock-banner');
+            if (!banner) return;
+
+            const lista = Array.isArray(mockProviders) ? mockProviders : [];
+            if (!lista.length) {
+                banner.style.display = 'none';
+                return;
+            }
+
+            const detalle = document.getElementById('mock-banner-detail');
+            if (detalle) {
+                detalle.textContent = lista.length === 1
+                    ? `en ${lista[0].toUpperCase()}`
+                    : `en ${lista.length} integraciones: ${lista.join(', ').toUpperCase()}`;
+            }
+            banner.style.display = 'flex';
+        }
+
         // Vistas
         function switchView(view) {
             document.getElementById('view-dashboard').style.display = view === 'dashboard' ? 'flex' : 'none';
@@ -909,6 +932,7 @@
                 // La salud se actualiza temprano: si algo falla más abajo (por ejemplo
                 // un elemento del DOM ausente), la barra igual queda al día.
                 setProviderHealth(data.provider_health);
+                updateMockBanner(data.mock_providers);
 
                 // Populate provider dropdown dynamically
                 const dropdown = document.getElementById('filter-provider');
@@ -1353,6 +1377,23 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
                 enable_state_dedup: document.getElementById(`dedup_${idx}`) ? document.getElementById(`dedup_${idx}`).checked : c.enable_state_dedup
             }));
 
+            // Activar el modo simulado exige revalidar la contraseña de administrador:
+            // en ese modo los eventos se marcan como enviados sin llegar a Recurso
+            // Confiable. Solo se pide cuando alguna integración pasa de real a simulado.
+            const activandoMock = currentConfigs
+                .filter((c, idx) => updates[idx].use_mock && !c.use_mock)
+                .map(c => `${c.provider_name.toUpperCase()}/${c.env.toUpperCase()}`);
+
+            if (activandoMock.length) {
+                const pass = prompt(
+                    `Vas a activar el MODO SIMULADO en:\n\n  ${activandoMock.join('\n  ')}\n\n` +
+                    `En este modo los eventos se marcan como enviados pero NO llegan a ` +
+                    `Recurso Confiable.\n\nIngresá la contraseña de administrador para confirmar:`
+                );
+                if (pass === null) return;   // cancelado por el usuario
+                updates.forEach(u => { u.admin_password = pass; });
+            }
+
             try {
                 const res = await fetch('/api/config', {
                     method: 'POST',
@@ -1363,10 +1404,18 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
                     alert('¡Configuración guardada exitosamente!');
                     loadConfig(); // reload
                 } else {
-                    alert('Error al guardar');
+                    // Mostrar el motivo real del backend en lugar de un error genérico
+                    let motivo = `HTTP ${res.status}`;
+                    try {
+                        const data = await res.json();
+                        if (data.detail) motivo = data.detail;
+                    } catch (e) { /* respuesta sin JSON */ }
+                    alert('No se pudo guardar la configuración:\n\n' + motivo);
+                    loadConfig();   // recargar para reflejar el estado real
                 }
             } catch(e) {
                 console.error("Error guardando config", e);
+                alert('Error de red al guardar la configuración.');
             }
         }
 

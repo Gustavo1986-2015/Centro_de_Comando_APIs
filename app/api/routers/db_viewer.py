@@ -6,7 +6,6 @@ import logging
 import secrets
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
-from fastapi.security import HTTPBasicCredentials
 from pydantic import BaseModel
 
 from app.core.auth import verify_dashboard_auth

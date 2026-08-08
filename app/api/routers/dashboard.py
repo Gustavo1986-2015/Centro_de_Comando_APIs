@@ -1,27 +1,16 @@
-from fastapi import APIRouter, Request, Query, Depends, HTTPException, Body
+from fastapi import APIRouter, Request, Query, Depends, HTTPException
 from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
-from fastapi.security import HTTPBasic, HTTPBasicCredentials
-import secrets
 import asyncio
 import json
-import os
-import glob
-import sqlite3
-import re
 import logging
-import traceback
 
 logger = logging.getLogger(__name__)
 
 from app.database import get_session
 from app.models.db_models import NormalizedRCEvent
-from app.models.config_models import ProviderConfig, DailyStat, SystemSettings
+from app.models.config_models import ProviderConfig
 from app.worker.processor import _rc_circuit_breaker
-from app.core import config_cache
-from app.core.auditor import log_admin_action
-from pydantic import BaseModel
-from typing import List, Optional
 from datetime import datetime, timezone, timedelta
 from sqlalchemy import func, case
 
@@ -62,10 +51,11 @@ def get_push_stats(provider_key: str | None = None) -> dict:
     }
 
 
-from app.core.auth import verify_dashboard_auth, security
+from app.core.auth import verify_dashboard_auth
 from app.core.provider_health import get_health_snapshot
 from app.core.resync import request_resync
 from app.core.log_stream import read_recent, tail_log
+from app.version import __version__, static_version
 
 router = APIRouter(tags=["Dashboard"])
 templates = Jinja2Templates(directory="frontend/templates")
@@ -76,8 +66,15 @@ templates = Jinja2Templates(directory="frontend/templates")
 async def get_dashboard(request: Request, _: None = Depends(verify_dashboard_auth)):
     """Renderiza el Centro de Comando en Vivo."""
     response = templates.TemplateResponse(
-        request=request, 
-        name="index.html"
+        request=request,
+        name="index.html",
+        context={
+            # Cache busting derivado del contenido: el navegador descarga el
+            # archivo nuevo solo cuando cambió de verdad.
+            "css_v": static_version("dashboard.css"),
+            "js_v":  static_version("dashboard.js"),
+            "app_version": __version__,
+        },
     )
     response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate, max-age=0"
     response.headers["Pragma"] = "no-cache"
@@ -129,6 +126,28 @@ def _fetch_events_for_provider_sync(provider_name, provider_env, status_filter, 
     finally:
         db.close()
 
+def _get_mock_providers() -> list[str]:
+    """
+    Integraciones con el modo simulado activo.
+
+    En ese modo el sistema genera job_ids falsos y marca los eventos como
+    enviados sin llamar a Recurso Confiable. El dashboard debe advertirlo de
+    forma permanente y visible: un operador que vea "ENVIADO" tiene que poder
+    saber si ese envío fue real.
+    """
+    try:
+        from app.models.config_models import ProviderConfig
+        db = get_session("system_config", "global")
+        try:
+            filas = db.query(ProviderConfig).filter_by(use_mock=True).all()
+            return [f"{c.provider_name}/{c.env}" for c in filas]
+        finally:
+            db.close()
+    except Exception as e:
+        logger.warning(f"No se pudo determinar el estado de modo simulado: {e}")
+        return []
+
+
 async def get_stats_data(
     status_filter: str = None,
     provider_filter: str = None
@@ -169,7 +188,6 @@ async def get_stats_data(
                 tz_offset = int(enrich_data.get('timezone_offset', 0))
         except Exception as e:
             logger.warning(f"Error al parsear JSON: {e}")
-            pass
         provider_tz_offsets[f"{provider_name}_{provider_env}"] = tz_offset
 
         # Query por proveedor en ThreadPool (operación bloqueante)
@@ -316,6 +334,9 @@ async def get_stats_data(
         "push_per_provider":       push_per_provider,
         "push_sla_target_ms":      PUSH_SLA_MS,
         "provider_health":         get_health_snapshot(),
+        # Proveedores en modo simulado: el frontend muestra un banner permanente.
+        # Sin esto, el dashboard informa "ENVIADO" para eventos que nunca salieron.
+        "mock_providers":          _get_mock_providers(),
         "recent": recent_list,
         "throughput": throughput_per_provider,
         "all_providers": list(set([p.provider_name for p in providers])),
@@ -362,7 +383,6 @@ async def stats_stream(request: Request, _=Depends(verify_dashboard_auth)):
                 yield payload
         except Exception as e:
             logger.warning(f"Excepción capturada en dashboard: {e}")
-            pass
         finally:
             if q in _sse_clients:
                 _sse_clients.remove(q)

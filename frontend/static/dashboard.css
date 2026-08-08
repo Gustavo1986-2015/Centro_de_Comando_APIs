@@ -1393,3 +1393,35 @@ body.compact-mode .card-idle { opacity: 0.65; }
     max-height: 420px;
     overflow-y: auto;
 }
+
+/* ── Advertencia de modo simulado ────────────────────────────────────────────
+   Permanente y deliberadamente intrusiva: mientras esté activa, los "ENVIADO"
+   del dashboard no corresponden a envíos reales a Recurso Confiable. */
+.mock-banner {
+    display: flex;
+    align-items: center;
+    gap: 0.9rem;
+    background: rgba(239, 68, 68, 0.12);
+    border: 1px solid rgba(239, 68, 68, 0.45);
+    border-left: 4px solid var(--color-red);
+    border-radius: 8px;
+    padding: 0.7rem 1.1rem;
+    margin: 0.6rem 1.5rem 0;
+    font-size: 0.85rem;
+}
+.mock-banner .mock-icon {
+    font-size: 1.3rem;
+    color: var(--color-red);
+    animation: pulsing 2s infinite;
+}
+.mock-banner strong {
+    color: var(--color-red);
+    letter-spacing: 0.5px;
+    margin-right: 0.4rem;
+}
+.mock-banner .mock-sub {
+    font-size: 0.76rem;
+    color: var(--color-gray-label);
+    margin-top: 0.15rem;
+}
+body.compact-mode .mock-banner { padding: 0.5rem 0.9rem; font-size: 0.78rem; }

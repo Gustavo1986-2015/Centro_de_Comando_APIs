@@ -4,7 +4,6 @@ import hashlib
 import time
 import httpx
 import json
-from datetime import datetime, timezone
 from urllib.parse import urlparse, parse_qsl, urlencode, urlunparse
 from jsonpath_ng import parse
 
@@ -39,12 +38,10 @@ TOKEN_SAFETY_MARGIN_SECONDS = 120
 
 class ProviderAuthError(Exception):
     """La autenticación con el proveedor falló. Aborta el ciclo, no encola nada."""
-    pass
 
 
 class ProviderResponseError(Exception):
     """El proveedor devolvió una respuesta de error en lugar de datos."""
-    pass
 
 
 def dynamic_md5(pwd: str) -> tuple[str, str]:
