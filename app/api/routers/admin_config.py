@@ -1,9 +1,10 @@
 import os
 import json
 import logging
+import secrets
 from typing import List
 from datetime import datetime, timezone, timedelta
-from fastapi import APIRouter, Depends, HTTPException, Body, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.security import HTTPBasicCredentials
 from pydantic import BaseModel
 
@@ -33,6 +34,9 @@ class ConfigUpdate(BaseModel):
     webhook_auth_header: str | None = None
     fetch_config: str | None = None
     enable_state_dedup: bool = True
+    # Contraseña de administrador, requerida solo al ACTIVAR el modo simulado.
+    # No se envía en operaciones que no lo activan.
+    admin_password: str | None = None
 
 class RetentionUpdateModel(BaseModel):
     audit_retention_days: int
@@ -264,6 +268,36 @@ def update_configs(updates: List[ConfigUpdate], _: None = Depends(verify_dashboa
                     conf.fetch_config_enc = encrypt(u.fetch_config)
                     conf.fetch_config = None # borrar plaintext
                     
+                # ── Modo simulado: activación protegida ──────────────────
+                # Con use_mock=True el sistema NO envía a Recurso Confiable:
+                # genera job_ids falsos y marca los eventos como enviados. Si eso
+                # ocurre sin que nadie lo note, una alarma real (robo, pánico)
+                # queda registrada como despachada sin haber salido nunca.
+                # Por eso activarlo exige revalidar la contraseña de administrador.
+                if u.use_mock and not conf.use_mock:
+                    correct_pass = os.getenv("DASHBOARD_PASSWORD", "")
+                    provided = (u.admin_password or "")
+                    if not correct_pass or not secrets.compare_digest(
+                        provided.encode(), correct_pass.encode()
+                    ):
+                        raise HTTPException(
+                            status_code=403,
+                            detail=(
+                                f"Activar el modo simulado en {conf.provider_name}/{conf.env} "
+                                "requiere la contraseña de administrador. Con el modo simulado "
+                                "activo los eventos NO se envían a Recurso Confiable."
+                            ),
+                        )
+                    logger.warning(
+                        f"MODO SIMULADO ACTIVADO para {conf.provider_name}/{conf.env}. "
+                        f"Los eventos dejarán de enviarse a Recurso Confiable."
+                    )
+                elif conf.use_mock and not u.use_mock:
+                    logger.info(
+                        f"Modo simulado desactivado para {conf.provider_name}/{conf.env}. "
+                        f"Los eventos vuelven a enviarse a Recurso Confiable."
+                    )
+
                 conf.use_mock = u.use_mock
                 conf.purge_interval_min = u.purge_interval_min
                 conf.run_interval_sec = u.run_interval_sec

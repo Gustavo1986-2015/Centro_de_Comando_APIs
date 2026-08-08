@@ -3,7 +3,6 @@ import glob
 import json
 import logging
 from fastapi import APIRouter, Depends
-from fastapi.security import HTTPBasicCredentials
 
 from app.core.auth import verify_dashboard_auth
 from app.database import get_session
@@ -40,7 +39,6 @@ def get_audit_logs(_: None = Depends(verify_dashboard_auth)):
                         })
                 except Exception as e:
                     logger.warning(f"Excepción capturada en dashboard: {e}")
-                    pass
 
     # Ordenar por timestamp descendente
     all_lines.sort(key=lambda x: x.get("timestamp", ""), reverse=True)
@@ -59,7 +57,6 @@ def clear_audit_logs(_: None = Depends(verify_dashboard_auth)):
             os.remove(f)
         except Exception as e:
             logger.debug(f"No se pudo eliminar archivo: {e}")
-            pass
     return {"status": "ok"}
 
 @router.get("/api/history")

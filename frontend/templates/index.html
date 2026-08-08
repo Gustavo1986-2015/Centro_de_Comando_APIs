@@ -7,7 +7,7 @@
     <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>📡</text></svg>">
     <!-- Fuente limpia y moderna -->
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="/static/dashboard.css?v=2">
+    <link rel="stylesheet" href="/static/dashboard.css?v={{ css_v }}">
     <!-- Theme setup to prevent FOUC -->
     <script>
         (function() {
@@ -73,6 +73,18 @@
     </header>
 
     <div id="provider-status-bar" class="provider-bar"></div>
+
+    <!-- Advertencia permanente de modo simulado. Con use_mock activo el sistema
+         marca los eventos como enviados sin llamar a Recurso Confiable: sin este
+         aviso, un "ENVIADO" en pantalla puede leerse como un envío real. -->
+    <div id="mock-banner" class="mock-banner" style="display:none;">
+        <span class="mock-icon">&#9888;</span>
+        <div>
+            <strong>MODO SIMULADO ACTIVO</strong>
+            <span id="mock-banner-detail"></span>
+            <div class="mock-sub">Los eventos se marcan como enviados pero NO llegan a Recurso Confiable.</div>
+        </div>
+    </div>
 
     <!-- VISTA DASHBOARD -->
     <main id="view-dashboard">
@@ -961,7 +973,7 @@
         Desarrollado por Area de Integraciones GPS Assistcargo | Gustavo Gómez &reg;
     </footer>
 
-    <script src="/static/dashboard.js?v=2"></script>
+    <script src="/static/dashboard.js?v={{ js_v }}"></script>
     <script>
         function toggleTheme() {
             const currentTheme = document.documentElement.getAttribute('data-theme') || 'dark';

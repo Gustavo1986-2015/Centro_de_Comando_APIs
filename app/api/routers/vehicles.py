@@ -1,7 +1,6 @@
 from datetime import datetime
 import logging
 from fastapi import APIRouter, Depends, Query, HTTPException
-from fastapi.security import HTTPBasicCredentials
 
 from app.core.auth import verify_dashboard_auth
 from app.database import get_session

@@ -1,4 +1,3 @@
-import httpx
 import logging
 import os
 import json
@@ -7,7 +6,6 @@ import time
 import hashlib
 import base64
 from datetime import datetime, timedelta, timezone
-from xml.etree import ElementTree as ET
 from app.schemas.canonical import RCCanonicalModel
 from dotenv import load_dotenv
 from cryptography.fernet import Fernet, InvalidToken
@@ -228,7 +226,7 @@ class RCSOAPClient:
                 logger.warning(f"Excepción capturada en rc_soap: {e}")
                 err_str = str(e)
                 if ("user_token_idx" in err_str or "duplicate key" in err_str.lower()) and attempt < max_retries - 1:
-                    logger.warning(f"Colisión de token detectada en el servidor de RC (user_token_idx). Reintentando en 1.5 segundos...")
+                    logger.warning("Colisión de token detectada en el servidor de RC (user_token_idx). Reintentando en 1.5 segundos...")
                     time.sleep(1.5)
                 else:
                     raise e

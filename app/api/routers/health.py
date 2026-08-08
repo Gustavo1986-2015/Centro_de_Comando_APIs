@@ -10,7 +10,7 @@ from app.database import get_engine
 
 router = APIRouter(prefix="/health", tags=["Monitoring"])
 
-__version__ = "1.2.0"
+from app.version import __version__
 
 @router.get("")
 async def health_check():

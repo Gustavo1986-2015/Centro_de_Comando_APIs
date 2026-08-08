@@ -1,8 +1,6 @@
 from fastapi import APIRouter, Request, Depends, status, Query, HTTPException, Header
-from sqlalchemy.orm import Session
 import asyncio
 import json
-import os
 import logging
 
 from app.database import get_session
@@ -143,7 +141,6 @@ async def _batch_processor_loop():
                 trigger_worker("schmitz", batch[0][1])
             except Exception as e:
                 logger.warning(f"Excepción capturada en schmitz: {e}")
-                pass
             
             for _ in range(len(batch)):
                 _webhook_queue.task_done()

@@ -2,7 +2,7 @@ import asyncio
 import logging
 import time
 from sqlalchemy.orm import Session
-from datetime import datetime, timezone, timedelta, date
+from datetime import datetime, timezone, timedelta
 
 from app.database import get_session
 from app.models.db_models import NormalizedRCEvent
@@ -112,10 +112,8 @@ _rc_circuit_breaker = CircuitBreaker(
 )
 
 from app.services.rc_soap import get_rc_client
-from app.models.db_models import NormalizedRCEvent
 from app.models.config_models import ProviderConfig, DailyStat
 from app.core.config_cache import get_settings
-import logging
 
 logger = logging.getLogger(__name__)
 
@@ -135,7 +133,6 @@ def trigger_worker(provider: str, env: str):
             loop.call_soon_threadsafe(WORKER_TRIGGERS[key].set)
         except Exception as e:
             logger.warning(f"Excepción capturada en processor: {e}")
-            pass
 
 async def send_batch_and_measure(canonical_events, rc_client):
     """
@@ -207,9 +204,6 @@ async def process_provider_events(provider: str, env: str):
         # 2. Particionar en sub-lotes de hasta 50 eventos
         batch_size = 50
         batches = [pendings[i:i + batch_size] for i in range(0, len(pendings), batch_size)]
-        
-        # Contadores compartidos (se acumulan al final)
-        batch_metrics = []
         
         # Leer credenciales desde config — operación bloqueante, se despacha al ThreadPool
         rc_u, rc_p, rc_use_mock = await asyncio.to_thread(_get_rc_credentials_sync, provider, env)
@@ -483,7 +477,6 @@ def update_daily_stats(provider: str, env: str):
                 avg_push_ms = p_stats["avg_ms"]
         except Exception as e:
             logger.warning(f"Excepción capturada en processor: {e}")
-            pass
 
         
     except Exception as e:
@@ -666,17 +659,6 @@ async def purge_provider_events(provider: str, env: str):
     finally:
         db.close()
 
-async def purge_processed_events():
-    """Ejecuta la purga concurrente de todas las APIs."""
-    tasks = []
-    # get_active_providers es bloqueante — se despacha al ThreadPool
-    active = await asyncio.to_thread(get_active_providers)
-    for p in active:
-        tasks.append(purge_provider_events(p["name"], p["env"]))
-        
-    if tasks:
-        await asyncio.gather(*tasks)
-
 def get_provider_config(provider_name: str, env: str):
     """Obtiene la configuración actual de un proveedor específico desde la BD global."""
     db = get_session("system_config", "global")
@@ -856,8 +838,9 @@ async def worker_loop():
     """Inicia y gestiona las corrutinas independientes para cada proveedor registrado."""
     logger.info("Iniciando Worker Background de Telemática (Modo Multitarea Dinámico)...")
 
-    # Setup inicial en ThreadPool — operaciones DB bloqueantes
-    providers = await asyncio.to_thread(_initialize_providers_sync)
+    # Setup inicial en ThreadPool — operaciones DB bloqueantes.
+    # Se llama por su efecto: registra los proveedores activos al arrancar.
+    await asyncio.to_thread(_initialize_providers_sync)
 
     logger.info("Escuchando nuevas integraciones (Worker Watchdog)...")
 
