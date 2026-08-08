@@ -79,20 +79,26 @@
             const bar = document.getElementById('provider-status-bar');
             if (!bar) return;
 
+            const failedProviders = new Set(
+                recentEvents.filter(e => e.status === 'failed').map(e => e.provider.toLowerCase())
+            );
+
+            // Los chips de salud van PRIMERO y no dependen del throughput reciente.
+            //
+            // El contador _providerEventCounts solo suma eventos de los últimos 60s.
+            // Una integración que reporta cada 30 minutos, o que está detenida por un
+            // problema, tiene ese contador vacío — y es justamente cuando más importa
+            // ver su estado. Antes el guard de "sin proveedores activos" cortaba la
+            // función antes de llegar acá y la barra quedaba sin información.
+            const chips = renderHealthChips(failedProviders);
+            if (chips) { bar.innerHTML = chips; return; }
+
+            // Fallback: pills clásicos por throughput, mientras no haya datos de salud
             const allProviders = Object.keys(_providerEventCounts);
             if (allProviders.length === 0) {
                 bar.innerHTML = '<span style="color:var(--color-gray-label);font-size:0.78rem;">Sin proveedores activos</span>';
                 return;
             }
-
-            const failedProviders = new Set(
-                recentEvents.filter(e => e.status === 'failed').map(e => e.provider.toLowerCase())
-            );
-
-            // Si ya hay datos de salud, la barra los usa (incluyen el throughput).
-            // Si todavia no llegaron, se muestran los pills clasicos como fallback.
-            const chips = renderHealthChips(failedProviders);
-            if (chips) { bar.innerHTML = chips; return; }
 
             bar.innerHTML = allProviders.map(key => {
                 const rate      = _providerEventCounts[key].length;
@@ -899,12 +905,16 @@
                 updateSparkline('spark-retries',  'val-retries');
 
                 allRecentEvents = data.recent;
-                
+
+                // La salud se actualiza temprano: si algo falla más abajo (por ejemplo
+                // un elemento del DOM ausente), la barra igual queda al día.
+                setProviderHealth(data.provider_health);
+
                 // Populate provider dropdown dynamically
                 const dropdown = document.getElementById('filter-provider');
-                const existingOptions = Array.from(dropdown.options).map(o => o.value);
+                const existingOptions = dropdown ? Array.from(dropdown.options).map(o => o.value) : [];
                 const uniqueProviders = data.all_providers || [...new Set(data.recent.map(e => e.provider.toLowerCase()))];
-                uniqueProviders.forEach(p => {
+                if (dropdown) uniqueProviders.forEach(p => {
                     const pLower = p.toLowerCase();
                     if (!existingOptions.includes(pLower)) {
                         const opt = document.createElement('option');
@@ -917,7 +927,6 @@
                 });
 
                 renderRecentTable();
-                setProviderHealth(data.provider_health);
                 updateProviderBar(data.recent || []);
 
                 document.getElementById('sync-status').textContent = 'Conectado y Escuchando';
