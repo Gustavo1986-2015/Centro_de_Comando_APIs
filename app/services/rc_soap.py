@@ -1,4 +1,6 @@
 import logging
+from enum import Enum
+from zeep.exceptions import Fault
 import os
 import json
 import threading
@@ -30,6 +32,47 @@ if RC_USE_MOCK:
             "RC_USE_MOCK=True está prohibido en APP_ENV=production. "
             "Setea RC_USE_MOCK=False y configura credenciales RC reales."
         )
+
+class RCResponseCategory(str, Enum):
+    """
+    Clasificación de la respuesta de Recurso Confiable, según su ESTRUCTURA.
+
+    Antes se decidía retry-vs-fail buscando palabras sueltas en el texto de la
+    respuesta. Un error transitorio cuyo mensaje no contuviera esas palabras
+    terminaba marcado como fallo permanente y se perdía en la purga de 24h.
+
+    Las cuatro formas están definidas en el contrato D-TI-15 v14:
+
+      SUCCESS   exception nil + idJob presente y distinto de 0
+      BUSINESS  exception poblado, o idJob 0/ausente. Permanente: reenviar los
+                mismos datos vuelve a fallar
+      AUTH      subcaso de BUSINESS (SQL:USERUNK, "Autenticación incorrecta").
+                Se resuelve renovando el token, así que sí se reintenta
+      PROTOCOL  s:Fault de WCF, típicamente DeserializationFailed por un campo
+                mal formado. Permanente por la misma razón que BUSINESS
+      TRANSPORT sin envelope SOAP: timeout, conexión rechazada, 5xx. Transitorio
+    """
+    SUCCESS = "SUCCESS"
+    BUSINESS = "BUSINESS"
+    AUTH = "AUTH"
+    PROTOCOL = "PROTOCOL"
+    TRANSPORT = "TRANSPORT"
+
+
+# Categorías que ameritan reintentar. El resto es permanente: volver a enviar
+# los mismos bytes produciría el mismo resultado.
+CATEGORIAS_REINTENTABLES = {RCResponseCategory.TRANSPORT, RCResponseCategory.AUTH}
+
+# Marcadores de fallo de autenticación según la tabla de errores controlados
+# del contrato (D-TI-15 v14, pág. 11). Se comparan sobre los campos `key` y
+# `message` de la excepción, no sobre el texto completo de la respuesta.
+_MARCADORES_AUTH = (
+    "sql:userunk",
+    "autenticación incorrecta",
+    "autentificación incorrecta",
+    "unknown_token",
+)
+
 
 class RCSOAPClient:
     _global_zeep_client = None
@@ -276,7 +319,12 @@ class RCSOAPClient:
                 'asset': event.chassis_number or "",
                 'code': event.code or "1",
                 'customer': {'id': '', 'name': ''},
-                'date': base_date.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                # Sin sufijo Z: el contrato D-TI-15 v14 especifica
+                # YYYY-MM-DDTHH:MM:SS en UTC, y así lo envía el cliente de
+                # referencia en producción. RC valida el formato de forma
+                # estricta y responde s:Fault DeserializationFailed si no
+                # puede parsearlo como DateTime.
+                'date': base_date.strftime("%Y-%m-%dT%H:%M:%S"),
                 'direction': str(event.course) if event.course is not None else "0",
                 'ignition': "true" if event.ignition else "false",
                 'latitude': str(event.latitude) if event.latitude is not None else "0",
@@ -305,57 +353,129 @@ class RCSOAPClient:
         res = client.service.GPSAssetTracking(token, {'Event': event_dicts})
         return res
 
-    def _parse_single_response(self, res_item) -> tuple[bool, str, str]:
+    @staticmethod
+    def _extraer_excepcion(res_item) -> tuple[bool, str]:
+        """
+        Extrae el arreglo KeyValueOfstringstring de la excepción, si existe.
+
+        Devuelve (hay_excepcion, texto). Un `exception` presente pero con la
+        lista vacía NO es error: así responde RC en el caso exitoso cuando el
+        cliente SOAP materializa el nodo nil.
+        """
+        if not isinstance(res_item, dict):
+            return False, ""
+
+        excepcion = res_item.get("exception")
+        if not excepcion:
+            return False, ""
+
+        try:
+            pares = excepcion.get("KeyValueOfstringstring", [])
+            if isinstance(pares, list) and pares:
+                texto = ", ".join(
+                    f"{kv.get('Key')}: {kv.get('Value')}"
+                    for kv in pares if isinstance(kv, dict)
+                )
+                return True, texto
+        except (AttributeError, TypeError) as e:
+            logger.warning(f"Estructura de excepción inesperada en respuesta de RC: {e}")
+            texto = str(excepcion)
+            return ("KeyValueOfstringstring" in texto), texto
+
+        return False, ""
+
+    @staticmethod
+    def _es_fallo_de_autenticacion(texto_excepcion: str) -> bool:
+        """
+        Distingue el subcaso AUTH dentro de los errores de negocio.
+
+        Importa porque es el único permanente-en-apariencia que sí conviene
+        reintentar: renovando el token, el mismo evento se acepta.
+        """
+        minusculas = (texto_excepcion or "").lower()
+        return any(marcador in minusculas for marcador in _MARCADORES_AUTH)
+
+    def _parse_single_response(self, res_item) -> tuple[bool, str, str, RCResponseCategory]:
+        """
+        Clasifica una respuesta de RC por su estructura.
+
+        Retorna (exito, job_id, respuesta_cruda, categoria).
+        """
         if res_item is None:
-            return False, f"rc_err_no_resp_{int(datetime.now().timestamp())}", "No se recibió respuesta del servidor RC"
-            
+            # Sin respuesta no se puede afirmar que RC no la haya recibido:
+            # se trata como transitorio para no descartar el evento.
+            return (
+                False,
+                f"rc_err_no_resp_{int(datetime.now().timestamp())}",
+                "No se recibió respuesta del servidor RC",
+                RCResponseCategory.TRANSPORT,
+            )
+
         raw_response = str(res_item)
-        id_job = None
-        has_exception = False
-        exception_msg = ""
-        
-        if isinstance(res_item, dict):
-            id_job = res_item.get("idJob")
-            if "exception" in res_item and res_item["exception"]:
-                try:
-                    key_vals = res_item["exception"].get("KeyValueOfstringstring", [])
-                    if isinstance(key_vals, list) and len(key_vals) > 0:
-                        has_exception = True
-                        exception_msg = ", ".join([f"{kv.get('Key')}: {kv.get('Value')}" for kv in key_vals if isinstance(kv, dict)])
-                except Exception as e:
-                    logger.warning(f"Excepción capturada en rc_soap: {e}")
-                    exception_msg = str(res_item["exception"])
-                    if "KeyValueOfstringstring" in exception_msg:
-                        has_exception = True
-                        
-        # Si detectamos un error de token o autenticación, invalidamos la caché
-        err_lower = (exception_msg + " " + raw_response).lower()
-        if any(w in err_lower for w in ["unknown_token", "userunk", "autentica", "token", "incorrecta", "contrase"]):
-            logger.warning("Token de RC inválido o rechazado en producción. Limpiando caché de token.")
+        id_job = res_item.get("idJob") if isinstance(res_item, dict) else None
+        hay_excepcion, texto_excepcion = self._extraer_excepcion(res_item)
+
+        # ── Error de autenticación: renovar token y reintentar ───────────────
+        if hay_excepcion and self._es_fallo_de_autenticacion(texto_excepcion):
+            logger.warning(
+                f"[RC:AUTH] Token rechazado por RC. Se limpia la caché para "
+                f"renovarlo en el próximo intento. Detalle: {texto_excepcion}"
+            )
             self._clear_token_cache()
-            
-        success = True
-        job_id = None
-        
-        # Si idJob es 0 (o None) o si contiene excepción de negocio, es fallido
+            return (
+                False,
+                f"rc_auth_{int(datetime.now().timestamp())}",
+                f"Error de autenticación RC: {texto_excepcion}",
+                RCResponseCategory.AUTH,
+            )
+
+        # ── Rechazo de negocio: permanente ───────────────────────────────────
+        if hay_excepcion:
+            logger.error(
+                f"[RC:BUSINESS] RC rechazó el evento de forma permanente. "
+                f"No se reintenta. Detalle: {texto_excepcion}"
+            )
+            return (
+                False,
+                f"rc_business_{int(datetime.now().timestamp())}",
+                f"Rechazo de negocio RC: {texto_excepcion}",
+                RCResponseCategory.BUSINESS,
+            )
+
+        # ── idJob: el acuse de recibo ────────────────────────────────────────
         if id_job is not None:
             id_job_str = str(id_job)
-            if id_job_str == "0" or has_exception:
-                success = False
-                job_id = f"rc_err_{int(datetime.now().timestamp())}"
-                raw_response = f"Error RC: {exception_msg or raw_response}"
-            else:
-                success = True
-                job_id = id_job_str
-        else:
-            if isinstance(res_item, dict) and "job_id" in res_item:
-                job_id = str(res_item["job_id"])
-            else:
-                success = False
-                job_id = f"rc_err_no_id_{int(datetime.now().timestamp())}"
-                raw_response = f"Respuesta SOAP sin campo idJob: {raw_response}"
-                
-        return success, job_id, raw_response
+            if id_job_str and id_job_str != "0":
+                return True, id_job_str, raw_response, RCResponseCategory.SUCCESS
+
+            logger.error(
+                f"[RC:BUSINESS] RC devolvió idJob=0 sin excepción explícita. "
+                f"El evento no fue registrado. Respuesta: {raw_response[:200]}"
+            )
+            return (
+                False,
+                f"rc_business_idjob0_{int(datetime.now().timestamp())}",
+                f"RC devolvió idJob=0: {raw_response}",
+                RCResponseCategory.BUSINESS,
+            )
+
+        # Compatibilidad con respuestas que traen job_id en lugar de idJob
+        if isinstance(res_item, dict) and res_item.get("job_id"):
+            return True, str(res_item["job_id"]), raw_response, RCResponseCategory.SUCCESS
+
+        # ── Respuesta bien formada pero sin acuse ────────────────────────────
+        # No se puede confirmar el registro, y tampoco descartarlo: ante la duda
+        # se reintenta, porque la pérdida silenciosa es el error más costoso.
+        logger.warning(
+            f"[RC:TRANSPORT] Respuesta de RC sin idJob ni excepción. "
+            f"Se reintentará. Respuesta: {raw_response[:200]}"
+        )
+        return (
+            False,
+            f"rc_err_no_id_{int(datetime.now().timestamp())}",
+            f"Respuesta SOAP sin campo idJob: {raw_response}",
+            RCResponseCategory.TRANSPORT,
+        )
 
     async def send_events_batch(self, events: list[RCCanonicalModel]):
         """
@@ -373,7 +493,7 @@ class RCSOAPClient:
                 for ev in events:
                     mock_job_id = f"job_mock_{int(datetime.now().timestamp())}_{random.randint(100, 999)}"
                     mock_json_response = f'{{"timestamp": "{datetime.now(timezone.utc).isoformat()}", "level": "INFO", "event_type": "batch_sent", "status": "success", "job_id": "{mock_job_id}"}}'
-                    results.append((True, mock_job_id, mock_json_response))
+                    results.append((True, mock_job_id, mock_json_response, RCResponseCategory.SUCCESS))
                 return results
             else:
                 import asyncio
@@ -398,36 +518,63 @@ class RCSOAPClient:
                 if len(res_list) == 1 and len(events) > 1:
                     # Extraer el resultado global
                     res_item = res_list[0]
-                    success, job_id, raw_response = self._parse_single_response(res_item)
+                    success, job_id, raw_response, categoria = self._parse_single_response(res_item)
                     # Aplicarlo a todos los eventos del lote
-                    results = [(success, job_id, raw_response) for _ in events]
+                    results = [(success, job_id, raw_response, categoria) for _ in events]
                 else:
                     # Caso B: Mapeo posicional (un resultado por evento, o tamaño no coincide de otra forma)
                     for idx, ev in enumerate(events):
                         # Intentar obtener el resultado posicional
                         res_item = res_list[idx] if idx < len(res_list) else (res_list[0] if res_list else None)
-                        success, job_id, raw_response = self._parse_single_response(res_item)
-                        results.append((success, job_id, raw_response))
+                        success, job_id, raw_response, categoria = self._parse_single_response(res_item)
+                        results.append((success, job_id, raw_response, categoria))
                         
                 return results
                 
-        except Exception as e:
-            logger.warning(f"Excepción capturada en rc_soap: {e}")
-            logger.error(f"Error fatal al enviar lote SOAP a RC: {str(e)}")
-            # Si toda la llamada falló (ej. error de conexión o credenciales incorrectas en GetUserToken)
+        except Fault as e:
+            # s:Fault de WCF: el mensaje no se pudo deserializar (un campo con
+            # formato inválido, típicamente la fecha). Reenviar exactamente los
+            # mismos bytes produce el mismo error, así que no se reintenta.
             err_str = str(e)
+            logger.error(
+                f"[RC:PROTOCOL] RC rechazó el mensaje por formato. No se reintenta. "
+                f"Revisar la serialización de los campos. Detalle: {err_str[:300]}"
+            )
+            return [
+                (False, f"rc_protocol_{int(datetime.now().timestamp())}", err_str,
+                 RCResponseCategory.PROTOCOL)
+                for _ in events
+            ]
+
+        except Exception as e:
+            # Todo lo demás (timeout, conexión rechazada, 5xx) es transitorio:
+            # el evento no llegó a RC y volver a intentarlo tiene sentido.
+            err_str = str(e)
+            logger.warning(
+                f"[RC:TRANSPORT] Fallo de transporte hacia RC. Se reintentará. "
+                f"Detalle: {err_str[:300]}"
+            )
             if "token" in err_str.lower() or "auth" in err_str.lower() or "GetUserToken" in err_str:
                 self._clear_token_cache()
-            return [(False, f"rc_conn_err_{int(datetime.now().timestamp())}", err_str) for _ in events]
+            return [
+                (False, f"rc_conn_err_{int(datetime.now().timestamp())}", err_str,
+                 RCResponseCategory.TRANSPORT)
+                for _ in events
+            ]
 
     async def send_event(self, event: RCCanonicalModel):
         """
         Envía el evento a RC de forma individual (por compatibilidad).
-        Devuelve (success: bool, job_id: str, raw_response: str)
+
+        Devuelve (success, job_id, raw_response) sin la categoría, para no
+        romper a los llamadores que esperan tres elementos.
         """
         results = await self.send_events_batch([event])
         if results:
-            return results[0]
+            # send_events_batch devuelve 4 elementos (con categoría); acá se
+            # recortan a 3 para respetar el contrato de este método.
+            primera = results[0]
+            return primera[0], primera[1], primera[2]
         return False, f"rc_err_empty_{int(datetime.now().timestamp())}", "No response from batch dispatcher"
 
 
