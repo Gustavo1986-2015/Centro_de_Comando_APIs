@@ -8,7 +8,7 @@ from app.database import get_session
 from app.models.db_models import NormalizedRCEvent
 from app.schemas.canonical import RCCanonicalModel
 import threading as _threading
-from collections import deque
+from collections import deque, defaultdict
 
 class CircuitBreaker:
     """
@@ -112,7 +112,16 @@ _rc_circuit_breaker = CircuitBreaker(
     max_timeout=600,        # máximo 10 minutos entre reintentos
 )
 
-from app.services.rc_soap import get_rc_client
+from app.services.rc_soap import (
+    get_rc_client,
+    RCResponseCategory,
+    CATEGORIAS_REINTENTABLES,
+)
+
+# Tope de reintentos antes de dar el evento por fallido. Con el backoff
+# exponencial actual, cuatro intentos cubren unos 25 minutos de indisponibilidad
+# de RC; más allá de eso el evento pierde vigencia operativa.
+MAX_REINTENTOS = 4
 from app.models.config_models import ProviderConfig, DailyStat
 from app.core.config_cache import get_settings
 
@@ -152,9 +161,12 @@ async def send_batch_and_measure(canonical_events, rc_client):
         results = await rc_client.send_events_batch(canonical_events)
         elapsed = time.time() - start_time
         
-        # Detectar error silencioso de conexión capturado dentro de rc_client
+        # Detectar error silencioso de conexión capturado dentro de rc_client.
+        # Se desempaqueta por índice para tolerar tanto la tupla de 4 elementos
+        # (con categoría) como la de 3 de versiones anteriores.
         if results and isinstance(results, list) and len(results) > 0:
-            success, job_id, raw_response = results[0]
+            primera = results[0]
+            success, job_id, raw_response = primera[0], primera[1], primera[2]
             if not success and "rc_conn_err" in str(job_id):
                 # Es un error de conexión real a RC
                 raise Exception(raw_response)
@@ -282,6 +294,7 @@ async def process_provider_events(provider: str, env: str):
             # Debe existir en todos los caminos: si el lote falla entero no
             # hay muestras que registrar, pero la variable se usa al retornar.
             muestras_latencia = []
+            conteo_categorias = defaultdict(int)
 
             if isinstance(batch_outcome, Exception):
                 logger.error(f"Excepción general en sub-lote {batch_idx + 1} para {provider}_{env}: {batch_outcome}")
@@ -311,7 +324,24 @@ async def process_provider_events(provider: str, env: str):
 
                 for idx, db_event in enumerate(batch):
                     try:
-                        success, job_id, rc_response = results[idx] if results and idx < len(results) else (False, f"rc_err_missing_{int(datetime.now().timestamp())}", "No response mapping for event")
+                        # El cliente devuelve 4 elementos desde la clasificación
+                        # estructural. Se tolera la forma anterior de 3 por si
+                        # queda algún camino sin migrar.
+                        if results and idx < len(results):
+                            entrada = results[idx]
+                            if len(entrada) == 4:
+                                success, job_id, rc_response, categoria = entrada
+                            else:
+                                success, job_id, rc_response = entrada
+                                categoria = (RCResponseCategory.SUCCESS if success
+                                             else RCResponseCategory.TRANSPORT)
+                        else:
+                            success = False
+                            job_id = f"rc_err_missing_{int(datetime.now().timestamp())}"
+                            rc_response = "No response mapping for event"
+                            # Sin respuesta mapeada no se puede afirmar que RC no
+                            # lo recibió: se reintenta en lugar de descartarlo.
+                            categoria = RCResponseCategory.TRANSPORT
                         
                         if success:
                             updates_to_sent.append({
@@ -325,6 +355,8 @@ async def process_provider_events(provider: str, env: str):
                             # salieron al primer intento: los reintentados miden
                             # la indisponibilidad del destino, no el rendimiento
                             # del hub, y distorsionarían la media.
+                            conteo_categorias["SUCCESS"] += 1
+
                             if not (db_event.retry_count or 0):
                                 hub_sec = None
                                 transmision_sec = None
@@ -349,36 +381,42 @@ async def process_provider_events(provider: str, env: str):
                                     "transmission": transmision_sec,
                                 })
                         else:
-                            err_lower = str(rc_response).lower()
-                            is_auth_error = any(w in err_lower for w in ["unknown_token", "userunk", "autentica", "token", "incorrecta", "contrase", "conn_err", "connection"])
-                            
-                            if is_auth_error:
-                                current_retries = db_event.retry_count or 0
-                                if current_retries < 4:
-                                    backoff_sec = get_next_retry_delay(current_retries)
-                                    next_retry = datetime.now() + timedelta(seconds=backoff_sec)
-                                    updates_to_retry.append({
-                                        "event_id": db_event.id,
-                                        "elapsed_sec": elapsed_sec,
-                                        "rc_response": rc_response,
-                                        "job_id": job_id,
-                                        "retry_count": current_retries + 1,
-                                        "next_retry_at": next_retry
-                                    })
-                                else:
-                                    updates_to_fail.append({
-                                        "event_id": db_event.id,
-                                        "elapsed_sec": elapsed_sec,
-                                        "rc_response": rc_response,
-                                        "job_id": job_id
-                                    })
+                            # La decisión se toma por la CATEGORÍA que devolvió
+                            # el cliente SOAP, no buscando palabras en el texto
+                            # de la respuesta. Un error transitorio cuyo mensaje
+                            # no contuviera las palabras esperadas terminaba
+                            # marcado como fallo permanente y se perdía al purgar.
+                            reintentable = categoria in CATEGORIAS_REINTENTABLES
+                            current_retries = db_event.retry_count or 0
+
+                            if reintentable and current_retries < MAX_REINTENTOS:
+                                backoff_sec = get_next_retry_delay(current_retries)
+                                next_retry = datetime.now() + timedelta(seconds=backoff_sec)
+                                updates_to_retry.append({
+                                    "event_id": db_event.id,
+                                    "elapsed_sec": elapsed_sec,
+                                    "rc_response": rc_response,
+                                    "job_id": job_id,
+                                    "retry_count": current_retries + 1,
+                                    "next_retry_at": next_retry
+                                })
+                                conteo_categorias[f"{categoria.value}_retry"] += 1
                             else:
+                                # Permanente (BUSINESS/PROTOCOL) o agotó los
+                                # reintentos: reenviarlo daría el mismo resultado.
+                                if reintentable:
+                                    logger.error(
+                                        f"[RC:{categoria.value}] Evento {db_event.id} agotó "
+                                        f"{MAX_REINTENTOS} reintentos y se marca como fallido. "
+                                        f"Última respuesta: {str(rc_response)[:200]}"
+                                    )
                                 updates_to_fail.append({
                                     "event_id": db_event.id,
                                     "elapsed_sec": elapsed_sec,
                                     "rc_response": rc_response,
                                     "job_id": job_id
                                 })
+                                conteo_categorias[f"{categoria.value}_failed"] += 1
                     except Exception as inner_e:
                         logger.warning(f"Excepción capturada en processor: {inner_e}")
                         updates_to_fail.append({
@@ -391,6 +429,7 @@ async def process_provider_events(provider: str, env: str):
             metrics["retry"] = len(updates_to_retry)
             metrics["failed"] = len(updates_to_fail)
             metrics["sent"] = len(updates_to_sent)
+            metrics["categorias"] = dict(conteo_categorias)
 
             # Alimenta la ventana usada por las estadísticas, que así no
             # necesitan recorrer la tabla del día.
@@ -447,13 +486,36 @@ async def process_provider_events(provider: str, env: str):
             asyncio.create_task(asyncio.to_thread(increment_daily_stats, provider, env, total_sent, total_failed))
         
         soap_avg_ms = (soap_ms_total / len(batches)) if len(batches) > 0 else 0
-        
-        # Log de rendimiento estructurado
+
+        # Consolidar las categorías de respuesta de RC de todos los sub-lotes.
+        # Queda siempre en el log para poder ver, sin abrir la base, si RC está
+        # aceptando, rechazando por negocio, o fallando por transporte.
+        categorias_lote = defaultdict(int)
+        for m in all_metrics:
+            if isinstance(m, dict):
+                for clave, valor in (m.get("categorias") or {}).items():
+                    categorias_lote[clave] += valor
+
+        detalle_rc = " ".join(f"{k}={v}" for k, v in sorted(categorias_lote.items())) or "sin_respuestas"
+
         logger.info(
             f"batch_processed provider={provider} env={env} "
             f"batch_size={len(pendings)} soap_avg_ms={soap_avg_ms:.0f} "
-            f"sent={total_sent} failed={total_failed} retry={total_retry}"
+            f"sent={total_sent} failed={total_failed} retry={total_retry} "
+            f"| RC: {detalle_rc}"
         )
+
+        # Un rechazo permanente de RC merece visibilidad propia: no se reintenta
+        # y el evento no llegará nunca si no se corrige el origen.
+        permanentes = sum(
+            v for k, v in categorias_lote.items()
+            if k.startswith(("BUSINESS", "PROTOCOL"))
+        )
+        if permanentes:
+            logger.error(
+                f"[RC] {permanentes} evento(s) de {provider}/{env} rechazados de forma "
+                f"PERMANENTE por RC (no se reintentan). Detalle por categoría: {detalle_rc}"
+            )
         
         # NOTA: update_daily_stats ya no bloquea aquí. 
         # Se movió al api_worker_loop como tarea fire-and-forget cada 5 segundos 
