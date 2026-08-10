@@ -405,3 +405,82 @@ def test_el_conteo_usa_la_categoria_real_y_no_asume_exito():
         "El conteo no debe asumir SUCCESS: hay que usar la categoría devuelta"
     )
     assert "conteo_categorias[categoria.value] += 1" in fuente
+
+
+# ── Integración: el consumidor real frente a la 4-tupla ──────────────────────
+# Los tests que inspeccionan el código fuente detectan el patrón pero se rompen
+# ante un rename inocente. Estos ejercen el consumidor de verdad: si alguien
+# vuelve a desempaquetar mal, fallan por la excepción real, no por una cadena
+# que dejó de coincidir.
+
+@pytest.mark.asyncio
+async def test_el_worker_procesa_una_4tupla_de_exito_sin_romperse():
+    from app.worker.processor import send_batch_and_measure
+    from app.schemas.canonical import RCCanonicalModel
+
+    evento = RCCanonicalModel(
+        chassis_number="C180673", latitude=9.89, longitude=-84.63,
+        speed=0, code="1", date=datetime.now(),
+    )
+
+    class ClienteFalso:
+        async def send_events_batch(self, eventos):
+            return [
+                (True, "7033068595", "ok", RCResponseCategory.SUCCESS)
+                for _ in eventos
+            ]
+
+    resultados, _ = await send_batch_and_measure([evento] * 3, ClienteFalso())
+
+    assert len(resultados) == 3
+    assert all(len(r) == 4 for r in resultados)
+
+
+@pytest.mark.asyncio
+async def test_el_worker_detecta_el_error_de_conexion_en_la_4tupla():
+    """
+    La detección de fallo silencioso lee el job_id por índice. Con el
+    desempaquetado a tres nombres esto lanzaba ValueError antes de poder
+    inspeccionarlo.
+    """
+    from app.worker.processor import send_batch_and_measure
+    from app.schemas.canonical import RCCanonicalModel
+
+    evento = RCCanonicalModel(
+        chassis_number="C1", latitude=1.0, longitude=2.0,
+        speed=0, code="1", date=datetime.now(),
+    )
+
+    class ClienteCaido:
+        async def send_events_batch(self, eventos):
+            return [
+                (False, "rc_conn_err_123", "Connection refused",
+                 RCResponseCategory.TRANSPORT)
+                for _ in eventos
+            ]
+
+    # Debe re-lanzarse como excepción para que el circuit breaker la registre,
+    # no fallar por desempaquetado.
+    with pytest.raises(Exception) as exc:
+        await send_batch_and_measure([evento], ClienteCaido())
+
+    assert "unpack" not in str(exc.value).lower()
+
+
+@pytest.mark.asyncio
+async def test_send_event_sigue_devolviendo_tres_elementos():
+    """El método de compatibilidad no debe filtrar la categoría a sus llamadores."""
+    from app.schemas.canonical import RCCanonicalModel
+
+    cliente = RCSOAPClient.__new__(RCSOAPClient)
+    cliente.use_mock = True
+
+    evento = RCCanonicalModel(
+        chassis_number="C1", latitude=1.0, longitude=2.0,
+        speed=0, code="1", date=datetime.now(),
+    )
+    resultado = await cliente.send_event(evento)
+
+    assert len(resultado) == 3
+    exito, job_id, respuesta = resultado      # debe desempaquetar sin error
+    assert exito is True

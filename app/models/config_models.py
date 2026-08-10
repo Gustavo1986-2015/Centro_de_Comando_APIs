@@ -71,3 +71,4 @@ class SystemSettings(Base):
     rc_liberacion_tanda = Column(Integer, default=500)   # eventos por ciclo al recuperarse RC
     rc_max_reintentos = Column(Integer, default=4)       # intentos por evento antes de darlo por fallido
     rc_fallos_circuito = Column(Integer, default=5)      # llamadas fallidas seguidas para dejar de insistir
+    rc_recuperacion_umbral_seg = Column(Integer, default=600)  # antigüedad para rescatar un lote atascado

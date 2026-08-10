@@ -1,5 +1,5 @@
 from typing import List, Any
-from datetime import datetime
+from datetime import datetime, timedelta
 from sqlalchemy import or_
 
 from app.database import session_context
@@ -98,6 +98,53 @@ class SQLiteQueue(MessageQueueInterface):
 
     async def liberar_backoff(self, provider: str, env: str, limite: int = 500) -> int:
         return await asyncio.to_thread(self._liberar_backoff_sync, provider, env, limite)
+
+    def _recuperar_estancados_sync(self, provider: str, env: str, umbral_seg: int) -> int:
+        """
+        Devuelve a la cola los eventos que quedaron atascados en 'processing'.
+
+        Un lote se marca 'processing' al tomarlo y cambia de estado al terminar
+        de despacharse. Si el proceso muere entre esos dos momentos —o si una
+        excepción corta el camino antes de escribir los resultados— esos eventos
+        quedan en un estado del que nadie los saca: no están pendientes, así que
+        ningún ciclo los vuelve a tomar, y no están enviados, así que la purga
+        tampoco los toca. Se acumulan invisibles.
+
+        Existía una recuperación equivalente, pero solo al arrancar el proceso:
+        un lote atascado esperaba al próximo reinicio.
+
+        El umbral debe superar con holgura el despacho más lento posible, para
+        no arrebatarle a un worker un lote que todavía está en vuelo.
+
+        Retorna cuántos se recuperaron.
+        """
+        with session_context(provider, env) as db:
+            limite = datetime.now() - timedelta(seconds=umbral_seg)
+
+            ids = [
+                fila[0]
+                for fila in db.query(NormalizedRCEvent.id)
+                .filter(
+                    NormalizedRCEvent.status == "processing",
+                    NormalizedRCEvent.updated_at.isnot(None),
+                    NormalizedRCEvent.updated_at < limite,
+                )
+                .all()
+            ]
+            if not ids:
+                return 0
+
+            # Vuelven a 'pending' sin next_retry_at: nunca llegaron a intentarse
+            # contra RC, así que no corresponde imponerles una espera.
+            db.query(NormalizedRCEvent).filter(
+                NormalizedRCEvent.id.in_(ids)
+            ).update({"status": "pending"}, synchronize_session=False)
+            return len(ids)
+
+    async def recuperar_estancados(self, provider: str, env: str, umbral_seg: int = 600) -> int:
+        return await asyncio.to_thread(
+            self._recuperar_estancados_sync, provider, env, umbral_seg
+        )
 
     def _mark_batch_as_sent_sync(self, provider: str, env: str, updates: List[dict]) -> None:
         from datetime import timezone
