@@ -1502,3 +1502,151 @@ body.compact-mode .mock-banner { padding: 0.5rem 0.9rem; font-size: 0.78rem; }
     background: var(--card-border);
     margin: 0 0.3rem;
 }
+
+/* ── Leyenda de categorías de respuesta de RC ────────────────────────────────
+   Las categorías aparecen en el log de cada lote; sin esta referencia, un
+   operador no puede saber si un BUSINESS_failed necesita su intervención. */
+.rc-legend {
+    background: var(--level-1);
+    border: 1px solid var(--card-border);
+    border-radius: 8px;
+    margin-bottom: 1rem;
+    font-size: 0.8rem;
+}
+.rc-legend summary {
+    padding: 0.6rem 1rem;
+    cursor: pointer;
+    color: var(--color-gray-label);
+    user-select: none;
+    list-style: none;
+}
+.rc-legend summary::-webkit-details-marker { display: none; }
+.rc-legend summary::before {
+    content: "▸ ";
+    color: var(--color-green-vibrant);
+    display: inline-block;
+    transition: transform 0.2s;
+}
+.rc-legend[open] summary::before { transform: rotate(90deg); }
+.rc-legend summary:hover { color: var(--color-text); }
+.rc-legend code {
+    background: var(--level-0);
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-size: 0.75rem;
+    color: var(--color-green-bright);
+}
+
+.rc-legend-body {
+    padding: 0.4rem 1.2rem 1.1rem;
+    border-top: 1px solid var(--card-border);
+    display: flex;
+    flex-direction: column;
+    gap: 0.7rem;
+}
+.rc-cat {
+    display: flex;
+    gap: 0.9rem;
+    align-items: flex-start;
+    line-height: 1.5;
+}
+.rc-cat > div { color: var(--color-gray-label); font-size: 0.78rem; }
+.rc-cat strong { color: var(--color-text); }
+.rc-cat em { font-style: normal; font-weight: 600; }
+
+.rc-tag {
+    flex-shrink: 0;
+    width: 84px;
+    text-align: center;
+    padding: 3px 0;
+    border-radius: 4px;
+    font-size: 0.66rem;
+    font-weight: 700;
+    letter-spacing: 0.4px;
+    margin-top: 1px;
+}
+.rc-tag.ok {
+    background: rgba(0, 255, 102, 0.12);
+    color: var(--color-green-bright);
+    border: 1px solid rgba(0, 255, 102, 0.3);
+}
+.rc-tag.retry {
+    background: rgba(234, 179, 8, 0.12);
+    color: var(--color-yellow);
+    border: 1px solid rgba(234, 179, 8, 0.3);
+}
+.rc-tag.fail {
+    background: rgba(239, 68, 68, 0.12);
+    color: var(--color-red);
+    border: 1px solid rgba(239, 68, 68, 0.35);
+}
+.rc-cat .rc-tag.retry + div em { color: var(--color-yellow); }
+.rc-cat .rc-tag.fail + div em { color: var(--color-red); }
+
+.rc-legend-note {
+    margin-top: 0.3rem;
+    padding-top: 0.7rem;
+    border-top: 1px solid var(--card-border);
+    font-size: 0.74rem;
+    color: var(--color-gray-label);
+    line-height: 1.55;
+}
+
+/* ── Comportamiento ante fallas de RC ────────────────────────────────────── */
+.rc-behavior-intro {
+    font-size: 0.8rem;
+    color: var(--color-gray-label);
+    margin: 0.7rem 0 1.3rem;
+    line-height: 1.5;
+}
+.rc-behavior-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    gap: 1.6rem;
+}
+.rc-param label {
+    display: block;
+    font-weight: 700;
+    font-size: 0.82rem;
+    color: var(--color-text);
+    margin-bottom: 0.5rem;
+}
+.rc-param input {
+    width: 110px;
+    margin-bottom: 0.6rem;
+    background-color: var(--level-0);
+}
+.rc-param p {
+    margin: 0;
+    font-size: 0.76rem;
+    line-height: 1.6;
+    color: var(--color-gray-label);
+}
+.rc-param p strong { color: var(--color-text); }
+.rc-param p em { font-style: normal; color: var(--color-red); font-weight: 600; }
+.rc-param-nota {
+    display: block;
+    margin-top: 0.5rem;
+    padding-left: 0.7rem;
+    border-left: 2px solid var(--card-border);
+    color: var(--color-gray);
+}
+
+/* La acción esperada se destaca dentro de cada descripción de categoría */
+.rc-accion {
+    display: block;
+    margin-top: 0.3rem;
+    font-weight: 600;
+}
+.rc-accion.ok    { color: var(--color-green-bright); }
+.rc-accion.retry { color: var(--color-yellow); }
+.rc-accion.fail  { color: var(--color-red); }
+
+/* El modo simulado no es un resultado de RC: se distingue en violeta para que
+   no se confunda con un envío confirmado ni con un error. */
+.rc-tag.sim {
+    background: rgba(139, 92, 246, 0.14);
+    color: #a78bfa;
+    border: 1px solid rgba(139, 92, 246, 0.35);
+}
+.rc-accion.sim { color: #a78bfa; }

@@ -266,6 +266,61 @@
             </div>
         </div>
 
+        <!-- Comportamiento ante fallas de RC. Estos parámetros estaban fijos en
+             el código o en variables del servidor: durante un incidente no había
+             forma de ajustarlos sin acceso a la máquina. -->
+        <div class="recent-section" style="margin-top: 2rem;">
+            <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:1rem;">
+                <h2 style="margin:0;">Comportamiento ante Fallas de Recurso Confiable</h2>
+                <button class="btn-save" onclick="guardarComportamientoRC()">Guardar</button>
+            </div>
+
+            <div class="rc-behavior-intro">
+                Estos tres valores definen cómo reacciona el hub cuando RC deja de responder.
+                Se aplican de inmediato, sin reiniciar el servicio.
+            </div>
+
+            <div class="rc-behavior-grid">
+
+                <div class="rc-param">
+                    <label for="rc_max_reintentos">Reintentos por evento</label>
+                    <input type="number" id="rc_max_reintentos" class="form-control" min="1" max="10">
+                    <p>
+                        Cuántas veces se vuelve a enviar <strong>un mismo evento</strong> antes de
+                        darlo por fallido. Entre intento e intento la espera crece
+                        (10s, 35s, 2min, 7min) para no insistir sobre un destino que no responde.
+                        Agotados los intentos, el evento queda como <em>fallido</em> y no se envía más.
+                    </p>
+                </div>
+
+                <div class="rc-param">
+                    <label for="rc_fallos_circuito">Fallos seguidos para pausar los envíos</label>
+                    <input type="number" id="rc_fallos_circuito" class="form-control" min="2" max="50">
+                    <p>
+                        Cuántos <strong>envíos completos</strong> pueden fallar seguidos antes de que
+                        el hub deje de intentar por un rato (60 segundos la primera vez, y más si
+                        RC sigue sin responder). Evita golpear un servicio que ya está caído.
+                        <span class="rc-param-nota">
+                            Es independiente del valor anterior: aquel cuenta intentos de cada evento,
+                            este cuenta envíos fallidos hacia RC en general.
+                        </span>
+                    </p>
+                </div>
+
+                <div class="rc-param">
+                    <label for="rc_liberacion_tanda">Eventos liberados por ciclo al volver RC</label>
+                    <input type="number" id="rc_liberacion_tanda" class="form-control" min="50" max="5000">
+                    <p>
+                        Cuando RC vuelve a responder, los eventos que estaban esperando su
+                        reintento salen antes de tiempo, de a tandas de este tamaño.
+                        Subirlo desagota más rápido; bajarlo es más suave con RC recién
+                        recuperado. Cada ciclo del worker libera una tanda hasta terminar.
+                    </p>
+                </div>
+
+            </div>
+        </div>
+
         <div class="recent-section" style="margin-top: 2rem;">
             <h2>Retención de Logs</h2>
             <div style="display: flex; flex-direction: column; gap: 1rem; margin-top: 1rem;">
@@ -529,6 +584,80 @@
             <div style="font-size:0.78rem; color:var(--color-gray); margin-bottom:0.8rem;">
                 Los tokens, firmas y contraseñas se enmascaran antes de salir del servidor.
             </div>
+
+            <!-- Leyenda de las categorías con que se clasifica cada respuesta de
+                 Recurso Confiable. Aparecen en el log como "| RC: SUCCESS=29".
+                 La redacción apunta a qué debe hacer el operador, no a cómo
+                 funciona el clasificador. -->
+            <details class="rc-legend">
+                <summary>¿Qué significan las categorías <code>RC:</code> del log?</summary>
+                <div class="rc-legend-body">
+
+                    <div class="rc-cat">
+                        <span class="rc-tag ok">SUCCESS</span>
+                        <div>
+                            <strong>Recurso Confiable recibió y registró el evento.</strong>
+                            Devolvió un número de acuse (<code>idJob</code>).
+                            <span class="rc-accion ok">No requiere acción.</span>
+                        </div>
+                    </div>
+
+                    <div class="rc-cat">
+                        <span class="rc-tag sim">SIMULADO</span>
+                        <div>
+                            <strong>El evento no se envió: el proveedor está en modo simulado.</strong>
+                            Aparece marcado como enviado en el panel, pero RC nunca lo recibió.
+                            <span class="rc-accion sim">Desactivar el modo simulado para que los datos lleguen a RC.</span>
+                        </div>
+                    </div>
+
+                    <div class="rc-cat">
+                        <span class="rc-tag retry">TRANSPORT</span>
+                        <div>
+                            <strong>El evento no llegó a RC.</strong>
+                            Se cortó la conexión, venció el tiempo de espera o RC no respondió.
+                            <span class="rc-accion retry">El hub reintenta solo.</span>
+                            Si se repite durante varios minutos, verificar el enlace con RC.
+                        </div>
+                    </div>
+
+                    <div class="rc-cat">
+                        <span class="rc-tag retry">AUTH</span>
+                        <div>
+                            <strong>RC rechazó las credenciales.</strong>
+                            <span class="rc-accion retry">El hub renueva el token y reintenta.</span>
+                            Si se repite, revisar usuario y contraseña de RC en la
+                            configuración de ese proveedor.
+                        </div>
+                    </div>
+
+                    <div class="rc-cat">
+                        <span class="rc-tag fail">BUSINESS</span>
+                        <div>
+                            <strong>RC recibió el evento pero lo rechazó.</strong>
+                            Suele ser una patente que RC no tiene dada de alta, un código
+                            de evento no informado, o un campo obligatorio vacío.
+                            <span class="rc-accion fail">No se reintenta: hay que corregir el dato en el origen.</span>
+                        </div>
+                    </div>
+
+                    <div class="rc-cat">
+                        <span class="rc-tag fail">PROTOCOL</span>
+                        <div>
+                            <strong>RC no pudo leer el mensaje.</strong>
+                            Casi siempre un campo con formato inválido (una fecha o un número).
+                            <span class="rc-accion fail">No se reintenta: hay que corregir el mapeo del proveedor.</span>
+                        </div>
+                    </div>
+
+                    <div class="rc-legend-note">
+                        En el log, el sufijo indica qué pasó con esos eventos:
+                        <code>_retry</code> volverán a intentarse, <code>_failed</code> no.
+                        Ante una respuesta que no se puede interpretar, el hub reintenta:
+                        perder un evento en silencio es peor que un intento de más.
+                    </div>
+                </div>
+            </details>
 
             <div id="console-output" class="console-output"></div>
 

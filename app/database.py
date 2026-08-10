@@ -43,6 +43,21 @@ def check_and_migrate_db():
                 cursor.execute("ALTER TABLE provider_config ADD COLUMN run_interval_sec INTEGER DEFAULT 5")
                 conn.commit()
 
+            # Parámetros de comportamiento ante fallas de RC
+            cursor.execute("PRAGMA table_info(system_settings)")
+            cols_settings = [row[1] for row in cursor.fetchall()]
+            if cols_settings:
+                for columna, defecto in (
+                    ("rc_liberacion_tanda", 500),
+                    ("rc_max_reintentos", 4),
+                    ("rc_fallos_circuito", 5),
+                ):
+                    if columna not in cols_settings:
+                        cursor.execute(
+                            f"ALTER TABLE system_settings ADD COLUMN {columna} INTEGER DEFAULT {defecto}"
+                        )
+                        conn.commit()
+
             # Techo de peticiones por minuto configurable por proveedor desde el panel
             if "rate_limit_per_min" not in columns:
                 cursor.execute("ALTER TABLE provider_config ADD COLUMN rate_limit_per_min INTEGER")

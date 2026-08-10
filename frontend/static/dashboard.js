@@ -623,6 +623,57 @@
             }
         }
 
+
+        // ─── Comportamiento ante fallas de RC ────────────────────────────────
+        async function cargarComportamientoRC() {
+            try {
+                const res = await fetch('/api/config/rc-behavior');
+                if (!res.ok) return;
+                const d = await res.json();
+                const asignar = (id, valor) => {
+                    const el = document.getElementById(id);
+                    if (el) el.value = valor;
+                };
+                asignar('rc_max_reintentos', d.rc_max_reintentos);
+                asignar('rc_fallos_circuito', d.rc_fallos_circuito);
+                asignar('rc_liberacion_tanda', d.rc_liberacion_tanda);
+            } catch (e) {
+                console.warn('No se pudo cargar el comportamiento ante fallas de RC:', e);
+            }
+        }
+
+        async function guardarComportamientoRC() {
+            const leer = (id) => parseInt(document.getElementById(id)?.value, 10);
+            const payload = {
+                rc_max_reintentos: leer('rc_max_reintentos'),
+                rc_fallos_circuito: leer('rc_fallos_circuito'),
+                rc_liberacion_tanda: leer('rc_liberacion_tanda'),
+            };
+
+            if (Object.values(payload).some(v => !Number.isFinite(v))) {
+                alert('Todos los valores deben ser números.');
+                return;
+            }
+
+            try {
+                const res = await fetch('/api/config/rc-behavior', {
+                    method: 'PUT',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(payload)
+                });
+                const d = await res.json().catch(() => ({}));
+                if (res.ok) {
+                    alert('Comportamiento actualizado.\n\nSe aplica de inmediato, sin reiniciar el servicio.');
+                } else {
+                    alert('No se pudo guardar:\n\n' + (d.detail || `HTTP ${res.status}`));
+                    cargarComportamientoRC();   // volver a mostrar lo vigente
+                }
+            } catch (e) {
+                alert('Error de red al guardar la configuración.');
+                cargarComportamientoRC();
+            }
+        }
+
         // Vistas
         function switchView(view) {
             document.getElementById('view-dashboard').style.display = view === 'dashboard' ? 'flex' : 'none';
@@ -662,6 +713,7 @@
                 loadConfig();
                 loadRetentionConfig();
                 loadDbStats();
+                cargarComportamientoRC();
             } else if (view === 'simulator') {
                 loadSimulator();
             } else if (view === 'history') {
