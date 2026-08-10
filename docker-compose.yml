@@ -4,11 +4,22 @@
 #
 #   Desarrollo (máquina de Gustavo) — construir y publicar:
 #     docker compose build
+#     docker tag gustavogomez08/hubtelematicoassistcargo:latest \
+#                gustavogomez08/hubtelematicoassistcargo:vX.Y.Z
 #     docker compose push
+#     docker push gustavogomez08/hubtelematicoassistcargo:vX.Y.Z
+#
+#     Después, actualizar el tag de `image:` más abajo y commitear el cambio.
 #
 #   Producción (servidor) — descargar y levantar:
+#     git pull origin main        # trae este archivo con el tag nuevo
 #     docker compose pull
 #     docker compose up -d
+#
+#   Rollback: cambiar el tag de `image:` a la versión anterior y repetir
+#   `docker compose up -d`. Por eso se fija una versión explícita en lugar de
+#   usar `latest`: con `latest` no hay forma de saber qué está corriendo ni a
+#   qué volver.
 #
 #   Ver logs:      docker compose logs -f --tail=50
 #   Reiniciar:     docker compose restart
@@ -18,8 +29,14 @@
 
 services:
   centro-comando:
-    # Imagen publicada en Docker Hub. El servidor la baja con `docker compose pull`.
-    image: gustavogomez08/hubtelematicoassistcargo:latest
+    # Imagen publicada en Docker Hub, con versión fija.
+    #
+    # Se evita `latest` a propósito: hace el despliegue ambiguo (no se sabe qué
+    # build está corriendo) y complica el rollback. Con el tag explícito, este
+    # archivo documenta exactamente qué versión está en producción.
+    #
+    # Al publicar una versión nueva hay que actualizar este tag y commitearlo.
+    image: gustavogomez08/hubtelematicoassistcargo:v1.7.1
     container_name: centro-comando-app
 
     # Sección build: solo se usa al ejecutar `docker compose build` en la máquina
