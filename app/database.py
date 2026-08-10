@@ -43,6 +43,32 @@ def check_and_migrate_db():
                 cursor.execute("ALTER TABLE provider_config ADD COLUMN run_interval_sec INTEGER DEFAULT 5")
                 conn.commit()
 
+            # Corrección del tipo de Schmitz. Tiene endpoint e ingesta propios
+            # (/Json/Data con mapper dedicado), así que es PUSH por definición:
+            # el Hub nunca sale a consultarlo.
+            #
+            # Quedó registrado como "pull" —el valor por defecto de la columna—
+            # y eso arrastraba tres efectos: se lanzaban tareas de sondeo que no
+            # tienen a dónde ir, la columna de API key aparecía como "N/A (Es
+            # PULL)" impidiendo configurar la clave, y el anti-repetición
+            # quedaba activo cuando para PUSH corresponde apagado.
+            try:
+                cursor.execute("""
+                    UPDATE provider_config
+                       SET provider_type = 'push',
+                           enable_state_dedup = 0
+                     WHERE lower(provider_name) = 'schmitz'
+                       AND (provider_type IS NULL OR lower(provider_type) != 'push')
+                """)
+                if cursor.rowcount:
+                    conn.commit()
+                    logger.info(
+                        f"Migración: {cursor.rowcount} configuración(es) de Schmitz "
+                        f"reclasificadas como PUSH."
+                    )
+            except Exception as e:
+                logger.warning(f"No se pudo corregir el tipo de Schmitz: {e}")
+
             # Parámetros de comportamiento ante fallas de RC
             cursor.execute("PRAGMA table_info(system_settings)")
             cols_settings = [row[1] for row in cursor.fetchall()]
