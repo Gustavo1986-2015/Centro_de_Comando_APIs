@@ -255,6 +255,7 @@ def obtener_parametros_rc() -> dict:
         "liberacion_tanda": _LIBERACION_TANDA_DEFECTO,
         "max_reintentos": 4,
         "fallos_circuito": 5,
+        "recuperacion_umbral_seg": 600,
     }
     try:
         from app.models.config_models import SystemSettings
@@ -265,6 +266,9 @@ def obtener_parametros_rc() -> dict:
                 valores["liberacion_tanda"] = getattr(cfg, "rc_liberacion_tanda", None) or valores["liberacion_tanda"]
                 valores["max_reintentos"] = getattr(cfg, "rc_max_reintentos", None) or valores["max_reintentos"]
                 valores["fallos_circuito"] = getattr(cfg, "rc_fallos_circuito", None) or valores["fallos_circuito"]
+                valores["recuperacion_umbral_seg"] = (
+                    getattr(cfg, "rc_recuperacion_umbral_seg", None) or valores["recuperacion_umbral_seg"]
+                )
         finally:
             db.close()
     except Exception as e:
@@ -1139,6 +1143,53 @@ def _get_all_providers_sync():
     finally:
         db.close()
 
+# ─── Recuperación de eventos atascados ──────────────────────────────────────
+# Un lote se marca 'processing' al tomarlo. Si el proceso muere o una excepción
+# corta el camino antes de escribir los resultados, esos eventos quedan en un
+# estado del que nadie los saca: ningún ciclo los vuelve a tomar porque no están
+# pendientes, y la purga no los toca porque no están enviados.
+#
+# Existía una recuperación equivalente, pero solo al arrancar: un lote atascado
+# a las 3 de la mañana esperaba al próximo reinicio del servicio.
+_ULTIMA_RECUPERACION = 0.0
+_INTERVALO_RECUPERACION = 300      # cada 5 minutos
+
+
+async def _recuperar_eventos_atascados(providers: list) -> int:
+    """
+    Devuelve a la cola los eventos que llevan demasiado tiempo en 'processing'.
+
+    El umbral debe superar con holgura el despacho más lento posible: un lote
+    de 2000 eventos son 40 sub-lotes de a 4 en paralelo, con hasta 30 s de
+    timeout cada uno, o sea unos 5 minutos en el peor caso. Con 10 minutos por
+    defecto no se le arrebata a un worker un lote todavía en vuelo.
+    """
+    from app.core.queue_factory import QueueFactory
+
+    umbral = obtener_parametros_rc()["recuperacion_umbral_seg"]
+    total = 0
+
+    for provider, env in providers:
+        try:
+            queue = QueueFactory.get_queue_service(provider, env)
+            recuperados = await queue.recuperar_estancados(provider, env, umbral)
+        except AttributeError:
+            continue   # backend sin soporte: se mantiene el comportamiento anterior
+        except Exception as e:
+            logger.warning(f"[{provider}-{env}] No se pudieron recuperar eventos atascados: {e}")
+            continue
+
+        if recuperados:
+            total += recuperados
+            logger.warning(
+                f"[{provider}-{env}] {recuperados} evento(s) llevaban más de "
+                f"{umbral}s en procesamiento y volvieron a la cola. "
+                f"Suele indicar que un despacho se interrumpió a mitad."
+            )
+
+    return total
+
+
 async def worker_loop():
     """Inicia y gestiona las corrutinas independientes para cada proveedor registrado."""
     logger.info("Iniciando Worker Background de Telemática (Modo Multitarea Dinámico)...")
@@ -1170,6 +1221,12 @@ async def worker_loop():
                     active_tasks.append(asyncio.create_task(dictionary_sync_loop(provider_name, env)))
                     active_tasks.append(asyncio.create_task(telemetry_poll_loop(provider_name, env)))
             
+            # Rescate de eventos atascados en 'processing'
+            global _ULTIMA_RECUPERACION
+            if time.time() - _ULTIMA_RECUPERACION > _INTERVALO_RECUPERACION:
+                await _recuperar_eventos_atascados(list(running_providers))
+                _ULTIMA_RECUPERACION = time.time()
+
             # Limpieza periódica del cache de deduplicación de estado
             if time.time() - last_cleanup > 3600:
                 from app.core.state_dedup import cleanup_stale_entries

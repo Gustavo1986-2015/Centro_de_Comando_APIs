@@ -637,6 +637,7 @@
                 asignar('rc_max_reintentos', d.rc_max_reintentos);
                 asignar('rc_fallos_circuito', d.rc_fallos_circuito);
                 asignar('rc_liberacion_tanda', d.rc_liberacion_tanda);
+                asignar('rc_recuperacion_umbral_seg', d.rc_recuperacion_umbral_seg);
             } catch (e) {
                 console.warn('No se pudo cargar el comportamiento ante fallas de RC:', e);
             }
@@ -648,6 +649,7 @@
                 rc_max_reintentos: leer('rc_max_reintentos'),
                 rc_fallos_circuito: leer('rc_fallos_circuito'),
                 rc_liberacion_tanda: leer('rc_liberacion_tanda'),
+                rc_recuperacion_umbral_seg: leer('rc_recuperacion_umbral_seg'),
             };
 
             if (Object.values(payload).some(v => !Number.isFinite(v))) {

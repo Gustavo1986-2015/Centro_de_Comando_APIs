@@ -308,6 +308,20 @@
                 </div>
 
                 <div class="rc-param">
+                    <label for="rc_recuperacion_umbral_seg">Rescate de envíos interrumpidos (segundos)</label>
+                    <input type="number" id="rc_recuperacion_umbral_seg" class="form-control" min="300" max="7200" step="60">
+                    <p>
+                        Si un envío se corta a mitad —por un reinicio del servicio o un error
+                        inesperado— sus eventos quedan trabados y nadie los vuelve a tomar.
+                        Pasado este tiempo sin novedades, el hub los devuelve a la cola.
+                        <span class="rc-param-nota">
+                            No conviene bajarlo mucho: un envío grande puede tardar varios
+                            minutos, y un umbral corto reencolaría eventos que todavía están saliendo.
+                        </span>
+                    </p>
+                </div>
+
+                <div class="rc-param">
                     <label for="rc_liberacion_tanda">Eventos liberados por ciclo al volver RC</label>
                     <input type="number" id="rc_liberacion_tanda" class="form-control" min="50" max="5000">
                     <p>
@@ -1112,6 +1126,18 @@
                     <br><br>
                     Al configurarlo, el Hub consultará periódicamente una API externa del proveedor para descargar el diccionario de asignaciones y traducirá automáticamente los IMEI a Patentes al vuelo antes de enviarlos a RC.
                 </p>
+
+                <div class="dict-nota-pull">
+                    <strong>Actívalo solo si este proveedor identifica por IMEI o número de serie.</strong>
+                    Es lo habitual en los PULL, pero también sirve para un PUSH que reporte
+                    con un identificador de hardware en lugar de la patente. Si el proveedor
+                    ya envía la patente, dejalo desactivado: con el diccionario activo, cada
+                    evento consulta la tabla de traducción.
+                    <br><br>
+                    <strong>Con el diccionario activo, los equipos sin patente asignada no se envían a RC.</strong>
+                    Enviar el identificador crudo produciría activos que el cliente no puede
+                    reconocer, y varios equipos distintos podrían colapsar en el mismo valor.
+                </div>
 
                 <div style="margin-bottom: 1.5rem; display: flex; align-items: center; gap: 1rem;">
                     <label style="color: var(--color-gray-label); font-size: 0.9rem; font-weight: bold;">🌍 UTC Offset del Proveedor:</label>

@@ -110,7 +110,7 @@ class DynamicMapper:
         return False
 
     @staticmethod
-    def map_payload(payload: Dict[str, Any], schema: Dict[str, str], provider_name: str = None, env: str = None, require_dict_match: bool = False) -> RCCanonicalModel:
+    def map_payload(payload: Dict[str, Any], schema: Dict[str, str], provider_name: str = None, env: str = None, require_dict_match: bool = False, usar_diccionario: bool = True) -> RCCanonicalModel:
         """
         Mapea dinámicamente un payload JSON entrante al modelo estándar (RCCanonicalModel)
         basándose en un esquema de rutas configurado en la base de datos por el usuario.
@@ -157,8 +157,15 @@ class DynamicMapper:
         chassis_val = DynamicMapper._extract_value(payload, schema.get("chassis_number", ""))
         chassis_number = str(chassis_val) if chassis_val is not None else original_imei
         
-        # --- NUEVO: Inyección al Vuelo (Diccionario de Metadatos) ---
-        if provider_name and env and chassis_number != "UNKNOWN":
+        # ── Traducción del identificador mediante el diccionario ────────────
+        # Se consulta solo si el proveedor tiene el diccionario activado en su
+        # configuración, sin importar si es PUSH o PULL: cualquiera puede
+        # reportar por IMEI y necesitar la traducción.
+        #
+        # Antes se consultaba siempre: un proveedor que ya envía la patente
+        # pagaba una lectura por evento para no encontrar nada, y en el camino
+        # PUSH eso ocurre dentro del request, contra el SLA de recepción.
+        if usar_diccionario and provider_name and env and chassis_number != "UNKNOWN":
             from app.database import get_session
             from app.models.config_models import ProviderDictionary
             db_global = get_session("system_config", "global")
@@ -247,7 +254,8 @@ class DynamicMapper:
         full_schema: Dict[str, Any],
         provider_name: str = None,
         env: str = None,
-        require_dict_match: bool = False
+        require_dict_match: bool = False,
+        usar_diccionario: bool = True
     ) -> list:
         """
         Motor de Reglas de Disparo.
@@ -277,7 +285,7 @@ class DynamicMapper:
         if default_rule.get("enabled", True):
             base_schema_with_code = dict(base_schema)
             base_event = DynamicMapper.map_payload(
-                payload, base_schema_with_code, provider_name, env, require_dict_match
+                payload, base_schema_with_code, provider_name, env, require_dict_match, usar_diccionario
             )
             # Sin traducción en el diccionario: se descarta el payload completo.
             # No tiene sentido emitir los eventos de trigger de un activo que RC
@@ -315,7 +323,7 @@ class DynamicMapper:
                 # Clonar el evento base y cambiar solo el code
                 trigger_event = DynamicMapper.map_payload(
                     payload, base_schema_with_code if "base_mapping" in full_schema else full_schema,
-                    provider_name, env, require_dict_match
+                    provider_name, env, require_dict_match, usar_diccionario
                 )
                 if trigger_event is None:
                     continue
@@ -332,7 +340,7 @@ class DynamicMapper:
             # chassis ya es "UNKNOWN"). Resultado: un activo no identificable
             # llegaba a RC pese a la regla de "sin traducción no se envía".
             fallback = DynamicMapper.map_payload(
-                payload, base_schema, provider_name, env, require_dict_match
+                payload, base_schema, provider_name, env, require_dict_match, usar_diccionario
             )
             if fallback is None:
                 return []
