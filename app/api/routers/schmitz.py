@@ -14,6 +14,8 @@ from app.core.crypto import decrypt
 from app.core import provider_health
 from app.core.rate_limit import check_rate_limit
 import secrets
+import time
+import threading as _threading
 
 logger = logging.getLogger(__name__)
 
@@ -35,29 +37,92 @@ _WEBHOOK_QUEUE_MAXSIZE = int(os.getenv("WEBHOOK_QUEUE_MAXSIZE", "20000"))
 _webhook_queue = asyncio.Queue(maxsize=_WEBHOOK_QUEUE_MAXSIZE)
 _batch_task = None
 
-def _validate_schmitz_auth(request: Request, env: str = Query("prod")):
-    """Valida auth del webhook Schmitz contra DB cifrada."""
-    db = get_session("system_config", "global")
+# Caché de la clave del webhook, por entorno.
+#
+# La validación abría una sesión a la base de configuración en CADA petición.
+# Medido: 1,13 ms de media pero hasta 125 ms bajo contención, y esa misma base
+# recibe las estadísticas diarias. A 40 mensajes por segundo eso son 40 lecturas
+# por segundo compitiendo con las escrituras, que es lo que produce los picos de
+# latencia y los tiempos de espera agotados.
+#
+# La clave cambia solo cuando alguien la edita en el panel, así que medio minuto
+# de desfase es un intercambio razonable frente al costo por petición.
+_AUTH_TTL = 30
+_auth_cache: dict[str, tuple[float, str | None]] = {}
+_auth_lock = _threading.Lock()
+
+
+def invalidar_cache_auth(env: str | None = None):
+    """Fuerza la relectura tras guardar la configuración desde el panel."""
+    with _auth_lock:
+        if env:
+            _auth_cache.pop(env.lower(), None)
+        else:
+            _auth_cache.clear()
+
+
+def _clave_esperada(entorno: str) -> str | None:
+    """
+    Clave configurada para ese entorno, o None si no hay ninguna.
+
+    Devolver None es distinto de devolver cadena vacía: significa que no se
+    puede autenticar a nadie, y el llamador debe rechazar.
+    """
+    ahora = time.time()
+
+    with _auth_lock:
+        cacheada = _auth_cache.get(entorno)
+        if cacheada and cacheada[0] > ahora:
+            return cacheada[1]
+
+    clave = None
+    db = None
     try:
-        # Buscamos la config global del webhook, o podríamos buscar la config por entorno
-        # En el spec, PUSH webhooks podrían tener configs de test/prod. Buscaremos prod por default.
-        # Schmitz suele ser provider global o por env.
-        provider = db.query(ProviderConfig).filter_by(provider_name="schmitz", env=env).first()
-        if not provider:
-            # Fallback a prod si llega en test pero solo hay config prod
-            provider = db.query(ProviderConfig).filter_by(provider_name="schmitz").first()
-            
-        if not provider or not provider.webhook_auth_secret_enc:
-            raise HTTPException(401, "Schmitz webhook no autenticado. Configure API key en Dashboard.")
-        
-        stored_key = decrypt(provider.webhook_auth_secret_enc)
-        provided_key = request.headers.get("x-api-key", "")
-        
-        if not stored_key or not provided_key or not secrets.compare_digest(provided_key, stored_key):
-            raise HTTPException(401, "API key invalida")
+        # La apertura de la sesión entra en el try: si la base no está
+        # disponible, la excepción debe convertirse en un rechazo y no
+        # propagarse como error 500 desde el endpoint.
+        db = get_session("system_config", "global")
+        # Se busca SOLO el entorno pedido. Antes había un fallback a "cualquier
+        # configuración de schmitz" cuando faltaba la del entorno: eso permitía
+        # que una petición a prod se autenticara con la clave de test.
+        provider = db.query(ProviderConfig).filter_by(
+            provider_name="schmitz", env=entorno
+        ).first()
+        if provider and provider.webhook_auth_secret_enc:
+            clave = decrypt(provider.webhook_auth_secret_enc)
+    except Exception as e:
+        logger.error(f"[SCHMITZ-{entorno}] No se pudo leer la configuración de acceso: {e}")
+        return None
     finally:
-        db.close()
+        if db is not None:
+            db.close()
+
+    with _auth_lock:
+        _auth_cache[entorno] = (ahora + _AUTH_TTL, clave)
+    return clave
+
+
+def _validate_schmitz_auth(request: Request, env: str = Query("prod")):
+    """Valida la clave del webhook de Schmitz contra la configuración cifrada."""
+    entorno = (env or "prod").lower()
+    clave_esperada = _clave_esperada(entorno)
+
+    if not clave_esperada:
+        logger.warning(
+            f"[SCHMITZ-{entorno}] Petición rechazada: no hay API key configurada "
+            f"para ese entorno. Cargarla desde el panel antes de recibir tráfico."
+        )
+        raise HTTPException(
+            401,
+            f"Schmitz/{entorno} no tiene API key configurada.",
+        )
+
+    clave_recibida = request.headers.get("x-api-key", "")
+    if not clave_recibida or not secrets.compare_digest(clave_recibida, clave_esperada):
+        raise HTTPException(401, "API key invalida")
+
     return True
+
 
 def _persist_batch(batch: list):
     """
