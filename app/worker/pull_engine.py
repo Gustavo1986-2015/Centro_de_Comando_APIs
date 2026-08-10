@@ -467,6 +467,11 @@ def _load_fetch_config(config: ProviderConfig) -> dict:
     return config.fetch_config or {}
 
 
+# Recuerda a qué integraciones ya se les avisó que les falta la URL, para no
+# repetir la advertencia en cada ciclo.
+_falta_url_avisado: dict[str, bool] = {}
+
+
 async def telemetry_poll_loop(provider_name: str, env: str):
     """
     Hace PULL de telemetría al endpoint configurado y encola los datos.
@@ -476,6 +481,7 @@ async def telemetry_poll_loop(provider_name: str, env: str):
           y ese error terminaba encolado y enviado a RC como evento UNKNOWN.
     """
     logger.info(f"[{provider_name.upper()}-{env}] Iniciando Tarea B: Sondeo PULL Telemetría")
+    clave_estado = f"{provider_name}_{env}"
     provider_health.set_mode(provider_name, env, "pull")
 
     while True:
@@ -506,11 +512,26 @@ async def telemetry_poll_loop(provider_name: str, env: str):
                 continue
 
             if not fetch_config.get("url"):
-                logger.warning(
-                    f"[{provider_name.upper()}-{env}] Sin URL de extracción configurada."
-                )
+                # Se avisa una vez y no en cada ciclo: repetirlo cada 30 segundos
+                # significa miles de líneas por día para una condición estática,
+                # que además entierra las advertencias que sí requieren atención.
+                # Vuelve a informarse si la configuración cambia y se rompe otra vez.
+                if not _falta_url_avisado.get(clave_estado):
+                    logger.warning(
+                        f"[{provider_name.upper()}-{env}] Sin URL de extracción configurada. "
+                        f"El sondeo queda en espera hasta que se cargue desde el panel. "
+                        f"No se repetirá este aviso."
+                    )
+                    _falta_url_avisado[clave_estado] = True
                 await asyncio.sleep(30)
                 continue
+
+            if _falta_url_avisado.get(clave_estado):
+                logger.info(
+                    f"[{provider_name.upper()}-{env}] URL de extracción configurada. "
+                    f"Se reanuda el sondeo."
+                )
+                _falta_url_avisado[clave_estado] = False
 
             # Leer los IDs del diccionario (ej. IMEIs de Protrack)
             db_global = get_session("system_config", "global")

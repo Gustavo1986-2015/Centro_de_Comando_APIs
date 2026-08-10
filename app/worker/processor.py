@@ -1136,7 +1136,10 @@ def _get_all_providers_sync():
     db = get_session("system_config", "global")
     try:
         configs = db.query(ProviderConfig).all()
-        return [(c.provider_name, c.env) for c in configs]
+        return [
+            (c.provider_name, c.env, (getattr(c, "provider_type", None) or "pull").lower())
+            for c in configs
+        ]
     except Exception as e:
         logger.error(f"Error leyendo proveedores en watchdog: {e}")
         return []
@@ -1209,17 +1212,27 @@ async def worker_loop():
         try:
             # Lectura del watchdog en ThreadPool — se ejecuta cada 15s, no bloquea el event loop
             configs = await asyncio.to_thread(_get_all_providers_sync)
-            for prov_tuple in configs:
-                if prov_tuple not in running_providers:
-                    provider_name, env = prov_tuple
-                    logger.info(f"Lanzando workers para nuevo proveedor detectado: {provider_name.upper()} ({env.upper()})")
-                    running_providers.add(prov_tuple)
+            for provider_name, env, tipo in configs:
+                clave = (provider_name, env)
+                if clave not in running_providers:
+                    logger.info(
+                        f"Lanzando workers para nuevo proveedor detectado: "
+                        f"{provider_name.upper()} ({env.upper()}) — modo {tipo.upper()}"
+                    )
+                    running_providers.add(clave)
 
+                    # El despachador hacia RC corre siempre: la cola se llena
+                    # igual, venga por sondeo o por webhook.
                     active_tasks.append(asyncio.create_task(api_worker_loop(provider_name, env)))
 
-                    from app.worker.pull_engine import dictionary_sync_loop, telemetry_poll_loop
-                    active_tasks.append(asyncio.create_task(dictionary_sync_loop(provider_name, env)))
-                    active_tasks.append(asyncio.create_task(telemetry_poll_loop(provider_name, env)))
+                    # Las tareas de sondeo solo tienen sentido en PULL. En un
+                    # proveedor PUSH es el propio proveedor quien envía, así que
+                    # lanzarlas consumía ciclos y llenaba el log de advertencias
+                    # sobre una URL de extracción que nunca va a existir.
+                    if tipo == "pull":
+                        from app.worker.pull_engine import dictionary_sync_loop, telemetry_poll_loop
+                        active_tasks.append(asyncio.create_task(dictionary_sync_loop(provider_name, env)))
+                        active_tasks.append(asyncio.create_task(telemetry_poll_loop(provider_name, env)))
             
             # Rescate de eventos atascados en 'processing'
             global _ULTIMA_RECUPERACION
