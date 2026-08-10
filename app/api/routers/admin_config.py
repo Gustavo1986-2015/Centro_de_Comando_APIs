@@ -462,6 +462,7 @@ class ComportamientoRCModel(BaseModel):
     rc_liberacion_tanda: int
     rc_max_reintentos: int
     rc_fallos_circuito: int
+    rc_recuperacion_umbral_seg: int = 600
 
 
 @router.get("/api/config/rc-behavior")
@@ -475,6 +476,7 @@ def get_rc_behavior(_auth: HTTPBasicCredentials = Depends(verify_dashboard_auth)
             "rc_liberacion_tanda": getattr(cfg, "rc_liberacion_tanda", None) or 500,
             "rc_max_reintentos": getattr(cfg, "rc_max_reintentos", None) or 4,
             "rc_fallos_circuito": getattr(cfg, "rc_fallos_circuito", None) or 5,
+            "rc_recuperacion_umbral_seg": getattr(cfg, "rc_recuperacion_umbral_seg", None) or 600,
         }
     finally:
         db.close()
@@ -509,6 +511,17 @@ def update_rc_behavior(
             status_code=400,
             detail="Los fallos para abrir el circuito deben estar entre 2 y 50.",
         )
+    # El mínimo evita arrebatarle a un worker un lote que sigue en vuelo: el
+    # despacho más lento posible ronda los 5 minutos.
+    if not (300 <= body.rc_recuperacion_umbral_seg <= 7200):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "El umbral de rescate debe estar entre 300 y 7200 segundos. "
+                "Por debajo de 300 se correría el riesgo de reencolar lotes que "
+                "todavía se están enviando."
+            ),
+        )
 
     db = get_session("system_config", "global")
     try:
@@ -519,6 +532,7 @@ def update_rc_behavior(
         cfg.rc_liberacion_tanda = body.rc_liberacion_tanda
         cfg.rc_max_reintentos = body.rc_max_reintentos
         cfg.rc_fallos_circuito = body.rc_fallos_circuito
+        cfg.rc_recuperacion_umbral_seg = body.rc_recuperacion_umbral_seg
         db.commit()
 
         # El worker cachea estos valores 30s: invalidar para que el cambio

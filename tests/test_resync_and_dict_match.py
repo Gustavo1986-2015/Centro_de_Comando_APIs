@@ -198,3 +198,61 @@ def test_multi_descarta_todo_el_payload_sin_traduccion():
         )
 
     assert resultado == []
+
+
+# ── El lookup del diccionario solo ocurre si el proveedor lo usa ─────────────
+
+def test_sin_diccionario_no_se_consulta_la_base():
+    """
+    Un proveedor que identifica por patente y no tiene tabla de traducción
+    pagaba una consulta por evento para no encontrar nada. En el camino PUSH
+    eso ocurre dentro del request, contra el SLA de recepción.
+    """
+    from unittest.mock import MagicMock, patch
+    from app.core.dynamic_mapper import DynamicMapper
+
+    schema = {"chassis_number": "placa", "latitude": "lat", "longitude": "lng"}
+    payload = {"placa": "AB123CD", "lat": 9.98, "lng": -84.73}
+
+    db = MagicMock()
+    with patch("app.database.get_session", return_value=db) as mock_sesion:
+        resultado = DynamicMapper.map_payload(
+            payload, schema, "proveedor_push", "prod",
+            require_dict_match=False, usar_diccionario=False,
+        )
+
+    assert resultado is not None
+    assert resultado.chassis_number == "AB123CD"
+    mock_sesion.assert_not_called()
+
+
+def test_con_diccionario_si_se_consulta():
+    """Los proveedores que traducen por diccionario deben seguir haciéndolo."""
+    from unittest.mock import MagicMock, patch
+    from app.core.dynamic_mapper import DynamicMapper
+
+    schema = {"chassis_number": "imei", "latitude": "lat", "longitude": "lng"}
+    payload = {"imei": "868307060968914", "lat": 9.98, "lng": -84.73}
+
+    entrada = MagicMock()
+    entrada.dict_value = "C180673"
+    db = MagicMock()
+    db.query.return_value.filter_by.return_value.first.return_value = entrada
+
+    with patch("app.database.get_session", return_value=db) as mock_sesion:
+        resultado = DynamicMapper.map_payload(
+            payload, schema, "protrack", "prod",
+            require_dict_match=True, usar_diccionario=True,
+        )
+
+    assert resultado.chassis_number == "C180673"
+    mock_sesion.assert_called()
+
+
+def test_el_valor_por_defecto_conserva_el_comportamiento_anterior():
+    """Un llamador que no pase el parámetro debe seguir consultando."""
+    import inspect
+    from app.core.dynamic_mapper import DynamicMapper
+
+    firma = inspect.signature(DynamicMapper.map_payload)
+    assert firma.parameters["usar_diccionario"].default is True
