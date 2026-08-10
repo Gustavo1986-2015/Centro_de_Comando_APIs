@@ -655,7 +655,8 @@ async def process_and_enqueue(
         for item in items:
             try:
                 canonical_list = DynamicMapper.map_payload_multi(
-                    item, mapping_schema, provider_name, env, require_dict_match
+                    item, mapping_schema, provider_name, env, require_dict_match,
+                    require_dict_match   # sin diccionario configurado no se consulta la tabla
                 )
                 if not canonical_list:
                     # Puede ser un item sin datos mapeables, o un ID sin traducción

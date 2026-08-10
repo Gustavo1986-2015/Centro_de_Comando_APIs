@@ -51,6 +51,7 @@ def check_and_migrate_db():
                     ("rc_liberacion_tanda", 500),
                     ("rc_max_reintentos", 4),
                     ("rc_fallos_circuito", 5),
+                    ("rc_recuperacion_umbral_seg", 600),
                 ):
                     if columna not in cols_settings:
                         cursor.execute(

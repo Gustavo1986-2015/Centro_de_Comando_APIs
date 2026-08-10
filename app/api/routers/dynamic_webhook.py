@@ -153,7 +153,8 @@ async def dynamic_webhook_receive(
     try:
         canonical_events = await run_in_threadpool(
             DynamicMapper.map_payload_multi, 
-            payload, mapping_schema, provider_name, env, require_dict_match
+            payload, mapping_schema, provider_name, env, require_dict_match,
+            require_dict_match   # sin diccionario configurado no se consulta la tabla
         )
     except Exception as e:
         logger.warning(f"Excepción capturada en dynamic_webhook: {e}")
