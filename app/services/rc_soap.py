@@ -51,8 +51,14 @@ class RCResponseCategory(str, Enum):
       PROTOCOL  s:Fault de WCF, típicamente DeserializationFailed por un campo
                 mal formado. Permanente por la misma razón que BUSINESS
       TRANSPORT sin envelope SOAP: timeout, conexión rechazada, 5xx. Transitorio
+
+      SIMULADO  no hubo llamada: el proveedor está en modo simulado. No es una
+                respuesta de RC. Se distingue de SUCCESS a propósito: en el log
+                ambos casos se veían igual, y quien lee "SUCCESS" da por hecho
+                que RC recibió el evento cuando en realidad nunca salió.
     """
     SUCCESS = "SUCCESS"
+    SIMULADO = "SIMULADO"
     BUSINESS = "BUSINESS"
     AUTH = "AUTH"
     PROTOCOL = "PROTOCOL"
@@ -297,8 +303,10 @@ class RCSOAPClient:
         
         event_dicts = []
         for event in events:
-            # Recurso Confiable exige estricto UTC 0.
-            # Convertimos o aseguramos que la fecha esté en UTC puro y le añadimos la Z del estándar ISO 8601
+            # Recurso Confiable exige UTC estricto, sin desplazamiento horario.
+            # La fecha se serializa como YYYY-MM-DDTHH:MM:SS, SIN sufijo Z: así
+            # lo especifica el contrato D-TI-15 v14 y así lo envía el cliente de
+            # referencia en producción.
             base_date = event.date if event.date else datetime.now(timezone.utc)
             if base_date.tzinfo is None:
                 base_date = base_date.replace(tzinfo=timezone.utc)
@@ -493,7 +501,7 @@ class RCSOAPClient:
                 for ev in events:
                     mock_job_id = f"job_mock_{int(datetime.now().timestamp())}_{random.randint(100, 999)}"
                     mock_json_response = f'{{"timestamp": "{datetime.now(timezone.utc).isoformat()}", "level": "INFO", "event_type": "batch_sent", "status": "success", "job_id": "{mock_job_id}"}}'
-                    results.append((True, mock_job_id, mock_json_response, RCResponseCategory.SUCCESS))
+                    results.append((True, mock_job_id, mock_json_response, RCResponseCategory.SIMULADO))
                 return results
             else:
                 import asyncio

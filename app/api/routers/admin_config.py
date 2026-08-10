@@ -453,3 +453,89 @@ def manual_purge_logs(
         "freed_bytes": freed_bytes,
         "cutoff_date": cutoff.isoformat()
     }
+
+
+# ─── Comportamiento ante fallas de Recurso Confiable ────────────────────────
+
+class ComportamientoRCModel(BaseModel):
+    """Parámetros que definen cómo reacciona el hub cuando RC falla."""
+    rc_liberacion_tanda: int
+    rc_max_reintentos: int
+    rc_fallos_circuito: int
+
+
+@router.get("/api/config/rc-behavior")
+def get_rc_behavior(_auth: HTTPBasicCredentials = Depends(verify_dashboard_auth)):
+    db = get_session("system_config", "global")
+    try:
+        cfg = db.query(SystemSettings).first()
+        if not cfg:
+            raise HTTPException(status_code=500, detail="Configuración no encontrada")
+        return {
+            "rc_liberacion_tanda": getattr(cfg, "rc_liberacion_tanda", None) or 500,
+            "rc_max_reintentos": getattr(cfg, "rc_max_reintentos", None) or 4,
+            "rc_fallos_circuito": getattr(cfg, "rc_fallos_circuito", None) or 5,
+        }
+    finally:
+        db.close()
+
+
+@router.put("/api/config/rc-behavior")
+def update_rc_behavior(
+    body: ComportamientoRCModel,
+    request: Request,
+    _auth: HTTPBasicCredentials = Depends(verify_dashboard_auth),
+):
+    """
+    Ajusta el comportamiento del hub ante fallas de RC sin reiniciar el servicio.
+
+    Los rangos evitan configuraciones que romperían la operación: una tanda
+    demasiado grande satura a RC al recuperarse, cero reintentos descarta
+    eventos ante el primer tropiezo de red, y un umbral de circuito muy alto
+    hace que el hub siga insistiendo sobre un destino caído.
+    """
+    if not (50 <= body.rc_liberacion_tanda <= 5000):
+        raise HTTPException(
+            status_code=400,
+            detail="La tanda de liberación debe estar entre 50 y 5000 eventos.",
+        )
+    if not (1 <= body.rc_max_reintentos <= 10):
+        raise HTTPException(
+            status_code=400,
+            detail="Los reintentos por evento deben estar entre 1 y 10.",
+        )
+    if not (2 <= body.rc_fallos_circuito <= 50):
+        raise HTTPException(
+            status_code=400,
+            detail="Los fallos para abrir el circuito deben estar entre 2 y 50.",
+        )
+
+    db = get_session("system_config", "global")
+    try:
+        cfg = db.query(SystemSettings).first()
+        if not cfg:
+            raise HTTPException(status_code=500, detail="Configuración no encontrada")
+
+        cfg.rc_liberacion_tanda = body.rc_liberacion_tanda
+        cfg.rc_max_reintentos = body.rc_max_reintentos
+        cfg.rc_fallos_circuito = body.rc_fallos_circuito
+        db.commit()
+
+        # El worker cachea estos valores 30s: invalidar para que el cambio
+        # tenga efecto de inmediato, que es lo que se necesita en un incidente.
+        try:
+            from app.worker.processor import invalidar_parametros_rc, _rc_circuit_breaker
+            invalidar_parametros_rc()
+            _rc_circuit_breaker.failure_threshold = body.rc_fallos_circuito
+        except Exception as e:
+            logger.warning(f"No se pudo aplicar la configuración en caliente: {e}")
+
+        log_admin_action("update_rc_behavior", body.dict(), request, _auth.username)
+        logger.info(
+            f"Comportamiento ante fallas de RC actualizado: "
+            f"tanda={body.rc_liberacion_tanda}, reintentos={body.rc_max_reintentos}, "
+            f"fallos_circuito={body.rc_fallos_circuito}"
+        )
+        return {"ok": True, "message": "Comportamiento ante fallas actualizado"}
+    finally:
+        db.close()

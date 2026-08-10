@@ -57,6 +57,48 @@ class SQLiteQueue(MessageQueueInterface):
     async def get_pending_batch(self, provider: str, env: str, limit: int = 150) -> List[Any]:
         return await asyncio.to_thread(self._get_pending_batch_sync, provider, env, limit)
 
+    def _liberar_backoff_sync(self, provider: str, env: str, limite: int) -> int:
+        """
+        Adelanta la salida de eventos que esperan su reintento, en tandas.
+
+        Se usa cuando RC vuelve a responder tras una caída: el backoff existía
+        para no insistir sobre un destino caído, y una vez recuperado no tiene
+        sentido que un evento siga esperando siete minutos.
+
+        Libera de a tandas y no todo junto: tras una caída larga puede haber
+        decenas de miles acumulados, y soltarlos de una golpearía a RC apenas
+        se recupera. Los ciclos siguientes van liberando el resto.
+
+        No se toca retry_count: el tope de intentos sigue vigente, así que un
+        evento que RC rechaza sistemáticamente no queda dando vueltas.
+
+        Retorna cuántos se liberaron.
+        """
+        with session_context(provider, env) as db:
+            ahora = datetime.now()
+            ids = [
+                fila[0]
+                for fila in db.query(NormalizedRCEvent.id)
+                .filter(
+                    NormalizedRCEvent.status == "pending",
+                    NormalizedRCEvent.next_retry_at.isnot(None),
+                    NormalizedRCEvent.next_retry_at > ahora,
+                )
+                .order_by(NormalizedRCEvent.id.asc())
+                .limit(limite)
+                .all()
+            ]
+            if not ids:
+                return 0
+
+            db.query(NormalizedRCEvent).filter(
+                NormalizedRCEvent.id.in_(ids)
+            ).update({"next_retry_at": None}, synchronize_session=False)
+            return len(ids)
+
+    async def liberar_backoff(self, provider: str, env: str, limite: int = 500) -> int:
+        return await asyncio.to_thread(self._liberar_backoff_sync, provider, env, limite)
+
     def _mark_batch_as_sent_sync(self, provider: str, env: str, updates: List[dict]) -> None:
         from datetime import timezone
         with session_context(provider, env) as db:
