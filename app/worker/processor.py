@@ -1,3 +1,4 @@
+import os
 import asyncio
 import logging
 import time
@@ -8,7 +9,7 @@ from app.database import get_session
 from app.models.db_models import NormalizedRCEvent
 from app.schemas.canonical import RCCanonicalModel
 import threading as _threading
-from collections import deque
+from collections import deque, defaultdict
 
 class CircuitBreaker:
     """
@@ -52,6 +53,12 @@ class CircuitBreaker:
         self._current_timeout  = recovery_timeout
         self._lock             = _threading.Lock()
 
+        # Momento de la última recuperación (paso de OPEN/HALF_OPEN a CLOSED).
+        # Se publica como marca temporal en lugar de notificar por callback: el
+        # breaker es único para todos los proveedores, y cada worker necesita
+        # enterarse por su cuenta para liberar su propia base.
+        self._recovery_ts      = 0.0
+
     # ── API pública ───────────────────────────────────────────────────────────
 
     def allow_request(self) -> bool:
@@ -75,8 +82,23 @@ class CircuitBreaker:
             self._failure_count   = 0
             self._current_timeout = self.recovery_timeout   # resetear backoff
             if self._state != self.CLOSED:
-                logger.info("[CircuitBreaker] RC respondió correctamente — circuito CERRADO.")
+                self._recovery_ts = time.time()
+                logger.info(
+                    "[CircuitBreaker] RC respondió correctamente — circuito CERRADO. "
+                    "Se liberará progresivamente la espera de los eventos en reintento."
+                )
             self._state = self.CLOSED
+
+    def recovery_timestamp(self) -> float:
+        """
+        Momento de la última recuperación de RC, o 0 si nunca se degradó.
+
+        Cada worker compara este valor contra el último que procesó: así todos
+        se enteran de la misma recuperación sin que el breaker tenga que
+        conocerlos.
+        """
+        with self._lock:
+            return self._recovery_ts
 
     def record_failure(self):
         """Llamar cuando RC lanza excepción o devuelve error irrecuperable."""
@@ -112,7 +134,16 @@ _rc_circuit_breaker = CircuitBreaker(
     max_timeout=600,        # máximo 10 minutos entre reintentos
 )
 
-from app.services.rc_soap import get_rc_client
+from app.services.rc_soap import (
+    get_rc_client,
+    RCResponseCategory,
+    CATEGORIAS_REINTENTABLES,
+)
+
+# Tope de reintentos antes de dar el evento por fallido. Con el backoff
+# exponencial actual, cuatro intentos cubren unos 25 minutos de indisponibilidad
+# de RC; más allá de eso el evento pierde vigencia operativa.
+MAX_REINTENTOS = 4
 from app.models.config_models import ProviderConfig, DailyStat
 from app.core.config_cache import get_settings
 
@@ -152,9 +183,12 @@ async def send_batch_and_measure(canonical_events, rc_client):
         results = await rc_client.send_events_batch(canonical_events)
         elapsed = time.time() - start_time
         
-        # Detectar error silencioso de conexión capturado dentro de rc_client
+        # Detectar error silencioso de conexión capturado dentro de rc_client.
+        # Se desempaqueta por índice para tolerar tanto la tupla de 4 elementos
+        # (con categoría) como la de 3 de versiones anteriores.
         if results and isinstance(results, list) and len(results) > 0:
-            success, job_id, raw_response = results[0]
+            primera = results[0]
+            success, job_id, raw_response = primera[0], primera[1], primera[2]
             if not success and "rc_conn_err" in str(job_id):
                 # Es un error de conexión real a RC
                 raise Exception(raw_response)
@@ -188,12 +222,117 @@ def get_next_retry_delay(retry_count: int) -> int:
     min_delay = max(10, max_delay // 2)
     return random.randint(min_delay, max_delay)
 
+# ─── Liberación del backoff tras recuperarse RC ──────────────────────────────
+# Cuando RC vuelve a responder, los eventos en reintento siguen esperando su
+# backoff individual (hasta 7 minutos en el cuarto intento) aunque el destino ya
+# esté disponible. Ese backoff existía para no insistir sobre un servicio caído.
+#
+# La liberación es progresiva: tras una caída larga puede haber decenas de miles
+# acumulados, y soltarlos todos de golpe volvería a saturar a RC apenas se
+# recupera. Cada ciclo del worker libera una tanda hasta agotarlos.
+_LIBERACION_TANDA_DEFECTO = int(os.getenv("RC_LIBERACION_TANDA", "500"))
+
+# Los parámetros de comportamiento ante fallas se configuran desde el panel y se
+# cachean unos segundos: se leen en cada ciclo del worker, y consultar la base
+# cada vez sería un costo innecesario para valores que cambian muy de vez en
+# cuando. El desfase máximo es de medio minuto.
+_PARAMS_TTL = 30
+_params_cache: dict = {"ts": 0.0, "valores": {}}
+
+
+def obtener_parametros_rc() -> dict:
+    """
+    Parámetros de comportamiento ante fallas de RC, configurables desde el panel.
+
+    Ante cualquier problema con la base se usan los valores por defecto: la
+    política de reintentos no debe depender de que la configuración responda.
+    """
+    ahora = time.time()
+    if _params_cache["valores"] and ahora - _params_cache["ts"] < _PARAMS_TTL:
+        return _params_cache["valores"]
+
+    valores = {
+        "liberacion_tanda": _LIBERACION_TANDA_DEFECTO,
+        "max_reintentos": 4,
+        "fallos_circuito": 5,
+    }
+    try:
+        from app.models.config_models import SystemSettings
+        db = get_session("system_config", "global")
+        try:
+            cfg = db.query(SystemSettings).first()
+            if cfg:
+                valores["liberacion_tanda"] = getattr(cfg, "rc_liberacion_tanda", None) or valores["liberacion_tanda"]
+                valores["max_reintentos"] = getattr(cfg, "rc_max_reintentos", None) or valores["max_reintentos"]
+                valores["fallos_circuito"] = getattr(cfg, "rc_fallos_circuito", None) or valores["fallos_circuito"]
+        finally:
+            db.close()
+    except Exception as e:
+        logger.warning(f"No se pudieron leer los parámetros de RC, se usan los valores por defecto: {e}")
+
+    _params_cache["ts"] = ahora
+    _params_cache["valores"] = valores
+    return valores
+
+
+def invalidar_parametros_rc():
+    """Fuerza la relectura tras guardar la configuración desde el panel."""
+    _params_cache["ts"] = 0.0
+
+# Último instante de recuperación ya procesado por cada integración
+_recuperacion_procesada: dict[str, float] = {}
+
+
+async def _liberar_backoff_si_rc_volvio(queue, provider: str, env: str) -> int:
+    """
+    Adelanta la salida de los eventos en reintento si RC se recuperó.
+
+    Retorna cuántos se liberaron en esta tanda. Mientras devuelva la tanda
+    completa quedan más por liberar, así que la recuperación no se marca como
+    procesada y el siguiente ciclo continúa donde quedó.
+    """
+    ts_recuperacion = _rc_circuit_breaker.recovery_timestamp()
+    if not ts_recuperacion:
+        return 0
+
+    clave = f"{provider}_{env}"
+    if _recuperacion_procesada.get(clave, 0.0) >= ts_recuperacion:
+        return 0   # esta recuperación ya se terminó de procesar
+
+    tanda = obtener_parametros_rc()["liberacion_tanda"]
+    try:
+        liberados = await queue.liberar_backoff(provider, env, tanda)
+    except AttributeError:
+        # Backend de cola sin soporte para liberación: no es un error, se
+        # mantiene el comportamiento anterior.
+        _recuperacion_procesada[clave] = ts_recuperacion
+        return 0
+    except Exception as e:
+        logger.warning(f"[{provider}-{env}] No se pudo liberar el backoff: {e}")
+        return 0
+
+    if liberados:
+        logger.info(
+            f"[{provider}-{env}] RC recuperado: {liberados} evento(s) liberados "
+            f"de su espera de reintento para salir en este ciclo."
+        )
+
+    if liberados < tanda:
+        _recuperacion_procesada[clave] = ts_recuperacion   # no quedan más
+
+    return liberados
+
+
 async def process_provider_events(provider: str, env: str):
     """Procesa pendientes de un único proveedor y entorno. Cada sub-lote es auto-contenido:
     dispara su SOAP y escribe resultados en BD inmediatamente, sin esperar a los demás."""
     from app.core.queue_factory import QueueFactory
     queue = QueueFactory.get_queue_service(provider, env)
     try:
+        # Si RC volvió tras una caída, adelantar una tanda de los que esperan
+        # reintento para que salgan junto con los pendientes de este ciclo.
+        await _liberar_backoff_si_rc_volvio(queue, provider, env)
+
         # 1. Obtener pendientes usando el servicio de colas abstraído
         limit = 2000
         pendings = await queue.get_pending_batch(provider, env, limit=limit)
@@ -282,6 +421,7 @@ async def process_provider_events(provider: str, env: str):
             # Debe existir en todos los caminos: si el lote falla entero no
             # hay muestras que registrar, pero la variable se usa al retornar.
             muestras_latencia = []
+            conteo_categorias = defaultdict(int)
 
             if isinstance(batch_outcome, Exception):
                 logger.error(f"Excepción general en sub-lote {batch_idx + 1} para {provider}_{env}: {batch_outcome}")
@@ -311,7 +451,24 @@ async def process_provider_events(provider: str, env: str):
 
                 for idx, db_event in enumerate(batch):
                     try:
-                        success, job_id, rc_response = results[idx] if results and idx < len(results) else (False, f"rc_err_missing_{int(datetime.now().timestamp())}", "No response mapping for event")
+                        # El cliente devuelve 4 elementos desde la clasificación
+                        # estructural. Se tolera la forma anterior de 3 por si
+                        # queda algún camino sin migrar.
+                        if results and idx < len(results):
+                            entrada = results[idx]
+                            if len(entrada) == 4:
+                                success, job_id, rc_response, categoria = entrada
+                            else:
+                                success, job_id, rc_response = entrada
+                                categoria = (RCResponseCategory.SUCCESS if success
+                                             else RCResponseCategory.TRANSPORT)
+                        else:
+                            success = False
+                            job_id = f"rc_err_missing_{int(datetime.now().timestamp())}"
+                            rc_response = "No response mapping for event"
+                            # Sin respuesta mapeada no se puede afirmar que RC no
+                            # lo recibió: se reintenta en lugar de descartarlo.
+                            categoria = RCResponseCategory.TRANSPORT
                         
                         if success:
                             updates_to_sent.append({
@@ -325,6 +482,8 @@ async def process_provider_events(provider: str, env: str):
                             # salieron al primer intento: los reintentados miden
                             # la indisponibilidad del destino, no el rendimiento
                             # del hub, y distorsionarían la media.
+                            conteo_categorias[categoria.value] += 1
+
                             if not (db_event.retry_count or 0):
                                 hub_sec = None
                                 transmision_sec = None
@@ -349,36 +508,43 @@ async def process_provider_events(provider: str, env: str):
                                     "transmission": transmision_sec,
                                 })
                         else:
-                            err_lower = str(rc_response).lower()
-                            is_auth_error = any(w in err_lower for w in ["unknown_token", "userunk", "autentica", "token", "incorrecta", "contrase", "conn_err", "connection"])
-                            
-                            if is_auth_error:
-                                current_retries = db_event.retry_count or 0
-                                if current_retries < 4:
-                                    backoff_sec = get_next_retry_delay(current_retries)
-                                    next_retry = datetime.now() + timedelta(seconds=backoff_sec)
-                                    updates_to_retry.append({
-                                        "event_id": db_event.id,
-                                        "elapsed_sec": elapsed_sec,
-                                        "rc_response": rc_response,
-                                        "job_id": job_id,
-                                        "retry_count": current_retries + 1,
-                                        "next_retry_at": next_retry
-                                    })
-                                else:
-                                    updates_to_fail.append({
-                                        "event_id": db_event.id,
-                                        "elapsed_sec": elapsed_sec,
-                                        "rc_response": rc_response,
-                                        "job_id": job_id
-                                    })
+                            # La decisión se toma por la CATEGORÍA que devolvió
+                            # el cliente SOAP, no buscando palabras en el texto
+                            # de la respuesta. Un error transitorio cuyo mensaje
+                            # no contuviera las palabras esperadas terminaba
+                            # marcado como fallo permanente y se perdía al purgar.
+                            reintentable = categoria in CATEGORIAS_REINTENTABLES
+                            current_retries = db_event.retry_count or 0
+                            max_reintentos = obtener_parametros_rc()["max_reintentos"]
+
+                            if reintentable and current_retries < max_reintentos:
+                                backoff_sec = get_next_retry_delay(current_retries)
+                                next_retry = datetime.now() + timedelta(seconds=backoff_sec)
+                                updates_to_retry.append({
+                                    "event_id": db_event.id,
+                                    "elapsed_sec": elapsed_sec,
+                                    "rc_response": rc_response,
+                                    "job_id": job_id,
+                                    "retry_count": current_retries + 1,
+                                    "next_retry_at": next_retry
+                                })
+                                conteo_categorias[f"{categoria.value}_retry"] += 1
                             else:
+                                # Permanente (BUSINESS/PROTOCOL) o agotó los
+                                # reintentos: reenviarlo daría el mismo resultado.
+                                if reintentable:
+                                    logger.error(
+                                        f"[RC:{categoria.value}] Evento {db_event.id} agotó "
+                                        f"{max_reintentos} reintentos y se marca como fallido. "
+                                        f"Última respuesta: {str(rc_response)[:200]}"
+                                    )
                                 updates_to_fail.append({
                                     "event_id": db_event.id,
                                     "elapsed_sec": elapsed_sec,
                                     "rc_response": rc_response,
                                     "job_id": job_id
                                 })
+                                conteo_categorias[f"{categoria.value}_failed"] += 1
                     except Exception as inner_e:
                         logger.warning(f"Excepción capturada en processor: {inner_e}")
                         updates_to_fail.append({
@@ -391,6 +557,7 @@ async def process_provider_events(provider: str, env: str):
             metrics["retry"] = len(updates_to_retry)
             metrics["failed"] = len(updates_to_fail)
             metrics["sent"] = len(updates_to_sent)
+            metrics["categorias"] = dict(conteo_categorias)
 
             # Alimenta la ventana usada por las estadísticas, que así no
             # necesitan recorrer la tabla del día.
@@ -447,13 +614,40 @@ async def process_provider_events(provider: str, env: str):
             asyncio.create_task(asyncio.to_thread(increment_daily_stats, provider, env, total_sent, total_failed))
         
         soap_avg_ms = (soap_ms_total / len(batches)) if len(batches) > 0 else 0
-        
-        # Log de rendimiento estructurado
+
+        # Consolidar las categorías de respuesta de RC de todos los sub-lotes.
+        # Queda siempre en el log para poder ver, sin abrir la base, si RC está
+        # aceptando, rechazando por negocio, o fallando por transporte.
+        # Cada elemento es la tupla (metrics, retry, fail, sent) que devuelve el
+        # sub-lote, o una excepción si falló entero.
+        categorias_lote = defaultdict(int)
+        for m in all_metrics:
+            if isinstance(m, Exception):
+                continue
+            metrics_sublote = m[0]
+            for clave, valor in (metrics_sublote.get("categorias") or {}).items():
+                categorias_lote[clave] += valor
+
+        detalle_rc = " ".join(f"{k}={v}" for k, v in sorted(categorias_lote.items())) or "sin_respuestas"
+
         logger.info(
             f"batch_processed provider={provider} env={env} "
             f"batch_size={len(pendings)} soap_avg_ms={soap_avg_ms:.0f} "
-            f"sent={total_sent} failed={total_failed} retry={total_retry}"
+            f"sent={total_sent} failed={total_failed} retry={total_retry} "
+            f"| RC: {detalle_rc}"
         )
+
+        # Un rechazo permanente de RC merece visibilidad propia: no se reintenta
+        # y el evento no llegará nunca si no se corrige el origen.
+        permanentes = sum(
+            v for k, v in categorias_lote.items()
+            if k.startswith(("BUSINESS", "PROTOCOL"))
+        )
+        if permanentes:
+            logger.error(
+                f"[RC] {permanentes} evento(s) de {provider}/{env} rechazados de forma "
+                f"PERMANENTE por RC (no se reintentan). Detalle por categoría: {detalle_rc}"
+            )
         
         # NOTA: update_daily_stats ya no bloquea aquí. 
         # Se movió al api_worker_loop como tarea fire-and-forget cada 5 segundos 

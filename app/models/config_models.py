@@ -64,3 +64,10 @@ class SystemSettings(Base):
     audit_retention_days = Column(Integer, default=30)
     processed_retention_days = Column(Integer, default=30)
     processed_logs_enabled = Column(Boolean, default=True)
+
+    # ── Comportamiento ante fallas de Recurso Confiable ──────────────────────
+    # Estaban fijos en el código o en variables de entorno del servidor, sin
+    # forma de ajustarlos durante un incidente sin acceso a la máquina.
+    rc_liberacion_tanda = Column(Integer, default=500)   # eventos por ciclo al recuperarse RC
+    rc_max_reintentos = Column(Integer, default=4)       # intentos por evento antes de darlo por fallido
+    rc_fallos_circuito = Column(Integer, default=5)      # llamadas fallidas seguidas para dejar de insistir
