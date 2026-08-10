@@ -307,8 +307,9 @@ def test_send_events_batch_devuelve_siempre_cuatro_elementos():
 
     fuente = inspect.getsource(rc_soap.RCSOAPClient.send_events_batch)
 
-    # Cada return de resultados debe mencionar una categoría
-    for categoria in ("PROTOCOL", "TRANSPORT", "SUCCESS"):
+    # Cada camino de retorno debe declarar su categoría. El de modo simulado
+    # devuelve SIMULADO, no SUCCESS: no hubo llamada a RC.
+    for categoria in ("PROTOCOL", "TRANSPORT", "SIMULADO"):
         assert f"RCResponseCategory.{categoria}" in fuente, (
             f"El camino {categoria} no está devolviendo su categoría"
         )
@@ -359,3 +360,48 @@ async def test_el_lote_se_procesa_sin_error_de_desempaquetado():
     assert len(resultados) == 2
     assert all(len(r) == 4 for r in resultados)
     assert transcurrido >= 0
+
+
+# ── El modo simulado no debe confundirse con un envío real ───────────────────
+# En el log, un lote simulado y uno confirmado por RC se veían idénticos:
+# "| RC: SUCCESS=87". Quien lee eso da por hecho que RC recibió los eventos.
+# El dashboard ya avisaba con un banner, pero el log —que es lo que ve el
+# equipo de sistemas— no lo distinguía.
+
+@pytest.mark.asyncio
+async def test_el_modo_simulado_devuelve_su_propia_categoria():
+    from app.schemas.canonical import RCCanonicalModel
+
+    cliente = RCSOAPClient.__new__(RCSOAPClient)
+    cliente.use_mock = True
+
+    evento = RCCanonicalModel(
+        chassis_number="C180673", latitude=9.89, longitude=-84.63,
+        speed=0, code="1", date=datetime.now(),
+    )
+    resultados = await cliente.send_events_batch([evento, evento])
+
+    assert len(resultados) == 2
+    for r in resultados:
+        assert r[3] == RCResponseCategory.SIMULADO
+        assert r[3] != RCResponseCategory.SUCCESS
+
+
+def test_simulado_no_se_reintenta():
+    """No hubo fallo: simplemente no se envió a propósito."""
+    assert RCResponseCategory.SIMULADO not in CATEGORIAS_REINTENTABLES
+
+
+def test_el_conteo_usa_la_categoria_real_y_no_asume_exito():
+    """
+    REGRESIÓN: el contador sumaba siempre a "SUCCESS" al despachar, sin mirar
+    la categoría, así que un lote simulado se reportaba como confirmado por RC.
+    """
+    import inspect
+    from app.worker import processor
+
+    fuente = inspect.getsource(processor.process_provider_events)
+    assert 'conteo_categorias["SUCCESS"] += 1' not in fuente, (
+        "El conteo no debe asumir SUCCESS: hay que usar la categoría devuelta"
+    )
+    assert "conteo_categorias[categoria.value] += 1" in fuente
