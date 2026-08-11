@@ -1,5 +1,5 @@
 from typing import List, Any
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from sqlalchemy import or_
 
 from app.database import session_context
@@ -7,6 +7,17 @@ from app.models.db_models import NormalizedRCEvent
 from app.core.queue_interface import MessageQueueInterface
 
 import asyncio
+
+# ─── Piso del umbral de rescate de eventos atascados ─────────────────────────
+# El reaper devuelve a 'pending' los eventos que llevan demasiado tiempo en
+# 'processing'. Ese umbral es configurable desde el panel, pero nunca puede
+# bajar de este piso: un lote en vuelo permanece en 'processing' solo lo que
+# dura un intento SOAP (timeout del orden de decenas de segundos). Un umbral
+# menor a este piso arriesga arrebatarle a un worker un lote que todavía está
+# despachando. El piso se aplica en la propia cola, así que se respeta
+# cualquiera sea el valor configurado y quien llame al método.
+_PISO_UMBRAL_RESCATE_SEG = 300
+
 
 class SQLiteQueue(MessageQueueInterface):
     """
@@ -37,14 +48,14 @@ class SQLiteQueue(MessageQueueInterface):
                     NormalizedRCEvent.next_retry_at <= now_time
                 )
             ).order_by(NormalizedRCEvent.id.asc()).limit(limit)
-            
+
             events = query.all()
-            
+
             if events:
                 event_ids = [ev.id for ev in events]
                 for ev in events:
                     db.expunge(ev)
-                    
+
                 # Marcar atómicamente como "processing" en BD para evitar re-procesamiento.
                 # Los objetos `events` retornados al caller tendrán status="pending" (valor leído
                 # de BD antes del update), lo cual es inofensivo: el caller no depende del status
@@ -71,6 +82,10 @@ class SQLiteQueue(MessageQueueInterface):
 
         No se toca retry_count: el tope de intentos sigue vigente, así que un
         evento que RC rechaza sistemáticamente no queda dando vueltas.
+
+        `next_retry_at` se compara con el mismo reloj con el que se agenda en el
+        processor (`datetime.now()` naive local); ambos lados usan la hora local
+        del proceso, así que la comparación es consistente. No se toca acá.
 
         Retorna cuántos se liberaron.
         """
@@ -113,13 +128,26 @@ class SQLiteQueue(MessageQueueInterface):
         Existía una recuperación equivalente, pero solo al arrancar el proceso:
         un lote atascado esperaba al próximo reinicio.
 
-        El umbral debe superar con holgura el despacho más lento posible, para
-        no arrebatarle a un worker un lote que todavía está en vuelo.
+        Reloj: la comparación se hace en UTC naive, el mismo huso con el que se
+        escribe `updated_at`. La columna la fija `onupdate=func.now()` al marcar
+        'processing' —en SQLite `CURRENT_TIMESTAMP` es siempre UTC— y los demás
+        caminos que la tocan (sent/failed/retry) escriben `datetime.now(utc)`
+        naive. Antes se comparaba con `datetime.now()` local: como el contenedor
+        corre en America/Argentina/Buenos_Aires (UTC-3), el umbral efectivo se
+        inflaba en tres horas y un lote atascado esperaba ~3 h de más antes de
+        ser rescatado. Debe usarse UTC en ambos lados para que el umbral valga
+        lo que dice valer.
+
+        Piso: el umbral nunca baja de `_PISO_UMBRAL_RESCATE_SEG` para no
+        arrebatarle a un worker un lote que todavía está en vuelo.
 
         Retorna cuántos se recuperaron.
         """
+        umbral_efectivo = max(_PISO_UMBRAL_RESCATE_SEG, umbral_seg)
+
         with session_context(provider, env) as db:
-            limite = datetime.now() - timedelta(seconds=umbral_seg)
+            ahora_utc = datetime.now(timezone.utc).replace(tzinfo=None)
+            limite = ahora_utc - timedelta(seconds=umbral_efectivo)
 
             ids = [
                 fila[0]
@@ -147,7 +175,6 @@ class SQLiteQueue(MessageQueueInterface):
         )
 
     def _mark_batch_as_sent_sync(self, provider: str, env: str, updates: List[dict]) -> None:
-        from datetime import timezone
         with session_context(provider, env) as db:
             if updates:
                 now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
@@ -167,7 +194,6 @@ class SQLiteQueue(MessageQueueInterface):
         await asyncio.to_thread(self._mark_batch_as_sent_sync, provider, env, updates)
 
     def _mark_batch_as_failed_sync(self, provider: str, env: str, updates: List[dict]) -> None:
-        from datetime import timezone
         with session_context(provider, env) as db:
             if updates:
                 now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
@@ -185,7 +211,6 @@ class SQLiteQueue(MessageQueueInterface):
         await asyncio.to_thread(self._mark_batch_as_failed_sync, provider, env, updates)
 
     def _schedule_batch_retry_sync(self, provider: str, env: str, updates: List[dict]) -> None:
-        from datetime import timezone
         with session_context(provider, env) as db:
             if updates:
                 now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
