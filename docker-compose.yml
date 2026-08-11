@@ -36,7 +36,7 @@ services:
     # archivo documenta exactamente qué versión está en producción.
     #
     # Al publicar una versión nueva hay que actualizar este tag y commitearlo.
-    image: gustavogomez08/hubtelematicoassistcargo:v1.7.1
+    image: gustavogomez08/hubtelematicoassistcargo:v1.7.2
     container_name: centro-comando-app
 
     # Sección build: solo se usa al ejecutar `docker compose build` en la máquina
