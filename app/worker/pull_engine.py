@@ -4,6 +4,7 @@ import hashlib
 import time
 import httpx
 import json
+import os
 from urllib.parse import urlparse, parse_qsl, urlencode, urlunparse
 from jsonpath_ng import parse
 
@@ -180,6 +181,147 @@ def _invalidate_token(base_url: str, account: str):
     _TOKEN_CACHE.pop(f"{base_url}|{account}", None)
 
 
+def invalidar_token_cacheado(provider: str, env: str) -> bool:
+    """
+    Descarta el token guardado de una integración PULL.
+
+    Sirve cuando el proveedor lo invalida por su lado —otra sesión pidió uno
+    nuevo, se rotaron credenciales— y el hub seguiría usando el viejo hasta que
+    expire, fallando en cada ciclo mientras tanto.
+
+    El caché se indexa por (base_url, usuario), los mismos valores con que se
+    pidió el token: la URL de extracción reducida a esquema y host, y el
+    auth_user de la configuración. Se reconstruye esa clave para descartar solo
+    la entrada que corresponde.
+
+    Si no se puede leer la configuración, se descarta todo el caché. Es tosco
+    —afecta a los demás proveedores— pero deja el sistema en un estado sano: un
+    token de más se vuelve a pedir, uno inválido en uso hace fallar cada ciclo.
+
+    Retorna si había algo que descartar.
+    """
+    from urllib.parse import urlparse
+
+    from app.database import get_session
+    from app.models.config_models import ProviderConfig
+
+    db = get_session("system_config", "global")
+    try:
+        cfg = db.query(ProviderConfig).filter_by(
+            provider_name=provider.lower(), env=env.lower()
+        ).first()
+        if not cfg:
+            logger.warning(
+                f"[{provider}-{env}] No existe esa integración; no hay token que descartar."
+            )
+            return False
+
+        try:
+            fetch_config = _load_fetch_config(cfg) or {}
+        except Exception as e:
+            logger.warning(
+                f"[{provider}-{env}] No se pudo leer la configuración de extracción "
+                f"para ubicar el token ({e}). Se descarta el caché completo."
+            )
+            habia = bool(_TOKEN_CACHE)
+            _TOKEN_CACHE.clear()
+            return habia
+
+        url = fetch_config.get("url", "")
+        usuario = fetch_config.get("auth_user", "")
+
+        if not url or not usuario:
+            logger.warning(
+                f"[{provider}-{env}] La configuración no tiene URL o usuario de "
+                f"autenticación; no hay token asociado que descartar."
+            )
+            return False
+
+        partes = urlparse(url)
+        base_url = f"{partes.scheme}://{partes.netloc}"
+        clave = f"{base_url}|{usuario}"
+
+        habia = _TOKEN_CACHE.pop(clave, None) is not None
+        if habia:
+            logger.info(f"[{provider}-{env}] Token descartado para {usuario} en {base_url}.")
+        return habia
+    finally:
+        db.close()
+
+
+# Redes internas que, por defecto, no deben ser destino de una consulta
+# saliente: apuntar el motor PULL a una de ellas convertiría al hub en un
+# puente hacia la red del servidor.
+_REDES_INTERNAS = ("127.", "10.", "192.168.", "169.254.", "0.0.0.0", "localhost", "::1")
+
+# Permitir destinos internos. Necesario para probar contra un proveedor
+# simulado en la misma máquina, o contra un servicio interno de la propia red.
+#
+# Se activa explícitamente y se avisa por log en cada arranque: es una
+# protección que se está desactivando a propósito, no un descuido.
+PERMITIR_DESTINOS_INTERNOS = os.getenv("PULL_ALLOW_INTERNAL_URLS", "False").lower() in ("true", "1", "yes")
+
+_aviso_destinos_internos_emitido = False
+
+
+def _verificar_destino_permitido(url: str) -> None:
+    """
+    Rechaza URLs que apunten a direcciones internas, salvo que se haya
+    habilitado explícitamente.
+
+    El Inspector ya validaba esto antes de salir a la red; el motor PULL no.
+    La URL viene de la configuración del panel, así que no es entrada anónima,
+    pero un valor mal cargado alcanzaría servicios internos del servidor.
+
+    Solo se bloquea cuando el destino es DEMOSTRABLEMENTE interno. Si el nombre
+    no resuelve —DNS caído, dominio nuevo— se deja pasar: un fallo de
+    resolución es transitorio y bloquear ahí dejaría sin datos a un proveedor
+    legítimo por un problema ajeno. El error real aparecerá al conectar.
+    """
+    global _aviso_destinos_internos_emitido
+
+    import ipaddress
+    import socket
+    import urllib.parse
+
+    try:
+        partes = urllib.parse.urlparse(url)
+        host = (partes.hostname or "").lower()
+    except Exception:
+        return
+
+    if not host:
+        return
+
+    def _es_interno() -> bool:
+        if any(host == p or host.startswith(p) for p in _REDES_INTERNAS):
+            return True
+        try:
+            ip = ipaddress.ip_address(socket.gethostbyname(host))
+        except Exception:
+            return False   # no resuelve: no se puede afirmar que sea interno
+        return ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved
+
+    if not _es_interno():
+        return
+
+    if PERMITIR_DESTINOS_INTERNOS:
+        if not _aviso_destinos_internos_emitido:
+            logger.warning(
+                "PULL_ALLOW_INTERNAL_URLS está activo: se permiten destinos en la "
+                "red interna. Correcto para pruebas locales; en producción con "
+                "proveedores externos conviene desactivarlo."
+            )
+            _aviso_destinos_internos_emitido = True
+        return
+
+    raise ValueError(
+        f"La URL de extracción apunta a una dirección interna ({host}). "
+        f"Si es intencional —una prueba local—, habilitá "
+        f"PULL_ALLOW_INTERNAL_URLS=True en el archivo de entorno."
+    )
+
+
 async def execute_fetch(fetch_config: dict) -> dict | list:
     """
     Ejecuta una petición HTTP saliente según la configuración visual del proveedor.
@@ -191,6 +333,12 @@ async def execute_fetch(fetch_config: dict) -> dict | list:
     url = fetch_config.get("url")
     if not url:
         raise ValueError("fetch_config sin 'url'")
+
+    # El Inspector ya validaba el destino antes de salir a la red; el motor PULL
+    # no lo hacía. La URL viene de la configuración del panel, así que no es
+    # entrada anónima, pero apuntarla a una dirección interna convertiría al hub
+    # en un puente hacia la red del servidor. Se aplica el mismo control.
+    _verificar_destino_permitido(url)
 
     method = fetch_config.get("method", "GET").upper()
     auth_type = fetch_config.get("auth_type", "none")

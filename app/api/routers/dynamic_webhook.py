@@ -12,6 +12,7 @@ from app.core.rate_limit import check_rate_limit
 from app.models.db_models import NormalizedRCEvent
 from app.core.auditor import log_raw_payload
 from app.core.crypto import decrypt
+from app.core.auth_alerts import registrar_rechazo
 import secrets
 
 logger = logging.getLogger(__name__)
@@ -37,6 +38,10 @@ def _validate_dynamic_auth(
             raise HTTPException(status_code=403, detail=f"El proveedor '{provider_name}' está desactivado temporalmente.")
             
         if not config.webhook_auth_secret_enc:
+            registrar_rechazo(
+                provider_name, env, "falta configurar la API key",
+                "Cargarla desde el panel antes de recibir tráfico.",
+            )
             raise HTTPException(
                 status_code=401,
                 detail=f"Webhook no autenticado. Configure API key para {provider_name} en el Dashboard."
@@ -50,6 +55,14 @@ def _validate_dynamic_auth(
         provided_key = request.headers.get(header_name, "")
         
         if not secrets.compare_digest(provided_key, stored_key):
+            # Agrupado: un 401 sostenido es el síntoma de una integración mal
+            # configurada y tiene que ser visible, pero una línea por rechazo
+            # bajo carga escondería el problema igual que el silencio.
+            registrar_rechazo(
+                provider_name, env,
+                "API key incorrecta" if provided_key else f"falta el header {header_name}",
+                "Verificar que la clave del proveedor coincida con la del panel.",
+            )
             raise HTTPException(status_code=401, detail="API key invalida")
             
         mapping_schema = config.mapping_schema or {}
