@@ -72,3 +72,7 @@ class SystemSettings(Base):
     rc_max_reintentos = Column(Integer, default=4)       # intentos por evento antes de darlo por fallido
     rc_fallos_circuito = Column(Integer, default=5)      # llamadas fallidas seguidas para dejar de insistir
     rc_recuperacion_umbral_seg = Column(Integer, default=600)  # antigüedad para rescatar un lote atascado
+
+    # Horas que un evento ya despachado permanece en la base antes de purgarse.
+    # La base es un colchón de tránsito: lo purgado queda en los respaldos JSONL.
+    retencion_horas_db = Column(Integer, default=2)

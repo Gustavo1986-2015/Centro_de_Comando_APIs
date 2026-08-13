@@ -638,6 +638,9 @@
                 asignar('rc_fallos_circuito', d.rc_fallos_circuito);
                 asignar('rc_liberacion_tanda', d.rc_liberacion_tanda);
                 asignar('rc_recuperacion_umbral_seg', d.rc_recuperacion_umbral_seg);
+                asignar('retencion_horas_db', d.retencion_horas_db);
+                const et = document.getElementById('donde-retencion');
+                if (et) et.textContent = d.retencion_horas_db;
             } catch (e) {
                 console.warn('No se pudo cargar el comportamiento ante fallas de RC:', e);
             }
@@ -650,6 +653,7 @@
                 rc_fallos_circuito: leer('rc_fallos_circuito'),
                 rc_liberacion_tanda: leer('rc_liberacion_tanda'),
                 rc_recuperacion_umbral_seg: leer('rc_recuperacion_umbral_seg'),
+                retencion_horas_db: leer('retencion_horas_db'),
             };
 
             if (Object.values(payload).some(v => !Number.isFinite(v))) {
@@ -673,6 +677,63 @@
             } catch (e) {
                 alert('Error de red al guardar la configuración.');
                 cargarComportamientoRC();
+            }
+        }
+
+
+        // ─── Ver la clave guardada de un webhook ─────────────────────────────
+        // Las claves se guardan cifradas y el panel solo mostraba puntos, así
+        // que verificar una exigía probarla contra el endpoint.
+        async function verApiKey(provider, env) {
+            const clave = prompt(
+                `Ver la API key de ${provider.toUpperCase()}/${env.toUpperCase()}\n\n` +
+                `Ingresá la contraseña de administrador para confirmar:`
+            );
+            if (!clave) return;
+
+            try {
+                const res = await fetch('/api/config/reveal-key', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({provider_name: provider, env: env, password: clave})
+                });
+                const d = await res.json().catch(() => ({}));
+
+                if (!res.ok) {
+                    alert('No se pudo mostrar la clave:\n\n' + (d.detail || `HTTP ${res.status}`));
+                    return;
+                }
+                if (!d.configurada) {
+                    alert(`${provider.toUpperCase()}/${env.toUpperCase()} no tiene API key cargada.`);
+                    return;
+                }
+
+                prompt(
+                    `API key de ${provider.toUpperCase()}/${env.toUpperCase()}\n` +
+                    `Header: ${d.header}\n\n` +
+                    `Copiala de acá (Ctrl+C):`,
+                    d.api_key
+                );
+            } catch (e) {
+                alert('Error de red al consultar la clave.');
+            }
+        }
+
+        // ─── Renovar el token de un proveedor PULL ───────────────────────────
+        async function renovarToken(provider, env) {
+            const ok = confirm(
+                `Renovar el token de ${provider.toUpperCase()}/${env.toUpperCase()}\n\n` +
+                `Se descarta el token guardado y se pedirá uno nuevo en el próximo ciclo.\n` +
+                `Útil si el proveedor lo invalidó por su lado.\n\n¿Continuar?`
+            );
+            if (!ok) return;
+
+            try {
+                const res = await fetch(`/api/config/refresh-token/${provider}/${env}`, {method: 'POST'});
+                const d = await res.json().catch(() => ({}));
+                alert(res.ok ? d.message : ('No se pudo renovar:\n\n' + (d.detail || `HTTP ${res.status}`)));
+            } catch (e) {
+                alert('Error de red al renovar el token.');
             }
         }
 
@@ -1488,8 +1549,14 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
                                 </label>
                             </td>
                             <td>${esPull(c) ? '<input class="form-control" type="text" disabled value="--- N/A ---" style="width: 100px; color: var(--color-gray); background: var(--level-1); text-align: center; border: 1px dashed var(--card-border);" title="No aplica para proveedores PULL">' : `<input class="form-control" type="text" id="webhook_header_${c._originalIdx}" value="${c.webhook_auth_header || 'x-api-key'}" style="width: 100px;">`}</td>
-                            <td>${esPull(c) ? '<input class="form-control" type="text" disabled value="--- N/A (Es PULL) ---" style="color: var(--color-gray); background: var(--level-1); font-style: italic; border: 1px dashed var(--card-border);" title="No aplica para proveedores PULL">' : `<input class="form-control" type="password" id="webhook_auth_${c._originalIdx}" placeholder="${c.has_webhook_auth ? '•••••••• (Cifrado)' : ''}" title="Dejar vacío para mantener el actual">`}</td>
-                            <td><input class="form-control" type="text" id="user_${c._originalIdx}" value="${c.rc_user || ''}"></td>
+                            <td>${esPull(c) ? '<input class="form-control" type="text" disabled value="--- N/A (Es PULL) ---" style="color: var(--color-gray); background: var(--level-1); font-style: italic; border: 1px dashed var(--card-border);" title="No aplica para proveedores PULL">' : `<div style="display:flex; gap:4px; align-items:center;">
+                                    <input class="form-control" type="password" id="webhook_auth_${c._originalIdx}" placeholder="${c.has_webhook_auth ? '•••••••• (Cifrado)' : ''}" title="Dejar vacío para mantener el actual">
+                                    ${c.has_webhook_auth ? `<button class="btn-ver-clave" title="Ver la clave guardada (pide contraseña)" onclick="verApiKey('${c.provider_name}','${c.env}')">👁</button>` : ''}
+                                  </div>`}</td>
+                            <td>
+                                ${esPull(c) ? `<button class="btn-renovar-token" title="Descartar el token guardado del proveedor y pedir uno nuevo en el próximo ciclo" onclick="renovarToken('${c.provider_name}','${c.env}')">↻ token</button>` : ''}
+                                <input class="form-control" type="text" id="user_${c._originalIdx}" value="${c.rc_user || ''}">
+                            </td>
                             <td><input class="form-control" type="password" id="pass_${c._originalIdx}" placeholder="${c.has_rc_password ? '•••••••• (Cifrado)' : ''}" title="Dejar vacío para mantener el actual"></td>
                             <td><input class="form-control" type="number" id="purge_${c._originalIdx}" value="${c.purge_interval_min}" style="width: 80px;"></td>
                             <td><input class="form-control" type="number" id="run_int_${c._originalIdx}" value="${c.run_interval_sec}" style="width: 80px;"></td>
