@@ -9,17 +9,18 @@
 #     docker compose push
 #     docker push gustavogomez08/hubtelematicoassistcargo:vX.Y.Z
 #
-#     Después, actualizar el tag de `image:` más abajo y commitear el cambio.
+#     (el tag `latest` se actualiza solo al publicar)
 #
 #   Producción (servidor) — descargar y levantar:
-#     git pull origin main        # trae este archivo con el tag nuevo
 #     docker compose pull
 #     docker compose up -d
 #
-#   Rollback: cambiar el tag de `image:` a la versión anterior y repetir
-#   `docker compose up -d`. Por eso se fija una versión explícita en lugar de
-#   usar `latest`: con `latest` no hay forma de saber qué está corriendo ni a
-#   qué volver.
+#   Rollback: reemplazar `latest` por la versión a la que se quiere volver
+#   (por ejemplo `:v1.7.2`) y repetir `docker compose up -d`.
+#
+#   Para saber qué versión está corriendo:
+#     curl -s http://localhost:8000/health
+#   o, desde afuera, el pie del panel.
 #
 #   Ver logs:      docker compose logs -f --tail=50
 #   Reiniciar:     docker compose restart
@@ -29,14 +30,16 @@
 
 services:
   centro-comando:
-    # Imagen publicada en Docker Hub, con versión fija.
+    # Imagen publicada en Docker Hub.
     #
-    # Se evita `latest` a propósito: hace el despliegue ambiguo (no se sabe qué
-    # build está corriendo) y complica el rollback. Con el tag explícito, este
-    # archivo documenta exactamente qué versión está en producción.
+    # Se usa `latest` para que el despliegue sea un `pull` sin coordinar
+    # archivos entre quien publica y quien despliega. La contrapartida es que
+    # este archivo ya no documenta qué versión corre: para saberlo hay que
+    # consultar /health, que reporta la versión real de la imagen en ejecución.
     #
-    # Al publicar una versión nueva hay que actualizar este tag y commitearlo.
-    image: gustavogomez08/hubtelematicoassistcargo:v1.7.2
+    # Cada versión se publica igual con su tag propio (v1.7.3, v1.7.2...), así
+    # que el rollback es reemplazar `latest` por el tag al que se quiere volver.
+    image: gustavogomez08/hubtelematicoassistcargo:latest
     container_name: centro-comando-app
 
     # Sección build: solo se usa al ejecutar `docker compose build` en la máquina

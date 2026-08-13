@@ -13,6 +13,8 @@ from app.models.config_models import ProviderConfig
 from app.core.crypto import decrypt
 from app.core import provider_health
 from app.core.rate_limit import check_rate_limit
+from app.core.auth_alerts import registrar_rechazo
+from app.core.queue_metrics import registrar_espera_cola
 import secrets
 import time
 import threading as _threading
@@ -108,9 +110,9 @@ def _validate_schmitz_auth(request: Request, env: str = Query("prod")):
     clave_esperada = _clave_esperada(entorno)
 
     if not clave_esperada:
-        logger.warning(
-            f"[SCHMITZ-{entorno}] Petición rechazada: no hay API key configurada "
-            f"para ese entorno. Cargarla desde el panel antes de recibir tráfico."
+        registrar_rechazo(
+            "schmitz", entorno, "falta configurar la API key",
+            "Cargarla desde el panel antes de recibir tráfico.",
         )
         raise HTTPException(
             401,
@@ -119,6 +121,14 @@ def _validate_schmitz_auth(request: Request, env: str = Query("prod")):
 
     clave_recibida = request.headers.get("x-api-key", "")
     if not clave_recibida or not secrets.compare_digest(clave_recibida, clave_esperada):
+        # Agrupado: un 401 sostenido indica una integración mal configurada y
+        # tiene que verse, pero una línea por rechazo bajo carga escondería el
+        # problema igual que el silencio.
+        registrar_rechazo(
+            "schmitz", entorno,
+            "API key incorrecta" if clave_recibida else "falta el header x-api-key",
+            "Verificar que la clave del proveedor coincida con la del panel.",
+        )
         raise HTTPException(401, "API key invalida")
 
     return True
@@ -201,6 +211,22 @@ async def _batch_processor_loop():
             pass
 
         if batch:
+            normalizado = []
+            esperas = []
+            ahora_pc = time.perf_counter()
+            for item in batch:
+                if len(item) == 3:
+                    payload_i, env_i, encolado_en = item
+                    esperas.append((ahora_pc - encolado_en) * 1000.0)
+                else:
+                    payload_i, env_i = item
+                normalizado.append((payload_i, env_i))
+            batch = normalizado
+
+            if esperas:
+                registrar_espera_cola("schmitz", esperas, _webhook_queue.qsize(),
+                                      _WEBHOOK_QUEUE_MAXSIZE)
+
             # 1. Auditoría fire-and-forget asíncrona (DEBT-04)
             for payload, env_val in batch:
                 asyncio.create_task(asyncio.to_thread(log_raw_payload, "schmitz", env_val, payload))
@@ -253,7 +279,11 @@ async def schmitz_webhook(
             return {"status": "accepted", "note": "rate limit"}
 
         try:
-            _webhook_queue.put_nowait((payload, env))
+            # Se encola con la marca de recepción: la diferencia contra el
+            # momento de persistir es la espera en cola, donde se esconde el
+            # atraso bajo carga. El tiempo de respuesta del endpoint no lo
+            # revela, porque responde apenas encola.
+            _webhook_queue.put_nowait((payload, env, time.perf_counter()))
         except asyncio.QueueFull:
             # El consumidor no da abasto. Se descarta el payload dejando rastro:
             # aceptar y perder en silencio sería peor que un log explícito.
@@ -307,7 +337,11 @@ async def schmitz_json_data(
             return {"status": "accepted", "note": "rate limit"}
 
         try:
-            _webhook_queue.put_nowait((payload, env))
+            # Se encola con la marca de recepción: la diferencia contra el
+            # momento de persistir es la espera en cola, donde se esconde el
+            # atraso bajo carga. El tiempo de respuesta del endpoint no lo
+            # revela, porque responde apenas encola.
+            _webhook_queue.put_nowait((payload, env, time.perf_counter()))
         except asyncio.QueueFull:
             # El consumidor no da abasto. Se descarta el payload dejando rastro:
             # aceptar y perder en silencio sería peor que un log explícito.

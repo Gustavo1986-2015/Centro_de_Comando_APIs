@@ -33,6 +33,22 @@ if RC_USE_MOCK:
             "Setea RC_USE_MOCK=False y configura credenciales RC reales."
         )
 
+def _nombre_cache_seguro(username: str) -> str:
+    """
+    Nombre de archivo derivado del usuario, restringido a caracteres inertes.
+
+    El usuario viene de la configuración del panel, así que no es entrada
+    anónima, pero un valor con barras o puntos dobles escribiría fuera de db/.
+    Un hash corto desambigua dos usuarios que se reduzcan al mismo texto.
+    """
+    import hashlib
+    import re
+
+    limpio = re.sub(r"[^A-Za-z0-9_-]", "_", username or "")[:40]
+    firma = hashlib.sha256((username or "").encode("utf-8")).hexdigest()[:8]
+    return f"rc_token_cache_{limpio}_{firma}.json"
+
+
 class RCResponseCategory(str, Enum):
     """
     Clasificación de la respuesta de Recurso Confiable, según su ESTRUCTURA.
@@ -153,7 +169,7 @@ class RCSOAPClient:
 
     def _load_token_from_cache(self):
         """Carga el token desde el archivo de caché en disco si existe y es válido."""
-        cache_path = f"./db/rc_token_cache_{self.username}.json"
+        cache_path = os.path.join("db", _nombre_cache_seguro(self.username))
         if not os.path.exists(cache_path):
             return None
         try:
@@ -203,7 +219,7 @@ class RCSOAPClient:
             logger.info("Modo solo-memoria: No hay clave de cifrado ni password, token no se guardará en disco.")
             return
 
-        cache_path = f"./db/rc_token_cache_{self.username}.json"
+        cache_path = os.path.join("db", _nombre_cache_seguro(self.username))
         try:
             os.makedirs(os.path.dirname(cache_path), exist_ok=True)
             payload = json.dumps({
@@ -224,7 +240,7 @@ class RCSOAPClient:
         """Borra la caché de token en memoria y en disco."""
         self._token = None
         self._token_expires_at = None
-        cache_path = f"./db/rc_token_cache_{self.username}.json"
+        cache_path = os.path.join("db", _nombre_cache_seguro(self.username))
         if os.path.exists(cache_path):
             try:
                 os.remove(cache_path)
