@@ -256,6 +256,7 @@ def obtener_parametros_rc() -> dict:
         "max_reintentos": 4,
         "fallos_circuito": 5,
         "recuperacion_umbral_seg": 600,
+        "retencion_horas": 2,
     }
     try:
         from app.models.config_models import SystemSettings
@@ -268,6 +269,9 @@ def obtener_parametros_rc() -> dict:
                 valores["fallos_circuito"] = getattr(cfg, "rc_fallos_circuito", None) or valores["fallos_circuito"]
                 valores["recuperacion_umbral_seg"] = (
                     getattr(cfg, "rc_recuperacion_umbral_seg", None) or valores["recuperacion_umbral_seg"]
+                )
+                valores["retencion_horas"] = (
+                    getattr(cfg, "retencion_horas_db", None) or valores["retencion_horas"]
                 )
         finally:
             db.close()
@@ -857,13 +861,23 @@ async def purge_provider_events(provider: str, env: str):
         import asyncio
         
         local_now = datetime.now().astimezone()
-        today_start_local = datetime.combine(local_now.date(), datetime.min.time()).replace(tzinfo=local_now.tzinfo)
-        today_start = today_start_local.astimezone(timezone.utc).replace(tzinfo=None)
-        
-        # Obtener los registros a eliminar (usando streaming para no explotar la RAM)
+
+        # La ventana se cuenta por ANTIGÜEDAD, no por día calendario.
+        #
+        # Antes se borraba lo anterior al inicio de hoy, así que durante una
+        # jornada completa de tráfico no se eliminaba absolutamente nada: la
+        # tabla crecía sin freno hasta la medianoche siguiente. A 40 msg/s eso
+        # son varios gigabytes antes de la primera limpieza.
+        #
+        # La base es un colchón de tránsito: recibe, despacha y suelta. Lo que
+        # ya salió hacia RC vive en los respaldos JSONL, no acá.
+        horas_retencion = obtener_parametros_rc()["retencion_horas"]
+        corte = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=horas_retencion)
+
+        # Los registros a eliminar, en streaming para no cargar todo en memoria
         query = db.query(NormalizedRCEvent).filter(
             NormalizedRCEvent.status.in_(["sent", "failed"]),
-            NormalizedRCEvent.created_at < today_start
+            NormalizedRCEvent.created_at < corte
         )
         
         # Guardar en JSONL de a bloques
@@ -901,8 +915,11 @@ async def purge_provider_events(provider: str, env: str):
         
         if deleted_count > 0:
             # DELETE + COMMIT bloqueante — se despacha al ThreadPool
-            await asyncio.to_thread(_delete_purged_sync, db, today_start)
-            logger.info(f"Purga Automática completada para {provider}_{env}: {deleted_count} respaldados y eliminados.")
+            await asyncio.to_thread(_delete_purged_sync, db, corte)
+            logger.info(
+                f"Purga automática de {provider}_{env}: {deleted_count} evento(s) "
+                f"con más de {horas_retencion}h respaldados en JSONL y eliminados de la base."
+            )
             
         # Limpieza automatica > X dias
         def clean_old_files():
@@ -1045,7 +1062,7 @@ def _get_rc_credentials_sync(provider: str, env: str):
 _PURGE_CHUNK_SIZE = 5000
 
 
-def _delete_purged_sync(db_session, today_start):
+def _delete_purged_sync(db_session, corte):
     """
     Elimina en tandas los eventos ya despachados de días anteriores.
 
@@ -1063,7 +1080,7 @@ def _delete_purged_sync(db_session, today_start):
             for fila in db_session.query(NormalizedRCEvent.id)
             .filter(
                 NormalizedRCEvent.status.in_(["sent", "failed"]),
-                NormalizedRCEvent.created_at < today_start,
+                NormalizedRCEvent.created_at < corte,
             )
             .limit(_PURGE_CHUNK_SIZE)
             .all()

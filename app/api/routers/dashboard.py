@@ -39,7 +39,16 @@ def record_push_latency(provider: str, latency: float):
 def get_push_stats(provider_key: str | None = None) -> dict:
     """Calcula avg_ms, compliance_pct y count para el provider dado (o todos)."""
     if provider_key and provider_key.lower() != 'all':
-        samples = list(push_latency_store.get(provider_key.lower(), []))
+        # Las claves son "proveedor:entorno". Consultar solo por proveedor
+        # agrega sus entornos; con ":" filtra uno solo.
+        buscado = provider_key.lower()
+        if ":" in buscado:
+            samples = list(push_latency_store.get(buscado, []))
+        else:
+            samples = [
+                s for clave, q in push_latency_store.items()
+                if clave.split(":")[0] == buscado for s in q
+            ]
     else:
         samples = [s for q in push_latency_store.values() for s in q]
     if not samples:
@@ -579,8 +588,16 @@ def _tamano_db_mb(ruta: str) -> float:
 def _vacuum_db(ruta: str, provider: str, env: str) -> float:
     """
     Compacta el archivo para devolver al sistema el espacio de las filas
-    borradas. Bloquea la base mientras corre, por eso se ejecuta en un hilo
-    aparte y solo tras una purga manual, nunca en el ciclo automático.
+    borradas.
+
+    VACUUM necesita acceso exclusivo, y con tráfico continuo ese momento no
+    llega nunca: la conexión fallaba de inmediato con "database is locked"
+    porque se abría sin timeout. Ahora espera un rato a que el archivo quede
+    libre, y si no lo consigue recurre a la compactación incremental, que no
+    exige exclusividad aunque libere menos de una vez.
+
+    Que falle no invalida la purga: el borrado ya ocurrió y el espacio queda
+    disponible para reutilizarse dentro del mismo archivo.
     """
     import sqlite3
 
@@ -588,18 +605,32 @@ def _vacuum_db(ruta: str, provider: str, env: str) -> float:
         return 0.0
 
     antes = _tamano_db_mb(ruta)
-    conn = sqlite3.connect(ruta)
+    conn = None
     try:
-        # Con WAL activo, los cambios viven en el archivo -wal hasta que se
-        # fusionan. Sin este checkpoint el VACUUM compacta el .db pero el -wal
-        # queda intacto, y el espacio total en disco no baja (puede incluso
-        # subir, porque el contenido termina duplicado en ambos archivos).
-        conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-        conn.execute("VACUUM")
-        conn.commit()
-        conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        # 30 s de espera antes de rendirse: suficiente para colarse entre los
+        # lotes de escritura sin bloquear la petición del panel demasiado.
+        conn = sqlite3.connect(ruta, timeout=30.0)
+        conn.execute("PRAGMA busy_timeout=30000")
+        try:
+            conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            conn.execute("VACUUM")
+            conn.commit()
+            conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        except sqlite3.OperationalError as e:
+            if "locked" not in str(e).lower():
+                raise
+            # Sin exclusividad: se compacta de a poco, sin bloquear a nadie.
+            logger.info(
+                f"[{provider}-{env}] La base está en uso; se compacta de forma "
+                f"incremental en lugar de esperar a que quede libre."
+            )
+            conn.execute("PRAGMA auto_vacuum=INCREMENTAL")
+            conn.execute("PRAGMA incremental_vacuum")
+            conn.commit()
+            conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
     finally:
-        conn.close()
+        if conn is not None:
+            conn.close()
 
     liberado = antes - _tamano_db_mb(ruta)
     if liberado > 0.01:
@@ -630,3 +661,20 @@ async def logs_level_set(
         return set_runtime_level(level, libs)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.get("/api/metrics/queue-wait")
+async def queue_wait(_=Depends(verify_dashboard_auth)):
+    """
+    Espera en la cola de ingesta: el tiempo entre recibir un evento y guardarlo.
+
+    Es lo que revela si el consumidor sigue el ritmo. El tiempo de respuesta del
+    endpoint no sirve para eso: responde apenas encola.
+    """
+    from app.core.queue_metrics import obtener_estadisticas
+    from app.core.auth_alerts import resumen_actual
+
+    return {
+        "schmitz": obtener_estadisticas("schmitz"),
+        "rechazos_auth": resumen_actual(),
+    }

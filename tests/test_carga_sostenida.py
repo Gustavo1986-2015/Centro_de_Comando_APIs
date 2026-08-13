@@ -250,3 +250,107 @@ def test_la_purga_nunca_toca_pendientes_ni_en_proceso(tmp_path):
     assert borrados == 0
     assert db.query(NormalizedRCEvent).count() == 3
     db.close()
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Retención por antigüedad
+# ═══════════════════════════════════════════════════════════════════
+# La base es un espacio de tránsito: recibe, despacha y libera. Antes se
+# purgaba lo anterior al inicio del día calendario, así que durante una jornada
+# completa de tráfico no se eliminaba nada y la tabla crecía sin freno hasta la
+# medianoche siguiente. A 40 msg/s eso son varios gigabytes.
+
+def test_la_purga_no_depende_del_dia_calendario():
+    """
+    REGRESIÓN: con el corte en el inicio del día, una corrida de 24 horas no
+    purgaba un solo evento.
+    """
+    import inspect
+    from app.worker import processor
+
+    fuente = inspect.getsource(processor.purge_provider_events)
+    assert "today_start" not in fuente, (
+        "La purga sigue usando el inicio del día en lugar de la antigüedad"
+    )
+    assert "retencion_horas" in fuente
+
+
+def test_la_retencion_es_configurable():
+    from app.worker.processor import obtener_parametros_rc
+
+    valor = obtener_parametros_rc()["retencion_horas"]
+    assert 1 <= valor <= 72
+
+
+def test_solo_se_purga_lo_ya_despachado(tmp_path):
+    """
+    Un evento pendiente o en proceso no salió todavía: purgarlo sería perderlo.
+    """
+    from datetime import datetime, timezone, timedelta
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+    from app.models.db_models import Base, NormalizedRCEvent
+    from app.worker.processor import _delete_purged_sync
+
+    engine = create_engine(f"sqlite:///{tmp_path}/t.db")
+    Base.metadata.create_all(engine, tables=[NormalizedRCEvent.__table__])
+    db = sessionmaker(bind=engine)()
+
+    viejo = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=5)
+    for estado in ("sent", "failed", "pending", "processing", "retry"):
+        db.add(NormalizedRCEvent(
+            provider="p", status=estado, chassis_number=estado,
+            latitude=1.0, longitude=2.0, speed=0, code="1",
+            created_at=viejo, date=viejo,
+        ))
+    db.commit()
+
+    corte = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=2)
+    borrados = _delete_purged_sync(db, corte)
+
+    assert borrados == 2      # solo sent y failed
+    restantes = {e.status for e in db.query(NormalizedRCEvent).all()}
+    assert restantes == {"pending", "processing", "retry"}
+    db.close()
+
+
+def test_un_evento_reciente_no_se_purga(tmp_path):
+    """La ventana debe respetarse: lo despachado hace un rato sigue visible."""
+    from datetime import datetime, timezone, timedelta
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+    from app.models.db_models import Base, NormalizedRCEvent
+    from app.worker.processor import _delete_purged_sync
+
+    engine = create_engine(f"sqlite:///{tmp_path}/t2.db")
+    Base.metadata.create_all(engine, tables=[NormalizedRCEvent.__table__])
+    db = sessionmaker(bind=engine)()
+
+    ahora = datetime.now(timezone.utc).replace(tzinfo=None)
+    db.add(NormalizedRCEvent(
+        provider="p", status="sent", chassis_number="RECIENTE",
+        latitude=1.0, longitude=2.0, speed=0, code="1",
+        created_at=ahora - timedelta(minutes=30), date=ahora,
+    ))
+    db.commit()
+
+    corte = ahora - timedelta(hours=2)
+    assert _delete_purged_sync(db, corte) == 0
+    db.close()
+
+
+def test_la_compactacion_tolera_la_base_en_uso(tmp_path):
+    """
+    REGRESIÓN: la conexión del VACUUM se abría sin timeout y fallaba de
+    inmediato con "database is locked". Con tráfico continuo, el momento de
+    exclusividad no llega nunca y la purga manual nunca compactaba.
+    """
+    import inspect
+    from app.api.routers import dashboard
+
+    fuente = inspect.getsource(dashboard._vacuum_db)
+    assert "timeout=30" in fuente, "La conexión del VACUUM necesita timeout"
+    assert "busy_timeout" in fuente
+    assert "incremental_vacuum" in fuente, (
+        "Sin alternativa incremental, una base ocupada nunca se compacta"
+    )

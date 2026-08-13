@@ -93,7 +93,10 @@ async def measure_push_latency(request: Request, call_next):
                 provider = parts[0]
                 
         if provider:
-            record_push_latency(provider, process_time)
+            # Separado por entorno: agrupar test y prod bajo la misma clave
+            # mezclaba tráfico de prueba con el real.
+            entorno = (request.query_params.get("env") or "prod").lower()
+            record_push_latency(f"{provider}:{entorno}", process_time)
             
     return response
 

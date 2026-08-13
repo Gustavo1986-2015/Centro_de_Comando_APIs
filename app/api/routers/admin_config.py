@@ -1,3 +1,4 @@
+import re
 import os
 import json
 import logging
@@ -463,6 +464,7 @@ class ComportamientoRCModel(BaseModel):
     rc_max_reintentos: int
     rc_fallos_circuito: int
     rc_recuperacion_umbral_seg: int = 600
+    retencion_horas_db: int = 2
 
 
 @router.get("/api/config/rc-behavior")
@@ -477,6 +479,7 @@ def get_rc_behavior(_auth: HTTPBasicCredentials = Depends(verify_dashboard_auth)
             "rc_max_reintentos": getattr(cfg, "rc_max_reintentos", None) or 4,
             "rc_fallos_circuito": getattr(cfg, "rc_fallos_circuito", None) or 5,
             "rc_recuperacion_umbral_seg": getattr(cfg, "rc_recuperacion_umbral_seg", None) or 600,
+            "retencion_horas_db": getattr(cfg, "retencion_horas_db", None) or 2,
         }
     finally:
         db.close()
@@ -523,12 +526,21 @@ def update_rc_behavior(
             ),
         )
 
+    # Un valor muy bajo dejaría sin margen para diagnosticar un incidente
+    # reciente; uno muy alto convierte el colchón en un archivo histórico.
+    if not (1 <= body.retencion_horas_db <= 72):
+        raise HTTPException(
+            status_code=400,
+            detail="La retención en base debe estar entre 1 y 72 horas.",
+        )
+
     db = get_session("system_config", "global")
     try:
         cfg = db.query(SystemSettings).first()
         if not cfg:
             raise HTTPException(status_code=500, detail="Configuración no encontrada")
 
+        cfg.retencion_horas_db = body.retencion_horas_db
         cfg.rc_liberacion_tanda = body.rc_liberacion_tanda
         cfg.rc_max_reintentos = body.rc_max_reintentos
         cfg.rc_fallos_circuito = body.rc_fallos_circuito
@@ -553,3 +565,128 @@ def update_rc_behavior(
         return {"ok": True, "message": "Comportamiento ante fallas actualizado"}
     finally:
         db.close()
+
+
+# ─── Revelar la API key de un proveedor ─────────────────────────────────────
+
+class RevelarClaveModel(BaseModel):
+    """Pedido para ver una clave guardada. Exige revalidar la contraseña."""
+    provider_name: str
+    env: str
+    password: str
+
+
+@router.post("/api/config/reveal-key")
+def revelar_api_key(
+    body: RevelarClaveModel,
+    request: Request,
+    _auth: HTTPBasicCredentials = Depends(verify_dashboard_auth),
+):
+    """
+    Devuelve en claro la API key de un webhook, previa revalidación.
+
+    Las claves se guardan cifradas y el panel solo mostraba puntos, así que la
+    única forma de verificar una era probarla contra el endpoint. Eso hizo
+    perder tiempo diagnosticando rechazos que en realidad eran un desajuste
+    entre lo cargado acá y lo que enviaba el proveedor.
+
+    Se pide la contraseña de administrador de nuevo —no alcanza con la sesión—
+    y queda registrado quién la consultó: ver una credencial es una operación
+    sensible aunque sea la propia.
+    """
+    esperada = get_dashboard_password()
+    if not esperada or not secrets.compare_digest(body.password, esperada):
+        logger.warning(
+            f"Intento fallido de revelar la API key de {body.provider_name}/{body.env} "
+            f"por parte de '{_auth.username}': contraseña incorrecta."
+        )
+        raise HTTPException(status_code=403, detail="Contraseña incorrecta.")
+
+    db = get_session("system_config", "global")
+    try:
+        cfg = db.query(ProviderConfig).filter_by(
+            provider_name=body.provider_name.lower(), env=body.env.lower()
+        ).first()
+
+        if not cfg:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No hay configuración para {body.provider_name}/{body.env}.",
+            )
+        if not cfg.webhook_auth_secret_enc:
+            return {
+                "provider": body.provider_name,
+                "env": body.env,
+                "configurada": False,
+                "api_key": None,
+                "header": cfg.webhook_auth_header or "x-api-key",
+            }
+
+        clave = decrypt(cfg.webhook_auth_secret_enc)
+        if not clave:
+            raise HTTPException(
+                status_code=500,
+                detail=(
+                    "La clave está guardada pero no se pudo descifrar. "
+                    "Suele indicar que MASTER_ENC_KEY cambió."
+                ),
+            )
+
+        logger.warning(
+            f"API key de {body.provider_name}/{body.env} revelada en el panel "
+            f"por '{_auth.username}'."
+        )
+        return {
+            "provider": body.provider_name,
+            "env": body.env,
+            "configurada": True,
+            "api_key": clave,
+            "header": cfg.webhook_auth_header or "x-api-key",
+        }
+    finally:
+        db.close()
+
+
+# ─── Renovar el token de un proveedor PULL ──────────────────────────────────
+
+@router.post("/api/config/refresh-token/{provider}/{env}")
+def renovar_token_proveedor(
+    provider: str,
+    env: str,
+    request: Request,
+    _auth: HTTPBasicCredentials = Depends(verify_dashboard_auth),
+):
+    """
+    Descarta el token cacheado para que el próximo ciclo pida uno nuevo.
+
+    Sirve cuando el proveedor invalida el token por su lado —por ejemplo,
+    porque otra sesión pidió uno nuevo— y el hub sigue usando el viejo hasta
+    que expire. Sin esto había que esperar o reiniciar el servicio.
+
+    No solicita el token en el momento: eso ocurre en el próximo ciclo del
+    worker, con el manejo de errores y reintentos que ya tiene.
+    """
+    if not re.match(r"^[a-zA-Z0-9_]+$", provider) or not re.match(r"^[a-zA-Z0-9_]+$", env):
+        raise HTTPException(status_code=400, detail="Proveedor o entorno inválido.")
+
+    try:
+        from app.worker.pull_engine import invalidar_token_cacheado
+
+        habia = invalidar_token_cacheado(provider, env)
+    except Exception as e:
+        logger.error(f"No se pudo invalidar el token de {provider}/{env}: {e}")
+        raise HTTPException(status_code=500, detail=f"Error al invalidar el token: {e}")
+
+    logger.info(
+        f"Token de {provider}/{env} invalidado manualmente desde el panel por "
+        f"'{_auth.username}'. Se solicitará uno nuevo en el próximo ciclo."
+    )
+    return {
+        "ok": True,
+        "habia_token": habia,
+        "message": (
+            "Token descartado. Se pedirá uno nuevo en el próximo ciclo de consulta."
+            if habia else
+            "No había ningún token guardado; el próximo ciclo pedirá uno igual."
+        ),
+    }

@@ -1664,3 +1664,113 @@ body.compact-mode .mock-banner { padding: 0.5rem 0.9rem; font-size: 0.78rem; }
     color: var(--color-gray-label);
 }
 .dict-nota-pull strong { color: var(--color-text); }
+
+/* ── Dónde encontrar los datos ───────────────────────────────────────────────
+   La base es tránsito y el histórico son archivos. Sin decirlo en algún lado,
+   quien busca un evento de ayer asume que se perdió. */
+.donde-intro {
+    font-size: 0.82rem;
+    color: var(--color-gray-label);
+    margin: 0.7rem 0 1.4rem;
+    line-height: 1.6;
+}
+.donde-intro strong { color: var(--color-text); }
+
+.donde-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    gap: 1.2rem;
+}
+.donde-card {
+    background: var(--level-1);
+    border: 1px solid var(--card-border);
+    border-radius: 10px;
+    padding: 1.1rem 1.2rem;
+}
+.donde-card h3 {
+    margin: 0.6rem 0 0.5rem;
+    font-size: 0.92rem;
+    color: var(--color-text);
+}
+.donde-card p {
+    margin: 0 0 0.9rem;
+    font-size: 0.78rem;
+    line-height: 1.6;
+    color: var(--color-gray-label);
+}
+.donde-card em { font-style: normal; color: var(--color-text); }
+.donde-card code {
+    display: block;
+    background: var(--level-0);
+    border: 1px solid var(--card-border);
+    border-radius: 6px;
+    padding: 0.6rem 0.75rem;
+    font-size: 0.71rem;
+    color: var(--color-green-bright);
+    word-break: break-all;
+    line-height: 1.5;
+}
+.donde-nota {
+    margin-top: 0.7rem;
+    font-size: 0.72rem;
+    color: var(--color-gray);
+    line-height: 1.5;
+}
+.donde-nota strong { color: var(--color-yellow); }
+
+.donde-tag {
+    display: inline-block;
+    font-size: 0.62rem;
+    font-weight: 700;
+    letter-spacing: 0.6px;
+    padding: 3px 9px;
+    border-radius: 4px;
+}
+.donde-tag.crudo {
+    background: rgba(139, 92, 246, 0.14);
+    color: #a78bfa;
+    border: 1px solid rgba(139, 92, 246, 0.3);
+}
+.donde-tag.despachado {
+    background: rgba(0, 255, 102, 0.1);
+    color: var(--color-green-bright);
+    border: 1px solid rgba(0, 255, 102, 0.25);
+}
+.donde-tag.transito {
+    background: rgba(234, 179, 8, 0.12);
+    color: var(--color-yellow);
+    border: 1px solid rgba(234, 179, 8, 0.28);
+}
+
+/* Ver la clave guardada y renovar el token: operaciones puntuales de
+   diagnóstico, discretas hasta que se las necesita. */
+.btn-ver-clave {
+    background: transparent;
+    border: 1px solid var(--card-border);
+    color: var(--color-gray-label);
+    border-radius: 5px;
+    padding: 5px 8px;
+    font-size: 0.8rem;
+    cursor: pointer;
+    flex-shrink: 0;
+    transition: color 0.2s, border-color 0.2s;
+}
+.btn-ver-clave:hover {
+    color: var(--color-yellow);
+    border-color: var(--color-yellow);
+}
+
+.btn-renovar-token {
+    background: rgba(59, 130, 246, 0.1);
+    border: 1px solid rgba(59, 130, 246, 0.35);
+    color: #93c5fd;
+    border-radius: 5px;
+    padding: 4px 9px;
+    font-size: 0.7rem;
+    font-weight: 600;
+    cursor: pointer;
+    margin-bottom: 4px;
+    white-space: nowrap;
+    transition: background 0.2s;
+}
+.btn-renovar-token:hover { background: rgba(59, 130, 246, 0.22); }
