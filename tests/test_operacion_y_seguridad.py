@@ -153,6 +153,71 @@ def test_renovar_token_responde_aunque_no_hubiera_ninguno(cliente, auth):
     assert "message" in r.json()
 
 
+def test_se_descarta_solo_el_token_del_proveedor_pedido():
+    """
+    REGRESIÓN: la función buscaba una columna inexistente (auth_config_enc en
+    lugar de fetch_config_enc), caía siempre en el camino de emergencia y
+    vaciaba el caché completo. Con varios proveedores PULL, renovar el token de
+    uno descartaría los de todos.
+    """
+    from unittest.mock import MagicMock, patch
+    import app.worker.pull_engine as pe
+
+    pe._TOKEN_CACHE.clear()
+    pe._TOKEN_CACHE["http://api.protrack365.com|prueba.maersk"] = {"token": "A", "expires_at": 9e12}
+    pe._TOKEN_CACHE["http://api.otro.com|otro"] = {"token": "B", "expires_at": 9e12}
+
+    db = MagicMock()
+    db.query.return_value.filter_by.return_value.first.return_value = MagicMock()
+
+    with patch("app.database.get_session", return_value=db), \
+         patch.object(pe, "_load_fetch_config", return_value={
+             "url": "http://api.protrack365.com/api/track",
+             "auth_user": "prueba.maersk",
+         }):
+        assert pe.invalidar_token_cacheado("protrack", "test") is True
+
+    assert "http://api.protrack365.com|prueba.maersk" not in pe._TOKEN_CACHE
+    assert "http://api.otro.com|otro" in pe._TOKEN_CACHE, (
+        "Se descartó el token de otro proveedor"
+    )
+    pe._TOKEN_CACHE.clear()
+
+
+def test_la_clave_del_cache_se_arma_igual_que_al_pedir_el_token():
+    """
+    Si la clave no coincidiera con la que usa _get_protrack_token, la
+    invalidación no encontraría nada y fallaría en silencio.
+    """
+    import inspect
+    import app.worker.pull_engine as pe
+
+    al_pedir = inspect.getsource(pe._get_protrack_token)
+    al_invalidar = inspect.getsource(pe.invalidar_token_cacheado)
+
+    assert 'f"{base_url}|{account}"' in al_pedir
+    assert 'f"{base_url}|{usuario}"' in al_invalidar
+
+
+def test_sin_configuracion_de_extraccion_no_descarta_nada():
+    """Un proveedor sin URL o usuario no tiene token asociado."""
+    from unittest.mock import MagicMock, patch
+    import app.worker.pull_engine as pe
+
+    pe._TOKEN_CACHE.clear()
+    pe._TOKEN_CACHE["http://x|y"] = {"token": "Z", "expires_at": 9e12}
+
+    db = MagicMock()
+    db.query.return_value.filter_by.return_value.first.return_value = MagicMock()
+
+    with patch("app.database.get_session", return_value=db), \
+         patch.object(pe, "_load_fetch_config", return_value={}):
+        assert pe.invalidar_token_cacheado("protrack", "test") is False
+
+    assert "http://x|y" in pe._TOKEN_CACHE
+    pe._TOKEN_CACHE.clear()
+
+
 def test_la_renovacion_no_pide_el_token_en_el_momento():
     """
     Solo descarta el guardado: solicitarlo es tarea del ciclo del worker, que

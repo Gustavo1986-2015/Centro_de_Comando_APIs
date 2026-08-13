@@ -189,56 +189,64 @@ def invalidar_token_cacheado(provider: str, env: str) -> bool:
     nuevo, se rotaron credenciales— y el hub seguiría usando el viejo hasta que
     expire, fallando en cada ciclo mientras tanto.
 
-    El caché se indexa por (URL de autenticación, cuenta), no por proveedor, así
-    que hay que resolver esos datos desde la configuración. Si no se pueden
-    leer, se descartan todas las entradas de ese proveedor por prefijo: es
-    preferible pedir un token de más que dejar uno inválido en uso.
+    El caché se indexa por (base_url, usuario), los mismos valores con que se
+    pidió el token: la URL de extracción reducida a esquema y host, y el
+    auth_user de la configuración. Se reconstruye esa clave para descartar solo
+    la entrada que corresponde.
+
+    Si no se puede leer la configuración, se descarta todo el caché. Es tosco
+    —afecta a los demás proveedores— pero deja el sistema en un estado sano: un
+    token de más se vuelve a pedir, uno inválido en uso hace fallar cada ciclo.
 
     Retorna si había algo que descartar.
     """
+    from urllib.parse import urlparse
+
     from app.database import get_session
     from app.models.config_models import ProviderConfig
-    from app.core.crypto import decrypt
 
-    encontrado = False
     db = get_session("system_config", "global")
     try:
         cfg = db.query(ProviderConfig).filter_by(
             provider_name=provider.lower(), env=env.lower()
         ).first()
         if not cfg:
+            logger.warning(
+                f"[{provider}-{env}] No existe esa integración; no hay token que descartar."
+            )
             return False
 
-        auth_cfg = {}
         try:
-            crudo = decrypt(cfg.auth_config_enc) if cfg.auth_config_enc else None
-            if crudo:
-                auth_cfg = json.loads(crudo)
+            fetch_config = _load_fetch_config(cfg) or {}
         except Exception as e:
             logger.warning(
-                f"[{provider}-{env}] No se pudo leer la configuración de autenticación "
-                f"para ubicar el token: {e}. Se descartan todas sus entradas."
+                f"[{provider}-{env}] No se pudo leer la configuración de extracción "
+                f"para ubicar el token ({e}). Se descarta el caché completo."
             )
+            habia = bool(_TOKEN_CACHE)
+            _TOKEN_CACHE.clear()
+            return habia
 
-        base_url = auth_cfg.get("auth_url") or auth_cfg.get("url") or ""
-        cuenta = auth_cfg.get("account") or auth_cfg.get("user") or ""
+        url = fetch_config.get("url", "")
+        usuario = fetch_config.get("auth_user", "")
 
-        if base_url and cuenta:
-            clave = f"{base_url}|{cuenta}"
-            encontrado = _TOKEN_CACHE.pop(clave, None) is not None
-        else:
-            # Sin los datos exactos, se limpian las entradas cuya URL coincida
-            # con la del proveedor. Un token de más no rompe nada.
-            for clave in [k for k in list(_TOKEN_CACHE) if base_url and k.startswith(base_url)]:
-                _TOKEN_CACHE.pop(clave, None)
-                encontrado = True
-            if not base_url:
-                _TOKEN_CACHE.clear()
-                encontrado = True
+        if not url or not usuario:
+            logger.warning(
+                f"[{provider}-{env}] La configuración no tiene URL o usuario de "
+                f"autenticación; no hay token asociado que descartar."
+            )
+            return False
+
+        partes = urlparse(url)
+        base_url = f"{partes.scheme}://{partes.netloc}"
+        clave = f"{base_url}|{usuario}"
+
+        habia = _TOKEN_CACHE.pop(clave, None) is not None
+        if habia:
+            logger.info(f"[{provider}-{env}] Token descartado para {usuario} en {base_url}.")
+        return habia
     finally:
         db.close()
-
-    return encontrado
 
 
 # Redes internas que, por defecto, no deben ser destino de una consulta
