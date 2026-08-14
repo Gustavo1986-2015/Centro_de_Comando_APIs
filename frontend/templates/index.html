@@ -374,18 +374,28 @@
                     <div class="donde-nota">
                         Un archivo por día. Retención configurable más abajo, en Retención de Logs.
                     </div>
+                    <div class="donde-aviso">
+                        <strong>Cambio en esta versión:</strong> la retención de crudos ahora se
+                        aplica de verdad. Hasta la versión anterior había un error de ruta que
+                        hacía que <em>nunca</em> se borrara nada, así que los crudos se acumulaban
+                        sin límite. Si venías asumiendo que tenías el histórico completo guardado
+                        acá, revisá el valor de retención antes de que corra la primera limpieza:
+                        todo lo anterior a ese plazo se va a eliminar.
+                    </div>
                 </div>
 
                 <div class="donde-card">
                     <div class="donde-tag despachado">DESPACHADO A RC</div>
                     <h3>Lo que se envió y qué respondió RC</h3>
                     <p>
-                        Cada evento purgado de la base, con su identificador de acuse y la
-                        respuesta de Recurso Confiable. Es el respaldo de la trazabilidad completa.
+                        Cada evento purgado de la base, ya normalizado: el tipo de evento
+                        (<code class="inline">code</code>), la fecha del dispositivo, la posición, los sensores,
+                        el identificador de acuse y la respuesta de Recurso Confiable.
                     </p>
                     <code>db/backups_diarios/{proveedor}_{entorno}/{año-mes}/procesados_{fecha}.jsonl</code>
                     <div class="donde-nota">
                         Se escribe antes de borrar de la base: nada se elimina sin respaldar.
+                        No repite el payload crudo — ese vive completo en <code class="inline">audit/</code>.
                     </div>
                 </div>
 
@@ -403,6 +413,93 @@
                     </div>
                 </div>
 
+            </div>
+        </div>
+
+        <!-- Descargas masivas. SEPARADAS de "Descargar Excel" de Última Actividad
+             Global: aquella se arma en el navegador con lo que ya está en la
+             tabla; estas van a los archivos de disco y a la base, por endpoint. -->
+        <div class="recent-section" style="margin-top: 2rem;">
+            <h2>Descargas</h2>
+            <div class="donde-intro">
+                Dos descargas independientes, cada una con su filtro. El rango es obligatorio:
+                un solo día a caudal de certificación puede pesar varios GB.
+            </div>
+
+            <!-- El inventario va ARRIBA de los controles a propósito: al entrar
+                 a bajar algo, primero hay que ver qué hay y desde cuándo, y
+                 recién después elegir el rango. Abajo se elegiría a ciegas. -->
+            <div style="margin-top: 1.5rem;">
+                <h3 style="margin: 0 0 0.5rem 0; font-size: 1rem;">Qué hay guardado en disco</h3>
+                <p style="font-size: 0.8rem; color: #a1a1aa; margin: 0 0 0.75rem 0;">
+                    La fecha más vieja de cada fila es el borde de lo que todavía se puede
+                    rescatar. Más atrás de eso ya lo eliminó la retención.
+                </p>
+                <div id="inventario-contenedor" style="overflow-x: auto;">
+                    <div style="color: #a1a1aa; font-size: 0.85rem;">Calculando…</div>
+                </div>
+            </div>
+
+            <div style="margin-top: 1.5rem; padding-top: 1.5rem; border-top: 1px solid var(--color-gray);">
+                <h3 style="margin: 0 0 0.25rem 0; font-size: 1rem;">Filtro</h3>
+                <p style="font-size: 0.8rem; color: #a1a1aa; margin: 0 0 1rem 0;">
+                    Se aplica a <strong>las dos descargas de abajo</strong>. Elegí acá el proveedor,
+                    el entorno y el rango, y después apretá el botón que corresponda.
+                </p>
+                <div style="display: flex; flex-wrap: wrap; gap: 1rem; align-items: flex-end;">
+                <div>
+                    <label style="font-weight: bold; display: block; margin-bottom: 0.5rem;">Proveedor</label>
+                    <select id="export-provider" onchange="actualizarResumenDescarga()" style="padding: 0.5rem; border-radius: 4px; background: var(--color-gray); color: white; border: none; min-width: 160px;">
+                        <option value="todos">Todos</option>
+                    </select>
+                </div>
+                <div>
+                    <label style="font-weight: bold; display: block; margin-bottom: 0.5rem;">Entorno</label>
+                    <select id="export-env" onchange="actualizarResumenDescarga()" style="padding: 0.5rem; border-radius: 4px; background: var(--color-gray); color: white; border: none; min-width: 120px;">
+                        <option value="todos">Todos</option>
+                    </select>
+                </div>
+                <div>
+                    <label style="font-weight: bold; display: block; margin-bottom: 0.5rem;">Desde</label>
+                    <input type="date" id="export-desde" onchange="actualizarResumenDescarga()" style="padding: 0.5rem; border-radius: 4px; background: var(--color-gray); color: white; border: none;">
+                </div>
+                <div>
+                    <label style="font-weight: bold; display: block; margin-bottom: 0.5rem;">Hasta</label>
+                    <input type="date" id="export-hasta" onchange="actualizarResumenDescarga()" style="padding: 0.5rem; border-radius: 4px; background: var(--color-gray); color: white; border: none;">
+                </div>
+                <div style="align-self: center; font-size: 0.85rem; color: #a1a1aa;">
+                    Máximo <strong id="export-max-dias">7</strong> días por descarga
+                </div>
+                </div>
+            </div>
+
+            <div class="donde-grid" style="margin-top: 1.5rem;">
+                <div class="donde-card">
+                    <div class="donde-tag crudo">CRUDOS DEL AVL</div>
+                    <h3>Tal como los mandó el proveedor</h3>
+                    <p>
+                        El payload original en JSONL, sin transformar ni aplanar. Es lo que sirve
+                        para sentarse con el proveedor y mostrarle exactamente qué envió.
+                    </p>
+                    <button class="btn-save" onclick="descargarCrudos()" style="background: #6366F1; color: white;">
+                        📥 Descargar crudos (JSONL)
+                    </button>
+                    <div id="resumen-crudos" class="resumen-descarga">—</div>
+                </div>
+
+                <div class="donde-card">
+                    <div class="donde-tag despachado">ENVIADO A RC</div>
+                    <h3>Lo que despachó el hub</h3>
+                    <p>
+                        CSV con el evento ya normalizado: <code class="inline">code</code>, fecha del dispositivo,
+                        posición, sensores y el acuse de RC. Une lo que sigue en la base con lo ya
+                        purgado a los respaldos, sin que tengas que ir a dos lados.
+                    </p>
+                    <button class="btn-save" onclick="descargarEnviados()" style="background: #10B981; color: white;">
+                        📥 Descargar enviado a RC (CSV)
+                    </button>
+                    <div id="resumen-enviados" class="resumen-descarga">—</div>
+                </div>
             </div>
         </div>
 
@@ -426,6 +523,16 @@
                             <option value="7">7 días</option>
                             <option value="14">14 días</option>
                             <option value="30">30 días</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label style="font-weight: bold; display: block; margin-bottom: 0.5rem;">Tope por descarga:</label>
+                        <select id="export-max-days-select" style="padding: 0.5rem; border-radius: 4px; background: var(--color-gray); color: white; border: none;">
+                            <option value="1">1 día</option>
+                            <option value="3">3 días</option>
+                            <option value="7">7 días</option>
+                            <option value="14">14 días</option>
+                            <option value="31">31 días</option>
                         </select>
                     </div>
                     <div style="display: flex; align-items: flex-end;">
@@ -662,6 +769,7 @@
                             <option value="DEBUG">Detallado</option>
                         </select>
                     </label>
+                    <button class="btn-save" onclick="descargarConsolaCSV()" style="padding:0.4rem 0.9rem; font-size:0.82rem; background:#10B981; color:white;" title="Descargar en CSV las líneas visibles, con los filtros aplicados">📥 CSV</button>
                     <button class="btn-save" onclick="clearConsole()" style="padding:0.4rem 0.9rem; font-size:0.82rem;">Limpiar</button>
                 </div>
             </div>

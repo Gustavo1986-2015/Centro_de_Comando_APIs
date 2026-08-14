@@ -79,6 +79,7 @@ def check_and_migrate_db():
                     ("rc_fallos_circuito", 5),
                     ("rc_recuperacion_umbral_seg", 600),
                     ("retencion_horas_db", 2),
+                    ("export_max_days", 7),
                 ):
                     if columna not in cols_settings:
                         cursor.execute(

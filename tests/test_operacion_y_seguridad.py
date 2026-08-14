@@ -15,7 +15,6 @@ Dos vienen de necesidades concretas que aparecieron operando el sistema:
 Los otros dos son hallazgos de la auditoría externa (B2, B3).
 """
 import base64
-import os
 
 import pytest
 from fastapi.testclient import TestClient
@@ -23,11 +22,18 @@ from fastapi.testclient import TestClient
 
 @pytest.fixture(scope="module")
 def cliente():
-    os.environ["DASHBOARD_USER"] = "t"
-    os.environ["DASHBOARD_PASSWORD"] = "clave_de_prueba_larga"
-    os.environ["APP_ENV"] = "development"
-    from main import app
-    return TestClient(app)
+    # Las variables se setean con MonkeyPatch y se restauran al terminar el
+    # módulo. Antes se escribían con os.environ directo y quedaban pisadas para
+    # el RESTO de la sesión: cualquier test posterior que usara autenticación
+    # recibía 401 según el orden de ejecución. Ya costó 19 fallos intermitentes.
+    # El contexto se mantiene abierto durante los tests porque
+    # verify_dashboard_auth lee el entorno en cada request, no al importar.
+    with pytest.MonkeyPatch.context() as entorno:
+        entorno.setenv("DASHBOARD_USER", "t")
+        entorno.setenv("DASHBOARD_PASSWORD", "clave_de_prueba_larga")
+        entorno.setenv("APP_ENV", "development")
+        from main import app
+        yield TestClient(app)
 
 
 @pytest.fixture(scope="module")

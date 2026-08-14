@@ -1710,6 +1710,19 @@ body.compact-mode .mock-banner { padding: 0.5rem 0.9rem; font-size: 0.78rem; }
     word-break: break-all;
     line-height: 1.5;
 }
+/* La regla de arriba existe para las RUTAS de archivo, que ocupan el ancho de
+   la tarjeta. Un <code> dentro de un párrafo —el nombre de un campo, por
+   ejemplo— heredaba ese display:block y se dibujaba como un recuadro enorme
+   que partía la frase en tres. Esta variante lo devuelve al flujo del texto. */
+.donde-card code.inline {
+    display: inline;
+    background: rgba(255, 255, 255, 0.06);
+    border: none;
+    border-radius: 3px;
+    padding: 0.05rem 0.3rem;
+    font-size: 0.9em;
+    word-break: normal;
+}
 .donde-nota {
     margin-top: 0.7rem;
     font-size: 0.72rem;
@@ -1717,6 +1730,79 @@ body.compact-mode .mock-banner { padding: 0.5rem 0.9rem; font-size: 0.78rem; }
     line-height: 1.5;
 }
 .donde-nota strong { color: var(--color-yellow); }
+
+/* Aviso de cambio de comportamiento entre versiones. Se distingue de la nota
+   normal a propósito: informa que algo que antes NO pasaba ahora sí pasa, y
+   alguien podría estar asumiendo lo contrario. */
+.donde-aviso {
+    margin-top: 0.7rem;
+    padding: 0.6rem 0.75rem;
+    font-size: 0.72rem;
+    line-height: 1.55;
+    color: var(--color-text);
+    background: rgba(234, 179, 8, 0.10);
+    border-left: 3px solid var(--color-yellow);
+    border-radius: 4px;
+}
+.donde-aviso strong { color: var(--color-yellow); }
+.donde-aviso em { font-style: normal; color: var(--color-yellow); }
+
+/* Inventario de datos en disco, en la sección de Descargas. */
+.inventario-tabla {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.78rem;
+}
+.inventario-tabla th,
+.inventario-tabla td {
+    padding: 0.45rem 0.7rem;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+}
+.inventario-tabla thead th {
+    font-size: 0.68rem;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--color-gray-label, #a1a1aa);
+    text-align: left;
+    font-weight: 700;
+    white-space: nowrap;
+}
+/* Las cabeceras de DÍAS y TAMAÑO iban a la izquierda mientras sus valores iban
+   a la derecha: el título quedaba lejos del número y la tabla no se leía.
+   Ambos comparten la clase, así no se pueden volver a desalinear por separado. */
+.inventario-tabla th.num,
+.inventario-tabla td.num {
+    text-align: right;
+    white-space: nowrap;
+    width: 1%;              /* se encoge al contenido */
+    padding-left: 1.2rem;
+}
+/* El rango absorbe el sobrante; sin esto empujaba a las numéricas contra el
+   borde y separaba cada grupo de su encabezado. */
+.inventario-tabla td.rango,
+.inventario-tabla th.rango { white-space: nowrap; width: auto; }
+.inventario-tabla td.vacio { color: #6b7280; font-style: italic; }
+/* Separador entre los dos grupos de columnas, para no leer el tamaño de los
+   crudos como si fuera el rango de los enviados. */
+.inventario-tabla th.sep,
+.inventario-tabla td.sep { border-left: 1px solid rgba(255, 255, 255, 0.10); }
+.inventario-tabla thead th.grupo-crudos,
+.inventario-tabla thead th.grupo-enviados {
+    text-align: center;
+    border-bottom: 2px solid transparent;
+}
+.inventario-tabla thead th.grupo-crudos   { border-bottom-color: #6366F1; color: #a5b4fc; }
+.inventario-tabla thead th.grupo-enviados { border-bottom-color: #10B981; color: #6ee7b7; }
+.inventario-tabla tbody tr:last-child td { border-bottom: none; }
+.inventario-tabla tbody tr:hover { background: rgba(255, 255, 255, 0.03); }
+
+/* Línea bajo cada botón de descarga con el filtro vigente. */
+.resumen-descarga {
+    margin-top: 0.6rem;
+    font-size: 0.72rem;
+    color: var(--color-gray-label, #a1a1aa);
+    line-height: 1.4;
+}
 
 .donde-tag {
     display: inline-block;

@@ -76,3 +76,8 @@ class SystemSettings(Base):
     # Horas que un evento ya despachado permanece en la base antes de purgarse.
     # La base es un colchón de tránsito: lo purgado queda en los respaldos JSONL.
     retencion_horas_db = Column(Integer, default=2)
+
+    # Tope de días por descarga en las exportaciones de crudos y enviado-a-RC.
+    # Un solo día de crudos a caudal de certificación son ~2 GB: sin techo, el
+    # primer clic se lleva puesto el navegador. Se frena con un 400 explícito.
+    export_max_days = Column(Integer, default=7)
