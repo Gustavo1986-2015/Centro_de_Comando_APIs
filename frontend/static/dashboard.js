@@ -777,6 +777,8 @@
                 loadRetentionConfig();
                 loadDbStats();
                 cargarComportamientoRC();
+                cargarOpcionesDeExportacion();
+                cargarInventarioDeDatos();
             } else if (view === 'simulator') {
                 loadSimulator();
             } else if (view === 'history') {
@@ -1860,21 +1862,29 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
             }
         }
 
-        function renderConsole() {
-            const cont = document.getElementById('console-output');
-            if (!cont) return;
-
+        // Las líneas que la consola está mostrando ahora mismo, con los filtros
+        // de nivel y texto ya aplicados. La comparten renderConsole() y la
+        // descarga CSV: si el CSV recalculara el filtro por su cuenta, bajarías
+        // algo distinto de lo que estás viendo en pantalla.
+        function _lineasVisiblesConsola() {
             const filtro = (document.getElementById('console-filter')?.value || '').toLowerCase();
             const nivel  = document.getElementById('console-level')?.value || 'ALL';
             const minimo = nivel === 'ALL' ? -1 : (_LEVEL_RANK[nivel] ?? -1);
 
-            // El historial ya viene filtrado por nivel desde el servidor; este
-            // filtro cubre las líneas nuevas que llegan por el stream en vivo.
-            const visibles = _consoleLines.filter(l => {
+            return _consoleLines.filter(l => {
                 if (minimo >= 0 && (_LEVEL_RANK[l.level] ?? 1) < minimo) return false;
                 if (filtro && !(`${l.message} ${l.logger}`.toLowerCase().includes(filtro))) return false;
                 return true;
             });
+        }
+
+        function renderConsole() {
+            const cont = document.getElementById('console-output');
+            if (!cont) return;
+
+            // El historial ya viene filtrado por nivel desde el servidor; este
+            // filtro cubre las líneas nuevas que llegan por el stream en vivo.
+            const visibles = _lineasVisiblesConsola();
 
             cont.innerHTML = visibles.map(l => {
                 const hora = (l.time || '').split('T')[1]?.split(/[-+]/)[0] || l.time || '';
@@ -1907,6 +1917,42 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
         function clearConsole() {
             _consoleLines = [];
             renderConsole();
+        }
+
+        // CSV de lo que la consola está mostrando. Se arma en el navegador —a
+        // diferencia de las descargas de crudos y enviados, que van a disco—
+        // porque las líneas ya están todas acá y el tope es de 1000.
+        function descargarConsolaCSV() {
+            const visibles = _lineasVisiblesConsola();
+            if (!visibles.length) {
+                alert('No hay líneas para descargar con los filtros actuales.');
+                return;
+            }
+
+            // Excel interpreta como fórmula cualquier celda que arranque con
+            // = + - @, y un log puede contener cualquier cosa. Se prefija un
+            // apóstrofo para neutralizarlo sin alterar el texto legible.
+            const escapar = (valor) => {
+                let txt = String(valor ?? '');
+                if (/^[=+\-@]/.test(txt)) txt = "'" + txt;
+                return '"' + txt.replace(/"/g, '""') + '"';
+            };
+
+            const filas = [['fecha_hora', 'nivel', 'origen', 'mensaje'].join(';')];
+            for (const l of visibles) {
+                filas.push([l.time, l.level || 'INFO', l.logger || '', l.message || '']
+                    .map(escapar).join(';'));
+            }
+
+            const marca = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+            const blob = new Blob(['\uFEFF' + filas.join('\n')], { type: 'text/csv;charset=utf-8;' });
+            const link = document.createElement('a');
+            link.href = URL.createObjectURL(blob);
+            link.download = `consola_logs_${marca}.csv`;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            URL.revokeObjectURL(link.href);
         }
 
         // Al cambiar el nivel se recarga desde el servidor: el filtro del lado del
@@ -2976,6 +3022,8 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
                     document.getElementById('audit-retention-select').value = data.audit_retention_days || 30;
                     document.getElementById('processed-retention-select').value = data.processed_retention_days || 30;
                     document.getElementById('processed-logs-toggle').checked = data.processed_logs_enabled;
+                    const tope = document.getElementById('export-max-days-select');
+                    if (tope) tope.value = data.export_max_days || 7;
                 }
             } catch(e) { console.error("Error loading retention config", e); }
         }
@@ -2983,14 +3031,21 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
         async function saveRetentionConfig() {
             const audit_days = parseInt(document.getElementById('audit-retention-select').value);
             const processed_days = parseInt(document.getElementById('processed-retention-select').value);
+            const export_days = parseInt(document.getElementById('export-max-days-select')?.value || '7');
             try {
                 const res = await fetch('/api/config/retention', {
                     method: 'PUT',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ audit_retention_days: audit_days, processed_retention_days: processed_days })
+                    body: JSON.stringify({
+                        audit_retention_days: audit_days,
+                        processed_retention_days: processed_days,
+                        export_max_days: export_days
+                    })
                 });
                 if(res.ok) {
                     alert('Retención actualizada correctamente');
+                    cargarOpcionesDeExportacion();
+                    cargarInventarioDeDatos();
                 } else {
                     const err = await res.json();
                     alert('Error: ' + err.detail);
@@ -2999,6 +3054,193 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
                 alert('Error de conexión al guardar retención');
             }
         }
+
+        // ─── Descargas masivas (crudos y enviado a RC) ───────────────────────
+        // Van por endpoint, no por el DOM: los datos viven en archivos de disco
+        // y en la base, y un solo día puede pesar varios GB.
+
+        // ─── Inventario de datos en disco ───────────────────────────────────
+        // Se muestra arriba de los controles de descarga: la pregunta útil es
+        // "¿qué tengo y desde cuándo?", no "¿qué está por vencer?". Lo segundo
+        // depende de mirar el panel en el momento justo; esto se contesta
+        // siempre. El backend cachea 60 s, así que pedirlo al abrir la vista
+        // no cuesta un recorrido de disco cada vez.
+
+        function _formatearBytes(bytes) {
+            if (!bytes) return '0 B';
+            const unidades = ['B', 'KB', 'MB', 'GB', 'TB'];
+            const i = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), unidades.length - 1);
+            const valor = bytes / Math.pow(1024, i);
+            return `${valor.toFixed(valor >= 100 || i === 0 ? 0 : 1)} ${unidades[i]}`;
+        }
+
+        function _celdaInventario(parte, primeraDelGrupo) {
+            const sep = primeraDelGrupo ? ' sep' : '';
+            if (!parte) {
+                return `<td class="vacio${sep}">sin datos</td>
+                        <td class="num">—</td>
+                        <td class="num">—</td>`;
+            }
+            // Días con datos vs rango calendario. Cuando no coinciden hay
+            // faltantes en el medio: un corte de ingesta, un proveedor que dejó
+            // de mandar. Verlo acá evita pedir un rango y creer que salió vacío
+            // por un error de la descarga.
+            const huecos = parte.dias_rango > parte.dias_con_datos;
+            const dias = huecos
+                ? `<span style="color: var(--color-yellow);" title="Faltan ${parte.dias_rango - parte.dias_con_datos} día(s) sin datos dentro del rango">${parte.dias_con_datos} de ${parte.dias_rango}</span>`
+                : `${parte.dias_con_datos}`;
+            return `<td class="rango${sep}">${parte.desde} → ${parte.hasta}</td>
+                    <td class="num">${dias}</td>
+                    <td class="num">${_formatearBytes(parte.bytes)}</td>`;
+        }
+
+        async function cargarInventarioDeDatos() {
+            const cont = document.getElementById('inventario-contenedor');
+            if (!cont) return;
+            try {
+                const res = await fetch('/api/export/inventario');
+                if (!res.ok) throw new Error('respuesta ' + res.status);
+                const data = await res.json();
+
+                if (!data.filas.length) {
+                    cont.innerHTML = '<div style="color:#a1a1aa; font-size:0.85rem;">Todavía no hay archivos guardados en disco.</div>';
+                    return;
+                }
+
+                const filas = data.filas.map(f => `
+                    <tr>
+                        <td style="font-weight:600; white-space:nowrap;">${f.provider.toUpperCase()} / ${f.env.toUpperCase()}</td>
+                        ${_celdaInventario(f.crudos, true)}
+                        ${_celdaInventario(f.enviados, true)}
+                    </tr>`).join('');
+
+                cont.innerHTML = `
+                    <table class="inventario-tabla">
+                        <thead>
+                            <tr>
+                                <th rowspan="2">Proveedor / Entorno</th>
+                                <th colspan="3" class="grupo-crudos sep">Crudos del AVL</th>
+                                <th colspan="3" class="grupo-enviados sep">Enviado a RC</th>
+                            </tr>
+                            <tr>
+                                <th class="rango sep">Rango</th><th class="num">Días</th><th class="num">Tamaño</th>
+                                <th class="rango sep">Rango</th><th class="num">Días</th><th class="num">Tamaño</th>
+                            </tr>
+                        </thead>
+                        <tbody>${filas}</tbody>
+                    </table>
+                    <div style="font-size:0.72rem; color:#6b7280; margin-top:0.5rem;">
+                        Retención vigente: crudos ${data.audit_retention_days} días ·
+                        enviado a RC ${data.processed_retention_days} días.
+                        Calculado ${data.calculado.replace('T', ' ')} (se actualiza cada 60 s).
+                    </div>`;
+            } catch (e) {
+                cont.innerHTML = '<div style="color:#a1a1aa; font-size:0.85rem;">No se pudo calcular el inventario.</div>';
+                console.warn('Inventario de datos:', e);
+            }
+        }
+
+        // Refleja bajo cada botón exactamente qué se va a bajar. Los controles
+        // están arriba y separados de las dos tarjetas, así que no era evidente
+        // que aplicaran a ambas: había que apretar y abrir el archivo para
+        // saberlo. Esto lo dice antes.
+        function actualizarResumenDescarga() {
+            const etiqueta = (sel) => {
+                const el = document.getElementById(sel);
+                if (!el) return '—';
+                return el.options[el.selectedIndex]?.text || el.value;
+            };
+            const desde = document.getElementById('export-desde')?.value;
+            const hasta = document.getElementById('export-hasta')?.value;
+
+            let texto;
+            if (!desde || !hasta) {
+                texto = 'Elegí un rango de fechas arriba.';
+            } else {
+                const fechas = desde === hasta
+                    ? desde
+                    : `${desde} → ${hasta}`;
+                texto = `Se descargará: ${etiqueta('export-provider')} · ${etiqueta('export-env')} · ${fechas}`;
+            }
+            for (const id of ['resumen-crudos', 'resumen-enviados']) {
+                const el = document.getElementById(id);
+                if (el) el.textContent = texto;
+            }
+        }
+
+        async function cargarOpcionesDeExportacion() {
+            try {
+                const res = await fetch('/api/export/opciones');
+                if (!res.ok) return;
+                const data = await res.json();
+
+                const selProv = document.getElementById('export-provider');
+                const selEnv  = document.getElementById('export-env');
+                if (!selProv || !selEnv) return;
+
+                const proveedores = [...new Set(data.combinaciones.map(c => c.provider))].sort();
+                const entornos    = [...new Set(data.combinaciones.map(c => c.env))].sort();
+
+                const repoblar = (sel, valores) => {
+                    const previo = sel.value;
+                    sel.innerHTML = '<option value="todos">Todos</option>' +
+                        valores.map(v => `<option value="${v}">${v.toUpperCase()}</option>`).join('');
+                    if ([...sel.options].some(o => o.value === previo)) sel.value = previo;
+                };
+                repoblar(selProv, proveedores);
+                repoblar(selEnv, entornos);
+
+                const tope = document.getElementById('export-max-dias');
+                if (tope) tope.textContent = data.max_dias;
+
+                // Por defecto, el día de hoy: es el rango más chico posible y el
+                // que más se pide. Ampliarlo es un clic; achicar una descarga de
+                // 20 GB que ya arrancó, no.
+                const hoy = new Date().toISOString().slice(0, 10);
+                for (const id of ['export-desde', 'export-hasta']) {
+                    const el = document.getElementById(id);
+                    if (el && !el.value) el.value = hoy;
+                }
+
+                actualizarResumenDescarga();
+            } catch (e) {
+                console.warn('No se pudieron cargar las opciones de exportación:', e);
+            }
+        }
+
+        async function _lanzarDescarga(ruta) {
+            const provider = document.getElementById('export-provider')?.value || 'todos';
+            const env      = document.getElementById('export-env')?.value || 'todos';
+            const desde    = document.getElementById('export-desde')?.value;
+            const hasta    = document.getElementById('export-hasta')?.value;
+
+            if (!desde || !hasta) {
+                alert('Elegí un rango de fechas: son obligatorias.');
+                return;
+            }
+
+            const params = new URLSearchParams({ provider, env, desde, hasta });
+            const qs = params.toString();
+
+            // Se valida primero con un endpoint barato, para poder mostrar el
+            // motivo del rechazo. Navegar directo abriría una pestaña con un
+            // JSON críptico en vez de decir qué pasó.
+            try {
+                const chequeo = await fetch(`/api/export/validar?${qs}`);
+                if (!chequeo.ok) {
+                    const detalle = await chequeo.json().catch(() => null);
+                    alert(detalle?.detail || 'El rango pedido no es válido.');
+                    return;
+                }
+            } catch (e) {
+                console.warn('No se pudo validar el rango antes de descargar:', e);
+            }
+
+            window.location.href = `${ruta}?${qs}`;
+        }
+
+        function descargarCrudos()   { _lanzarDescarga('/api/export/crudos'); }
+        function descargarEnviados() { _lanzarDescarga('/api/export/enviados'); }
 
         async function toggleProcessedLogs(enabled) {
             try {
