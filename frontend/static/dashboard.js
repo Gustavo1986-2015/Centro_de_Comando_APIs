@@ -779,6 +779,7 @@
                 cargarComportamientoRC();
                 cargarOpcionesDeExportacion();
                 cargarInventarioDeDatos();
+                cargarPrecedencia();
             } else if (view === 'simulator') {
                 loadSimulator();
             } else if (view === 'history') {
@@ -3058,6 +3059,265 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
         // ─── Descargas masivas (crudos y enviado a RC) ───────────────────────
         // Van por endpoint, no por el DOM: los datos viven en archivos de disco
         // y en la base, y un solo día puede pesar varios GB.
+
+
+        // ─── Respaldo de configuración ──────────────────────────────────────
+        // El import es el endpoint que escribe: nunca se llama directo. Primero
+        // se simula, se muestra qué haría, y recién ahí aparece el botón de
+        // aplicar con su confirmación escrita.
+
+        let _yamlDeImport = null;
+
+        function descargarConfiguracion() {
+            // Navegación directa: el navegador ya manda las credenciales y el
+            // endpoint responde con Content-Disposition attachment.
+            window.location.href = '/api/config/export';
+        }
+
+        function archivoDeImportElegido() {
+            const input = document.getElementById('import-archivo');
+            const boton = document.getElementById('btn-simular-import');
+            const salida = document.getElementById('import-resultado');
+            salida.innerHTML = '';
+            _yamlDeImport = null;
+
+            const archivo = input.files && input.files[0];
+            if (!archivo) { boton.disabled = true; return; }
+
+            const lector = new FileReader();
+            lector.onload = (e) => {
+                _yamlDeImport = e.target.result;
+                boton.disabled = false;
+            };
+            lector.onerror = () => {
+                salida.innerHTML = _cajaImport('error', 'No se pudo leer el archivo.');
+                boton.disabled = true;
+            };
+            lector.readAsText(archivo, 'utf-8');
+        }
+
+        function _cajaImport(tipo, html) {
+            const colores = { error: '#EF4444', aviso: 'var(--color-yellow)', ok: '#10B981' };
+            return `<div style="border-left:3px solid ${colores[tipo]}; padding:0.75rem 1rem;
+                        background:rgba(255,255,255,0.03); border-radius:4px; font-size:0.82rem;
+                        line-height:1.6;">${html}</div>`;
+        }
+
+        function _listaCambios(cambios) {
+            return cambios.map(c =>
+                `<li><strong>${c.campo}</strong>: <span style="color:#a1a1aa">${c.actual}</span>
+                 → <span style="color:var(--color-yellow)">${c.nuevo}</span></li>`).join('');
+        }
+
+        async function simularImportConfiguracion() {
+            if (!_yamlDeImport) return;
+            const salida = document.getElementById('import-resultado');
+            const sobrescribir = document.getElementById('import-sobrescribir').checked;
+            salida.innerHTML = '<div style="color:#a1a1aa;font-size:0.85rem;">Analizando…</div>';
+
+            try {
+                const res = await fetch('/api/config/import/simular', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ contenido: _yamlDeImport, sobrescribir })
+                });
+                const data = await res.json();
+                if (!res.ok) {
+                    salida.innerHTML = _cajaImport('error',
+                        `<strong>El archivo no se puede usar.</strong><br>${data.detail}`);
+                    return;
+                }
+                salida.innerHTML = _renderSimulacion(data, sobrescribir);
+            } catch (e) {
+                salida.innerHTML = _cajaImport('error', 'Error de conexión al simular el import.');
+                console.error(e);
+            }
+        }
+
+        function _renderSimulacion(d, sobrescribir) {
+            let html = `<h3 style="margin:0 0 0.5rem 0;font-size:1rem;">Qué haría este respaldo</h3>
+                <p style="font-size:0.8rem;color:#a1a1aa;margin:0 0 1rem 0;">
+                  Generado por el hub ${d.hub_version_origen || '?'} el ${d.exportado || '?'}.
+                  <strong>Todavía no se aplicó nada.</strong></p>`;
+
+            if (d.nuevos.length) {
+                html += `<div style="margin-bottom:1rem;"><strong style="color:#10B981;">
+                    Se crearían ${d.nuevos.length}:</strong><ul style="font-size:0.82rem;margin:0.4rem 0 0 1.2rem;">`;
+                for (const n of d.nuevos) {
+                    html += `<li><strong>${n.proveedor}</strong> (${n.tipo}, ${n.reglas_de_disparo} regla(s))`;
+                    if (n.credenciales_a_cargar && n.credenciales_a_cargar.length) {
+                        html += `<br><span style="color:var(--color-yellow);font-size:0.76rem;">
+                                 Habrá que cargar a mano: ${n.credenciales_a_cargar.join(' · ')}</span>`;
+                    }
+                    html += '</li>';
+                }
+                html += '</ul></div>';
+            }
+
+            if (d.actualizados.length) {
+                html += `<div style="margin-bottom:1rem;"><strong style="color:var(--color-yellow);">
+                    Se pisarían ${d.actualizados.length}:</strong>`;
+                for (const a of d.actualizados) {
+                    html += `<div style="margin-top:0.4rem;font-size:0.82rem;">${a.proveedor}
+                             <ul style="margin:0.2rem 0 0 1.2rem;">${_listaCambios(a.cambios)}</ul></div>`;
+                }
+                html += '</div>';
+            }
+
+            if (d.omitidos.length) {
+                html += `<div style="margin-bottom:1rem;font-size:0.82rem;">
+                    <strong>Se saltearían ${d.omitidos.length}</strong> porque ya existen:
+                    ${d.omitidos.map(o => o.proveedor).join(' · ')}.
+                    <br><span style="color:#a1a1aa;">Marcá "Sobrescribir" si querés pisarlos.</span></div>`;
+            }
+
+            if (d.sin_cambios.length) {
+                html += `<div style="margin-bottom:1rem;font-size:0.82rem;color:#a1a1aa;">
+                    Sin cambios: ${d.sin_cambios.join(' · ')}</div>`;
+            }
+
+            if (d.configuracion_general && d.configuracion_general.length) {
+                html += `<div style="margin-bottom:1rem;font-size:0.82rem;">
+                    <strong>Configuración general:</strong>
+                    <ul style="margin:0.2rem 0 0 1.2rem;">${_listaCambios(d.configuracion_general)}</ul></div>`;
+            }
+
+            const env = d.entorno_a_revisar || {};
+            const hayEnv = (env.faltantes || []).length || (env.distintas || []).length
+                        || (env.secretas_faltantes || []).length;
+            if (hayEnv) {
+                // El import no puede escribir el .env: solo avisa. Un servidor con
+                // la misma configuración en base y distinto entorno se comporta
+                // distinto, y eso ya pasó con WEBHOOK_RATE_LIMIT_PER_MIN.
+                let e = '<strong>Revisar el .env de este servidor.</strong> Estas variables no se '
+                      + 'importan, hay que ajustarlas a mano:<ul style="margin:0.4rem 0 0 1.2rem;">';
+                for (const f of env.faltantes || [])
+                    e += `<li><strong>${f.variable}</strong> no está definida acá (en el respaldo valía ${f.valor_en_el_respaldo})</li>`;
+                for (const f of env.distintas || [])
+                    e += `<li><strong>${f.variable}</strong>: acá vale ${f.valor_en_este_servidor}, en el respaldo ${f.valor_en_el_respaldo}</li>`;
+                for (const s of env.secretas_faltantes || [])
+                    e += `<li><strong>${s}</strong> no está definida acá</li>`;
+                html += _cajaImport('aviso', e + '</ul>');
+            }
+
+            const nadaQueHacer = !d.nuevos.length && !d.actualizados.length
+                              && !(d.configuracion_general || []).length;
+            if (nadaQueHacer) {
+                html += _cajaImport('ok', 'No hay nada para aplicar: la configuración ya coincide con el respaldo.');
+            } else {
+                html += `<div style="margin-top:1rem;padding-top:1rem;border-top:1px solid var(--color-gray);">
+                    <p style="font-size:0.82rem;margin:0 0 0.6rem 0;">
+                      Para aplicarlo, escribí <strong>IMPORTAR</strong>. Las contraseñas ya cargadas
+                      no se tocan. Si algo falla, se deshace todo.</p>
+                    <div style="display:flex;gap:0.6rem;align-items:center;flex-wrap:wrap;">
+                      <input type="text" id="import-confirmacion" placeholder="IMPORTAR"
+                             style="padding:0.5rem;border-radius:4px;background:var(--color-gray);
+                                    color:white;border:none;width:160px;">
+                      <button class="btn-save" onclick="aplicarImportConfiguracion(${sobrescribir})"
+                              style="background:#EF4444;color:white;">Aplicar respaldo</button>
+                    </div></div>`;
+            }
+            return html;
+        }
+
+        async function aplicarImportConfiguracion(sobrescribir) {
+            const confirmacion = (document.getElementById('import-confirmacion') || {}).value || '';
+            const salida = document.getElementById('import-resultado');
+
+            try {
+                const res = await fetch('/api/config/import', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ contenido: _yamlDeImport, sobrescribir, confirmacion })
+                });
+                const data = await res.json();
+                if (!res.ok) {
+                    salida.innerHTML += _cajaImport('error', data.detail);
+                    return;
+                }
+
+                let html = `<h3 style="margin:0 0 0.5rem 0;font-size:1rem;color:#10B981;">
+                    Respaldo aplicado</h3><p style="font-size:0.85rem;">${data.resumen}</p>`;
+                if (data.creados.length)
+                    html += `<p style="font-size:0.82rem;">Creados: ${data.creados.join(' · ')}</p>`;
+                if (data.actualizados.length)
+                    html += `<p style="font-size:0.82rem;">Actualizados: ${data.actualizados.join(' · ')}</p>`;
+                if (data.credenciales_a_cargar && data.credenciales_a_cargar.length) {
+                    let c = '<strong>Falta cargar las contraseñas.</strong> Estas integraciones no van '
+                          + 'a autenticar hasta que las cargues en Configuración de Proveedores:'
+                          + '<ul style="margin:0.4rem 0 0 1.2rem;">';
+                    for (const x of data.credenciales_a_cargar)
+                        c += `<li><strong>${x.proveedor}</strong>: ${x.faltan.join(' · ')}</li>`;
+                    html += _cajaImport('aviso', c + '</ul>');
+                }
+                salida.innerHTML = html;
+
+                loadConfig();
+                cargarPrecedencia();
+            } catch (e) {
+                salida.innerHTML += _cajaImport('error', 'Error de conexión al aplicar el respaldo.');
+                console.error(e);
+            }
+        }
+
+        // ─── Qué valor manda: panel o .env ──────────────────────────────────
+
+        function _filaPrecedencia(nombre, vigente, origen, enPanel, enEntorno) {
+            const color = origen === 'panel' ? '#10B981'
+                        : origen.startsWith('entorno') ? 'var(--color-yellow)' : '#a1a1aa';
+            const fmt = (v) => (v === null || v === undefined || v === '') ? '—' : v;
+            return `<tr>
+                <td>${nombre}</td>
+                <td class="num" style="font-weight:600;">${fmt(vigente)}</td>
+                <td style="color:${color};">${origen}</td>
+                <td class="num">${fmt(enPanel)}</td>
+                <td class="num">${fmt(enEntorno)}</td></tr>`;
+        }
+
+        async function cargarPrecedencia() {
+            const cont = document.getElementById('precedencia-contenedor');
+            if (!cont) return;
+            try {
+                const res = await fetch('/api/config/precedencia');
+                if (!res.ok) throw new Error('respuesta ' + res.status);
+                const d = await res.json();
+
+                let filas = '';
+                for (const p of d.limite_push.por_proveedor)
+                    filas += _filaPrecedencia(`Límite push — ${p.proveedor}`, p.vigente + ' req/min',
+                                              p.origen, p.en_panel, p.en_entorno);
+                const t = d.liberacion_tanda;
+                filas += _filaPrecedencia('Liberación por tanda', t.vigente + ' eventos',
+                                          t.origen, t.en_panel, t.en_entorno);
+                filas += _filaPrecedencia('Modo de ejecución', d.app_env.vigente,
+                                          d.app_env.origen, null, d.app_env.vigente);
+
+                let aviso = '';
+                if (d.modo_simulado.fuerza_simulado_global) {
+                    aviso = _cajaImport('aviso',
+                        '<strong>RC_USE_MOCK=True en el .env.</strong> Ningún proveedor está '
+                      + 'despachando a Recurso Confiable, sin importar lo que diga el panel. '
+                      + 'Es el único caso donde el entorno pisa la configuración por proveedor.');
+                }
+
+                cont.innerHTML = `
+                    <div style="overflow-x:auto;">
+                    <table class="inventario-tabla">
+                      <thead><tr>
+                        <th>Parámetro</th><th class="num">Vigente</th><th>De dónde sale</th>
+                        <th class="num">En el panel</th><th class="num">En el .env</th>
+                      </tr></thead>
+                      <tbody>${filas}</tbody>
+                    </table></div>
+                    <div style="font-size:0.72rem;color:#6b7280;margin-top:0.5rem;">
+                      Precedencia: ${d.limite_push.precedencia}. Lo definido para un proveedor
+                      pisa a lo general, por eso el panel gana sobre el .env en estos parámetros.
+                    </div>${aviso}`;
+            } catch (e) {
+                cont.innerHTML = '<div style="color:#a1a1aa;font-size:0.85rem;">No se pudo consultar la precedencia.</div>';
+                console.warn('Precedencia:', e);
+            }
+        }
 
         // ─── Inventario de datos en disco ───────────────────────────────────
         // Se muestra arriba de los controles de descarga: la pregunta útil es

@@ -556,6 +556,79 @@
         </div>
 
         <div class="recent-section" style="margin-top: 2rem;">
+            <h2>Respaldo de Configuración</h2>
+            <div class="donde-intro">
+                Descarga las integraciones enteras en un archivo de texto legible: mapeos, reglas
+                de disparo, URLs, intervalos y flags. Sirve para mudar de servidor sin rearmar
+                nada a mano, y para ver cómo cambió la configuración con el tiempo.
+            </div>
+
+            <div class="donde-grid" style="margin-top: 1.5rem;">
+                <div class="donde-card">
+                    <div class="donde-tag crudo">DESCARGAR</div>
+                    <h3>Guardar la configuración actual</h3>
+                    <p>
+                        Un archivo YAML con todo lo que define cada integración.
+                        <strong>No contiene ninguna contraseña</strong>, así que podés guardarlo
+                        donde quieras, versionarlo o mandarlo por mail sin riesgo.
+                    </p>
+                    <button class="btn-save" onclick="descargarConfiguracion()"
+                            style="background: #6366F1; color: white;">
+                        Descargar respaldo (YAML)
+                    </button>
+                </div>
+
+                <div class="donde-card">
+                    <div class="donde-tag despachado">RESTAURAR</div>
+                    <h3>Aplicar un respaldo</h3>
+                    <p>
+                        Recrea las integraciones a partir de un archivo. Siempre muestra primero
+                        qué va a hacer, y no escribe nada hasta que lo confirmes.
+                    </p>
+                    <input type="file" id="import-archivo" accept=".yaml,.yml"
+                           onchange="archivoDeImportElegido()"
+                           style="width: 100%; font-size: 0.8rem; margin-bottom: 0.75rem;">
+                    <label style="display: flex; align-items: center; gap: 0.5rem; font-size: 0.78rem; margin-bottom: 0.75rem;">
+                        <input type="checkbox" id="import-sobrescribir">
+                        Sobrescribir las integraciones que ya existen
+                    </label>
+                    <button class="btn-save" id="btn-simular-import"
+                            onclick="simularImportConfiguracion()" disabled
+                            style="background: #10B981; color: white;">
+                        Ver qué haría
+                    </button>
+                </div>
+            </div>
+
+            <div class="donde-aviso" style="margin-top: 1.25rem;">
+                <strong>Qué se restaura solo y qué hay que cargar a mano.</strong><br>
+                El respaldo trae el mapeo completo, las reglas de disparo, las URLs, los usuarios,
+                los intervalos y todos los flags: eso vuelve automáticamente.<br>
+                <em>No trae contraseñas</em> —ni la de Recurso Confiable, ni las API key de los
+                webhooks, ni las del PULL—, porque están cifradas con una llave que es de este
+                servidor y en otro no servirían. Después de restaurar hay que cargarlas desde
+                Configuración de Proveedores; el propio archivo lista cuáles faltan en cada
+                integración.<br>
+                Tampoco trae el diccionario IMEI→patente: lo regenera solo el sincronizador
+                automático en el primer ciclo.
+            </div>
+
+            <div id="import-resultado" style="margin-top: 1.25rem;"></div>
+        </div>
+
+        <div class="recent-section" style="margin-top: 2rem;">
+            <h2>Qué valor manda de verdad</h2>
+            <div class="donde-intro">
+                Hay parámetros que se pueden definir en el panel y también en el archivo
+                <code class="inline">.env</code> del servidor. Acá se ve cuál está vigente y de
+                dónde sale, para que no haya sorpresas.
+            </div>
+            <div id="precedencia-contenedor" style="margin-top: 1rem;">
+                <div style="color:#a1a1aa; font-size:0.85rem;">Consultando…</div>
+            </div>
+        </div>
+
+        <div class="recent-section" style="margin-top: 2rem;">
             <h2 style="color: var(--color-red);">Mantenimiento de Logs (Purga Manual)</h2>
             <div style="display: flex; flex-direction: column; gap: 1rem; margin-top: 1rem; border: 1px solid var(--color-red); padding: 1rem; border-radius: 8px;">
                 <div>
