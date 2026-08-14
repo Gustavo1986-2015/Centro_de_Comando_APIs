@@ -44,6 +44,9 @@ class ConfigUpdate(BaseModel):
 class RetentionUpdateModel(BaseModel):
     audit_retention_days: int
     processed_retention_days: int
+    # Tope de días por descarga en las exportaciones. Opcional para no romper a
+    # ningún cliente que ya mande solo los dos campos anteriores.
+    export_max_days: int | None = None
 
 class ProcessedLogsToggleModel(BaseModel):
     enabled: bool
@@ -337,7 +340,8 @@ def get_retention_config(request: Request, _auth: HTTPBasicCredentials = Depends
     return {
         "audit_retention_days": settings.audit_retention_days,
         "processed_retention_days": settings.processed_retention_days,
-        "processed_logs_enabled": settings.processed_logs_enabled
+        "processed_logs_enabled": settings.processed_logs_enabled,
+        "export_max_days": getattr(settings, "export_max_days", 7) or 7
     }
 
 @router.put("/api/config/retention")
@@ -350,16 +354,20 @@ def update_retention_config(
         raise HTTPException(status_code=400, detail="Retención de auditoría debe estar entre 7 y 90 días")
     if not (7 <= body.processed_retention_days <= 30):
         raise HTTPException(status_code=400, detail="Retención de procesados debe estar entre 7 y 30 días")
-        
+    if body.export_max_days is not None and not (1 <= body.export_max_days <= 31):
+        raise HTTPException(status_code=400, detail="El tope de días por descarga debe estar entre 1 y 31")
+
     db = get_session("system_config", "global")
     try:
         settings = db.query(SystemSettings).first()
         if settings:
             settings.audit_retention_days = body.audit_retention_days
             settings.processed_retention_days = body.processed_retention_days
+            if body.export_max_days is not None:
+                settings.export_max_days = body.export_max_days
             db.commit()
             config_cache.invalidate()
-            log_admin_action("update_retention", body.dict(), request, _auth.username)
+            log_admin_action("update_retention", body.model_dump(), request, _auth.username)
             return {"ok": True, "message": "Retención actualizada correctamente"}
         raise HTTPException(status_code=500, detail="Configuración no encontrada en base de datos")
     except Exception as e:
