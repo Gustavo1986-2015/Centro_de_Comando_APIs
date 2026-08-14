@@ -29,6 +29,47 @@ def test_bug_m5b_canonical_field_is_code_not_event_code(sample_schmitz_payload):
     )
 
 
+def test_ningun_test_pisa_las_credenciales_sin_restaurarlas():
+    """
+    Invariante de la suite, no de la aplicación.
+
+    Dos archivos escribían DASHBOARD_USER/DASHBOARD_PASSWORD con os.environ
+    directo, sin monkeypatch y sin restaurarlos. El efecto era que cualquier
+    test posterior que usara autenticación recibía 401 según el orden de
+    ejecución: pasaba aislado y fallaba dentro de la suite. Costó 19 fallos
+    intermitentes en el bloque de exportaciones.
+
+    Se setean con monkeypatch.setenv, o con pytest.MonkeyPatch.context() en
+    fixtures de scope module, donde monkeypatch no está disponible. Las dos
+    formas restauran el valor al terminar.
+
+    El alcance es a propósito las credenciales y las llaves de cifrado: son las
+    que rompen a CUALQUIER test posterior, no solo a los de su propio tema.
+    conftest.py queda fuera: ahí el seteo global es deliberado y fija la línea
+    de base de la sesión.
+    """
+    import pathlib
+    import re
+
+    VARIABLES = (
+        "DASHBOARD_USER", "DASHBOARD_PASSWORD",
+        "MASTER_ENC_KEY", "RC_TOKEN_ENC_KEY",
+    )
+    patron = re.compile(r"^\s*os\.environ\[\s*['\"](" + "|".join(VARIABLES) + r")['\"]\s*\]")
+
+    infractores = []
+    for archivo in sorted(pathlib.Path(__file__).parent.glob("test_*.py")):
+        for nro, linea in enumerate(archivo.read_text(encoding="utf-8").splitlines(), 1):
+            if patron.match(linea):
+                infractores.append(f"{archivo.name}:{nro}: {linea.strip()}")
+
+    assert not infractores, (
+        "Estas líneas escriben credenciales en os.environ y no las restauran, "
+        "así que contaminan al resto de la suite y provocan 401 según el orden "
+        "de ejecución. Usá monkeypatch.setenv:\n  " + "\n  ".join(infractores)
+    )
+
+
 def test_bug_dce0758_log_raw_payload_exists_and_callable():
     """Bug dce0758: log_raw_payload faltaba en auditor.py y causaba ImportError."""
     from app.core.auditor import log_raw_payload

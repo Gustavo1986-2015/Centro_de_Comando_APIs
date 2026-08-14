@@ -850,6 +850,81 @@ async def process_pending_events():
         await asyncio.gather(*tasks)
 
 
+def evento_a_registro_respaldo(r: NormalizedRCEvent, env: str) -> dict:
+    """
+    Arma el registro que se escribe en db/backups_diarios/.../procesados_*.jsonl.
+
+    Este archivo es la ÚNICA fuente de auditoría de lo despachado: la base es un
+    colchón de tránsito y borra la fila apenas vence la retención. Por eso el
+    registro tiene que alcanzar para reconstruir el evento entero sin la base.
+
+    Antes guardaba solo id/provider/env/chassis/status/created_at/payload/response.
+    Faltaba `code` — o sea que era imposible auditar QUÉ TIPO de evento se
+    despachó, que fue justamente la pregunta que motivó la investigación de los
+    códigos de Protrack. También faltaban el resto de los campos canónicos, el
+    `job_id` (que ya existe como columna propia y no hace falta parsearlo del
+    texto de la respuesta de RC) y la fecha del dispositivo.
+
+    `payload` SE QUITÓ a propósito. Duplicaba el crudo que ya está íntegro en
+    audit/{proveedor}_{entorno}/, y encima lo duplicaba N veces: los ingestores
+    guardan el payload ENTERO en cada evento que ese payload genera. Los dos
+    archivos ahora tienen roles separados y sin superposición:
+      · audit/...        → lo que el proveedor mandó, sin transformar
+      · procesados_*.jsonl → lo que el hub le despachó a RC, ya canónico
+    Ambos comparten la misma ventana de retención, así que expiran juntos.
+
+    Convención de nombres: las claves replican EXACTAMENTE los nombres de columna
+    de NormalizedRCEvent, así el JSONL mapea 1:1 a una tabla el día que alguien
+    lo importe. Ojo con dos fechas distintas:
+      · `date`       → hora del EVENTO según el dispositivo (UTC, la que va a RC)
+      · `created_at` → hora en que el hub recibió el evento (UTC)
+      · `updated_at` → hora del último cambio de estado (despacho a RC, UTC)
+
+    Las claves preexistentes conservan su posición y su significado; las nuevas
+    van al final.
+    """
+    def _iso(valor):
+        return valor.isoformat() if valor else None
+
+    return {
+        # --- Claves originales: NO tocar orden ni semántica ---
+        "id": r.id,
+        "provider": r.provider,
+        "env": env,
+        "chassis": r.chassis_number,
+        "status": r.status,
+        "created_at": _iso(r.created_at),
+        "response": r.rc_response,
+
+        # --- Acuse de RC, ya estructurado en columna propia ---
+        "job_id": r.job_id,
+
+        # --- Modelo canónico: lo que efectivamente se le mandó a RC ---
+        "code": r.code,
+        "date": _iso(r.date),
+        "latitude": r.latitude,
+        "longitude": r.longitude,
+        "speed": r.speed,
+        "altitude": r.altitude,
+        "battery": r.battery,
+        "course": r.course,
+        "humidity": r.humidity,
+        "ignition": r.ignition,
+        "odometer": r.odometer,
+        "temperature": r.temperature,
+        "serial_number": r.serial_number,
+        "shipment": r.shipment,
+        "vehicle_type": r.vehicle_type,
+        "vehicle_brand": r.vehicle_brand,
+        "vehicle_model": r.vehicle_model,
+
+        # --- Trazabilidad del despacho ---
+        "updated_at": _iso(r.updated_at),
+        "rc_latency_sec": r.rc_latency_sec,
+        "retry_count": r.retry_count,
+    }
+
+
 async def purge_provider_events(provider: str, env: str):
     """Purga una BD individual eliminando solo los eventos enviados/fallidos anteriores al día de hoy local. Genera un backup JSON mensual y limpia backups > 30 días."""
     db: Session = get_session(provider, env)
@@ -899,16 +974,7 @@ async def purge_provider_events(provider: str, env: str):
             with open(backup_file, "a", encoding="utf-8") as f:
                 for r in query.yield_per(500):
                     deleted_count += 1
-                    event_dict = {
-                        "id": r.id,
-                        "provider": r.provider,
-                        "env": env,
-                        "chassis": r.chassis_number,
-                        "status": r.status,
-                        "created_at": r.created_at.isoformat() if r.created_at else None,
-                        "payload": r.raw_data,
-                        "response": r.rc_response
-                    }
+                    event_dict = evento_a_registro_respaldo(r, env)
                     f.write(json.dumps(event_dict, ensure_ascii=False) + "\n")
                     
         await asyncio.to_thread(write_backup)
@@ -926,10 +992,17 @@ async def purge_provider_events(provider: str, env: str):
             s = get_settings()
             processed_cutoff = time.time() - (s.processed_retention_days * 24 * 60 * 60)
             audit_cutoff = time.time() - (s.audit_retention_days * 24 * 60 * 60)
-            
+
+            # La ruta de crudos era "audit/{provider}", pero log_raw_payload()
+            # escribe en "audit/{provider}_{env}" — verificado en los tres
+            # ingestores (schmitz.py, dynamic_webhook.py, pull_engine.py).
+            # El directorio apuntado no existía nunca, así que os.path.exists()
+            # daba False y audit_retention_days JAMÁS se aplicó a los crudos:
+            # crecían sin techo desde siempre. A caudal de certificación son
+            # ~2 GB por día que nadie limpiaba.
             dirs_to_clean = [
                 (os.path.join("db", "backups_diarios", f"{provider}_{env}"), processed_cutoff),
-                (os.path.join("audit", provider), audit_cutoff)
+                (os.path.join("audit", f"{provider}_{env}"), audit_cutoff)
             ]
             for d, cutoff in dirs_to_clean:
                 if os.path.exists(d):

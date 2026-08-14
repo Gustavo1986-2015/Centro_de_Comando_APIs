@@ -349,18 +349,20 @@ def test_el_comentario_del_formato_de_fecha_esta_al_dia():
 # Configuración desde el panel
 # ═══════════════════════════════════════════════════════════════════
 
-def test_los_rangos_impiden_configuraciones_que_romperian_la_operacion():
+def test_los_rangos_impiden_configuraciones_que_romperian_la_operacion(monkeypatch):
     """
     Los límites no son arbitrarios: una tanda enorme satura a RC al recuperarse,
     cero reintentos descarta eventos ante el primer tropiezo de red, y un umbral
     de circuito muy alto hace que el hub insista sobre un destino caído.
     """
     import base64
-    import os
     from fastapi.testclient import TestClient
 
-    os.environ["DASHBOARD_USER"] = "t"
-    os.environ["DASHBOARD_PASSWORD"] = "clave_de_prueba_larga"
+    # Con monkeypatch en lugar de os.environ directo: antes estas dos variables
+    # quedaban pisadas para el resto de la sesión y hacían fallar con 401 a
+    # cualquier test posterior que usara autenticación.
+    monkeypatch.setenv("DASHBOARD_USER", "t")
+    monkeypatch.setenv("DASHBOARD_PASSWORD", "clave_de_prueba_larga")
     from main import app
 
     auth = {"Authorization": "Basic " + base64.b64encode(b"t:clave_de_prueba_larga").decode()}
