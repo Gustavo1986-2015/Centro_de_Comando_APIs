@@ -68,8 +68,82 @@ CLAVES_SECRETAS = frozenset({
 })
 
 
+# ─── Qué sale de los bloques de configuración: LISTA BLANCA ──────────────────
+#
+# Antes había dos listas NEGRAS, una en el export y otra en el import, y se
+# desincronizaron. La del export quitaba nueve claves; la del import conservaba
+# cuatro. El hueco —api_key, apikey, pass, secret, x-api-key— producía dos
+# fallas a la vez: esas claves se quitaban al exportar (bien) pero NO se
+# reponían al importar, así que un export→import de rutina borraba la
+# credencial. Y las que no estaban en ninguna lista, como access_token, salían
+# en claro al YAML.
+#
+# La raíz del problema es la lista negra: enumera lo prohibido, así que una
+# clave nueva que nadie previó pasa por defecto. Invertida a lista blanca, lo
+# desconocido queda afuera del archivo y adentro de la base: ni se filtra ni se
+# pierde. Agregar un campo estructural nuevo exige tocar esta lista, que es
+# exactamente la revisión que uno quiere que ocurra.
+#
+# `headers` NO está: es un JSON string y es el mecanismo para autenticar por
+# cabecera (Authorization: Bearer…, X-API-Key:…). Verificado en
+# pull_engine.py:347. Un valor string se copiaba entero al YAML.
+CLAVES_ESTRUCTURALES = frozenset({
+    "url", "method", "auth_type", "auth_user",
+    "enabled", "frequency", "key_path", "value_path", "timezone_offset",
+})
+
+# Qué decirle al operador sobre lo que quedó fuera, para que sepa qué recargar.
+ETIQUETAS_NO_EXPORTABLES = {
+    "auth_pass": "contraseña",
+    "bearer_token": "bearer token",
+    "access_token": "access token",
+    "headers": "cabeceras HTTP personalizadas",
+    "body": "cuerpo de la petición",
+    "password": "contraseña",
+    "api_key": "API key",
+    "apikey": "API key",
+    "secret": "secreto",
+    "token": "token",
+}
+
+
+def _solo_estructura(bloque: dict) -> dict:
+    """
+    Deja únicamente las claves estructurales conocidas.
+
+    Recursivo para los diccionarios anidados, con el mismo criterio: lo que no
+    está en la lista blanca no sale.
+    """
+    if not isinstance(bloque, dict):
+        return {}
+    salida = {}
+    for clave, valor in bloque.items():
+        if str(clave).strip().lower() not in CLAVES_ESTRUCTURALES:
+            continue
+        salida[clave] = _solo_estructura(valor) if isinstance(valor, dict) else valor
+    return salida
+
+
+def _lo_que_no_viaja(bloque: dict) -> list[str]:
+    """Claves con valor que quedaron fuera del archivo, en palabras del operador."""
+    if not isinstance(bloque, dict):
+        return []
+    fuera = []
+    for clave, valor in bloque.items():
+        if str(clave).strip().lower() in CLAVES_ESTRUCTURALES or not valor:
+            continue
+        fuera.append(ETIQUETAS_NO_EXPORTABLES.get(str(clave).strip().lower(), str(clave)))
+    return sorted(set(fuera))
+
+
 def _sin_secretos(valor):
-    """Copia una estructura anidada dejando fuera cualquier clave secreta."""
+    """
+    Compatibilidad: filtro por lista negra, solo para el bloque `mapeo`.
+
+    El mapeo no lleva credenciales —son reglas de disparo y correspondencias de
+    campos— así que acá la lista negra alcanza. Los bloques de conexión usan
+    _solo_estructura, que es lista blanca.
+    """
     if isinstance(valor, dict):
         return {
             k: _sin_secretos(v)
@@ -120,14 +194,14 @@ def _credenciales_faltantes(conf: ProviderConfig, fetch: dict, enrich: dict) -> 
         faltantes.append("contraseña de Recurso Confiable")
     if conf.webhook_auth_secret_enc:
         faltantes.append(f"API key del webhook (header {conf.webhook_auth_header or 'x-api-key'})")
-    if fetch.get("auth_pass"):
-        faltantes.append("contraseña del PULL de telemetría")
-    if fetch.get("bearer_token"):
-        faltantes.append("bearer token del PULL de telemetría")
-    if enrich.get("auth_pass"):
-        faltantes.append("contraseña del sincronizador de diccionario")
-    if enrich.get("bearer_token"):
-        faltantes.append("bearer token del sincronizador de diccionario")
+
+    # Se deriva de lo que la lista blanca dejó afuera, en vez de enumerarlo a
+    # mano: así una clave nueva aparece sola en la lista y nadie se olvida de
+    # avisar que hay que recargarla.
+    for etiqueta in _lo_que_no_viaja(fetch):
+        faltantes.append(f"{etiqueta} del PULL de telemetría")
+    for etiqueta in _lo_que_no_viaja(enrich):
+        faltantes.append(f"{etiqueta} del sincronizador de diccionario")
     return faltantes
 
 
@@ -169,9 +243,9 @@ def _proveedor_a_dict(conf: ProviderConfig) -> dict:
     salida["limite_push_por_min"] = conf.rate_limit_per_min
 
     if fetch:
-        salida["telemetria"] = _sin_secretos(fetch)
+        salida["telemetria"] = _solo_estructura(fetch)
     if enrich:
-        salida["diccionario"] = _sin_secretos(enrich)
+        salida["diccionario"] = _solo_estructura(enrich)
     if mapeo:
         salida["mapeo"] = _sin_secretos(mapeo)
 
@@ -288,13 +362,18 @@ VARIABLES_ENTORNO = (
     "REDIS_HOST",
     "REDIS_PORT",
     "REDIS_DB",
-    "DASHBOARD_USER",
 )
 
 # De estas sale ÚNICAMENTE el nombre. Nunca el valor, ni truncado, ni con un
 # hash: saber cuáles hay que recrear alcanza, y así el archivo sigue siendo
 # inerte —guardable, commiteable, enviable por mail—.
 VARIABLES_SECRETAS = (
+    # El usuario del panel es la mitad de las credenciales de acceso. Con la
+    # contraseña no alcanza para entrar, pero publicarlo le ahorra medio trabajo
+    # a quien quiera intentarlo, y este archivo está pensado para guardarse en
+    # cualquier lado. Sale el nombre, no el valor: igual se sabe que hay que
+    # definirla en el servidor nuevo.
+    "DASHBOARD_USER",
     "MASTER_ENC_KEY",
     "DASHBOARD_PASSWORD",
     "RC_PASSWORD",
@@ -490,8 +569,94 @@ class ImportPayload(BaseModel):
     sobrescribir: bool = False
 
 
+# Tope de tamaño ANTES de parsear. yaml.safe_load expande aliases, así que un
+# archivo chico con anidamiento puede explotar en memoria (billion laughs). Está
+# detrás de autenticación de admin, pero el admin puede estar importando un
+# archivo que le pasaron. Un respaldo real de 50 integraciones ronda los 100 KB.
+MAX_BYTES_RESPALDO = 5 * 1024 * 1024
+
+# Campos numéricos y su rango admisible. Sin esto, un YAML con
+# `intervalo_ejecucion_seg: "texto"` pasaba la validación, SQLite lo guardaba
+# igual, el import commiteaba limpio y el worker reventaba después haciendo
+# aritmética sobre una cadena. El archivo malo hay que rechazarlo en la puerta,
+# no descubrirlo cuando ya está aplicado.
+CAMPOS_NUMERICOS = {
+    "intervalo_ejecucion_seg": (1, 86400),
+    "intervalo_purga_min": (1, 1440),
+    "limite_push_por_min": (1, 1000000),
+}
+
+CAMPOS_BOOLEANOS_YAML = ("activo", "modo_simulado", "deduplicacion")
+
+# Bloques que tienen que ser diccionarios. Un string acá rompía analizar_import
+# con un 500 opaco en vez de un 400 que explique qué está mal.
+CAMPOS_DICCIONARIO = ("mapeo", "telemetria", "diccionario")
+
+
+def _validar_proveedor(prov: dict, posicion: int):
+    """Valida tipos y rangos de un proveedor antes de que toquen la base."""
+    etiqueta = f"{prov.get('nombre')}/{prov.get('entorno')}"
+
+    for campo, (minimo, maximo) in CAMPOS_NUMERICOS.items():
+        valor = prov.get(campo)
+        if valor is None:
+            continue
+        if isinstance(valor, bool) or not isinstance(valor, int):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"En {etiqueta}, el campo '{campo}' tiene que ser un número entero "
+                    f"y vino {valor!r}."
+                ),
+            )
+        if not (minimo <= valor <= maximo):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"En {etiqueta}, '{campo}' vale {valor} y el rango admitido es "
+                    f"{minimo} a {maximo}."
+                ),
+            )
+
+    for campo in CAMPOS_BOOLEANOS_YAML:
+        if campo in prov and prov[campo] is not None and not isinstance(prov[campo], bool):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"En {etiqueta}, '{campo}' tiene que ser true o false "
+                    f"y vino {prov[campo]!r}."
+                ),
+            )
+
+    for campo in CAMPOS_DICCIONARIO:
+        if campo in prov and prov[campo] is not None and not isinstance(prov[campo], dict):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"En {etiqueta}, '{campo}' tiene que ser un bloque de configuración "
+                    f"y vino {type(prov[campo]).__name__}."
+                ),
+            )
+
+    tipo = prov.get("tipo")
+    if tipo is not None and str(tipo).lower() not in ("push", "pull"):
+        raise HTTPException(
+            status_code=400,
+            detail=f"En {etiqueta}, 'tipo' solo admite push o pull, y vino {tipo!r}.",
+        )
+
+
 def _parsear_yaml(texto: str) -> dict:
     """Lee el YAML y valida que sea un respaldo de este formato."""
+    if len(texto.encode("utf-8", errors="ignore")) > MAX_BYTES_RESPALDO:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"El archivo supera los {MAX_BYTES_RESPALDO // (1024 * 1024)} MB. "
+                f"Un respaldo real de 50 integraciones pesa unos 100 KB: revisá que "
+                f"sea el archivo correcto."
+            ),
+        )
     try:
         datos = yaml.safe_load(texto)
     except yaml.YAMLError as e:
@@ -535,6 +700,14 @@ def _parsear_yaml(texto: str) -> dict:
                     f"Esos dos campos son los que identifican la integración."
                 ),
             )
+        _validar_proveedor(prov, i + 1)
+
+    general = datos.get("configuracion_general")
+    if general is not None and not isinstance(general, dict):
+        raise HTTPException(
+            status_code=400,
+            detail="'configuracion_general' tiene que ser un bloque de configuración.",
+        )
 
     return datos
 
@@ -584,7 +757,7 @@ def _diferencias_proveedor(deseado: dict, actual: ProviderConfig) -> list[dict]:
         # Se comparan ambos lados SIN secretos: el YAML nunca los trae, así que
         # incluirlos daría "cambió" siempre y el operador aprendería a ignorar
         # el aviso, que es la peor forma de que un aviso exista.
-        if _sin_secretos(deseado[clave]) != _sin_secretos(actual_bloque):
+        if (deseado[clave] or {}) != _solo_estructura(actual_bloque):
             cambios.append({
                 "campo": clave,
                 "actual": actual_bloque.get("url") or "(sin configurar)",
@@ -756,16 +929,23 @@ class ImportEjecutar(ImportPayload):
 
 def _fusionar_conservando_secretos(deseado: dict, actual: dict) -> dict:
     """
-    Bloque nuevo con los valores del YAML, conservando los secretos actuales.
+    Bloque nuevo con los valores del YAML, conservando TODO lo que no viajó.
 
-    El YAML trae url, método, auth_type y auth_user, pero nunca la contraseña.
-    Escribir el bloque tal cual borraría la credencial que ya estaba cargada y
-    la integración dejaría de autenticar, sin que el operador haya pedido eso.
+    Simétrico con _solo_estructura por construcción: lo que el export deja
+    afuera, el import lo repone desde la base. Antes esto era una lista negra
+    con cuatro claves mientras el export quitaba nueve, y el hueco —api_key,
+    apikey, pass, secret, x-api-key— borraba credenciales en un export→import
+    de rutina.
+
+    Ahora la regla es una sola y no puede desincronizarse: si la clave no es
+    estructural, se conserva la que ya estaba.
     """
     fusionado = dict(deseado or {})
-    for clave in CLAVES_SECRETAS_EN_BLOQUE:
-        if clave in (actual or {}) and actual[clave]:
-            fusionado[clave] = actual[clave]
+    for clave, valor in (actual or {}).items():
+        if str(clave).strip().lower() in CLAVES_ESTRUCTURALES:
+            continue
+        if valor and clave not in fusionado:
+            fusionado[clave] = valor
     return fusionado
 
 
@@ -990,6 +1170,12 @@ def precedencia_de_parametros(_auth: HTTPBasicCredentials = Depends(verify_dashb
 
         limites = []
         for p in proveedores:
+            # El límite se aplica SOLO en los endpoints de webhook
+            # (schmitz.py:270, dynamic_webhook.py:150). Un proveedor PULL no
+            # tiene webhook: el valor existe pero no se usa en ningún lado, y
+            # mostrarlo invita a creer que ahí hay algo para ajustar.
+            if (p.provider_type or "").strip().lower() != "push":
+                continue
             vigente = rate_limit._limit(p.provider_name)
             limites.append({
                 "proveedor": f"{p.provider_name}/{p.env}",
@@ -1013,7 +1199,12 @@ def precedencia_de_parametros(_auth: HTTPBasicCredentials = Depends(verify_dashb
 
         return {
             "limite_push": {
-                "descripcion": "Peticiones por minuto aceptadas en el webhook",
+                "titulo": "Límite de recepción (webhook)",
+                "descripcion": (
+                    "Peticiones por minuto que el hub ACEPTA en el webhook. Es un "
+                    "límite de entrada: no tiene nada que ver con lo que se despacha "
+                    "a Recurso Confiable, que lo gobierna la liberación por tanda."
+                ),
                 "precedencia": "panel → WEBHOOK_RATE_LIMIT_<PROVEEDOR> → WEBHOOK_RATE_LIMIT_PER_MIN → código",
                 "por_proveedor": limites,
             },
