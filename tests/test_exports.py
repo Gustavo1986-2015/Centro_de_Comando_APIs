@@ -489,3 +489,65 @@ def test_el_inventario_no_abre_los_archivos(app_exports, settings_tope, tmp_path
 
     monkeypatch.setattr("builtins.open", _open_vigilado)
     assert app_exports.get("/api/export/inventario", auth=auth).status_code == 200
+
+
+def test_una_fila_respaldada_dos_veces_no_se_cuenta_dos_veces(app_exports, settings_tope, tmp_path, auth):
+    """
+    La purga escribe el respaldo y DESPUÉS borra de la base. Si se interrumpe
+    entre las dos cosas, o se vuelve a correr, la misma fila puede quedar
+    escrita dos veces —en el mismo archivo o en el del día siguiente—. Antes el
+    dedup solo cubría base↔respaldo, así que el CSV de auditoría la contaba dos
+    veces y el total quedaba inflado.
+    """
+    settings_tope()
+    fila = {"id": 42, "chassis": "AB1234", "created_at": "2026-08-01T10:00:00", "code": "11"}
+
+    _escribir_jsonl(tmp_path / "db" / "backups_diarios", "schmitz_test",
+                    "procesados", "2026-08-01", [fila, fila])
+    _escribir_jsonl(tmp_path / "db" / "backups_diarios", "schmitz_test",
+                    "procesados", "2026-08-02", [fila])
+
+    r = app_exports.get(
+        "/api/export/enviados", auth=auth,
+        params={"provider": "schmitz", "env": "test",
+                "desde": "2026-08-01", "hasta": "2026-08-01"},
+    )
+    filas = _leer_csv(r.text)
+    assert len(filas) == 1, f"El evento 42 salió {len(filas)} veces"
+    assert filas[0]["chassis"] == "AB1234"
+
+
+def test_eventos_distintos_no_se_pierden_por_el_dedup(app_exports, settings_tope, tmp_path, auth):
+    """Deduplicar de más sería peor que duplicar: se perderían eventos reales."""
+    settings_tope()
+    _escribir_jsonl(
+        tmp_path / "db" / "backups_diarios", "schmitz_test", "procesados", "2026-08-01",
+        [{"id": i, "chassis": f"CH{i}", "created_at": "2026-08-01T10:00:00", "code": "1"}
+         for i in range(1, 6)],
+    )
+    r = app_exports.get(
+        "/api/export/enviados", auth=auth,
+        params={"provider": "schmitz", "env": "test",
+                "desde": "2026-08-01", "hasta": "2026-08-01"},
+    )
+    assert len(_leer_csv(r.text)) == 5
+
+
+def test_ids_repetidos_entre_proveedores_no_se_pisan(app_exports, settings_tope, tmp_path, auth):
+    """
+    Los ids son por shard: el evento 1 de schmitz y el 1 de protrack son
+    distintos. Un set compartido entre proveedores descartaría el segundo.
+    """
+    settings_tope()
+    for carpeta, chas in (("schmitz_test", "SCH"), ("protrack_test", "PRO")):
+        _escribir_jsonl(tmp_path / "db" / "backups_diarios", carpeta, "procesados",
+                        "2026-08-01",
+                        [{"id": 1, "chassis": chas,
+                          "created_at": "2026-08-01T10:00:00", "code": "1"}])
+
+    r = app_exports.get(
+        "/api/export/enviados", auth=auth,
+        params={"provider": "todos", "env": "todos",
+                "desde": "2026-08-01", "hasta": "2026-08-01"},
+    )
+    assert sorted(f["chassis"] for f in _leer_csv(r.text)) == ["PRO", "SCH"]

@@ -363,6 +363,13 @@ def exportar_enviados(
 
             # 2) Los respaldos: lo purgado. Se filtra por created_at real, no
             #    por el nombre del archivo (ver MARGEN_DIAS_PURGA).
+            #
+            #    Los ids emitidos desde los JSONL se suman a `vistos`, no solo
+            #    los de la base. La purga escribe el respaldo y DESPUÉS borra:
+            #    si se interrumpe entre las dos cosas, o se vuelve a correr, la
+            #    misma fila puede quedar respaldada dos veces, en el mismo
+            #    archivo o en el del día siguiente. Sin esto, el CSV de
+            #    auditoría la contaría dos veces.
             carpeta = os.path.join(BACKUP_DIR, f"{prov}_{ent}")
             for ruta in _archivos_por_dia(carpeta, "procesados", dias_archivo):
                 try:
@@ -377,8 +384,11 @@ def exportar_enviados(
                                 continue
                             if not _en_rango(registro.get("created_at"), d_desde, d_hasta):
                                 continue
-                            if registro.get("id") in vistos:
-                                continue
+                            id_evento = registro.get("id")
+                            if id_evento is not None:
+                                if id_evento in vistos:
+                                    continue
+                                vistos.add(id_evento)
                             registro.setdefault("provider", prov)
                             registro.setdefault("env", ent)
                             escritor.writerow(_fila_csv(registro, "respaldo"))

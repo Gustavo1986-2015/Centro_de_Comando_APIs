@@ -3283,9 +3283,15 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
                 const d = await res.json();
 
                 let filas = '';
+                // Solo proveedores PUSH: el backend ya filtra los PULL, que no
+                // tienen webhook donde aplicar este límite.
                 for (const p of d.limite_push.por_proveedor)
-                    filas += _filaPrecedencia(`Límite push — ${p.proveedor}`, p.vigente + ' req/min',
+                    filas += _filaPrecedencia(`Límite de recepción — ${p.proveedor}`,
+                                              p.vigente + ' req/min',
                                               p.origen, p.en_panel, p.en_entorno);
+                if (!d.limite_push.por_proveedor.length)
+                    filas += `<tr><td colspan="5" style="color:#6b7280;">
+                        Ningún proveedor PUSH configurado: el límite de recepción no aplica.</td></tr>`;
                 const t = d.liberacion_tanda;
                 filas += _filaPrecedencia('Liberación por tanda', t.vigente + ' eventos',
                                           t.origen, t.en_panel, t.en_entorno);
