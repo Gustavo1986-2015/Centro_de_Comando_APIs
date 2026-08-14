@@ -1051,7 +1051,7 @@ def test_el_panel_gana_sobre_el_entorno_en_el_limite_push(cliente, auth, monkeyp
     rate_limit._db_limit_cache.clear()
 
     db = get_session("system_config", "global")
-    db.add(ProviderConfig(provider_name="conlimite", env="test", rate_limit_per_min=40000))
+    db.add(ProviderConfig(provider_name="conlimite", env="test", provider_type="push", rate_limit_per_min=40000))
     db.commit()
     db.close()
 
@@ -1072,7 +1072,7 @@ def test_sin_valor_en_el_panel_manda_el_entorno(cliente, auth, monkeypatch):
     rate_limit._db_limit_cache.clear()
 
     db = get_session("system_config", "global")
-    db.add(ProviderConfig(provider_name="sinlimite", env="test", rate_limit_per_min=None))
+    db.add(ProviderConfig(provider_name="sinlimite", env="test", provider_type="push", rate_limit_per_min=None))
     db.commit()
     db.close()
 
@@ -1095,7 +1095,7 @@ def test_el_valor_vigente_es_el_que_devuelve_el_codigo_real(cliente, auth, monke
     rate_limit._db_limit_cache.clear()
 
     db = get_session("system_config", "global")
-    db.add(ProviderConfig(provider_name="verificar", env="test"))
+    db.add(ProviderConfig(provider_name="verificar", env="test", provider_type="push"))
     db.commit()
     db.close()
 
@@ -1249,7 +1249,7 @@ def test_el_limite_push_vacio_si_es_un_dato_y_viaja(cliente, auth):
     from app.models.config_models import ProviderConfig
 
     db = get_session("system_config", "global")
-    db.add(ProviderConfig(provider_name="sinlimite", env="test", rate_limit_per_min=None))
+    db.add(ProviderConfig(provider_name="sinlimite", env="test", provider_type="push", rate_limit_per_min=None))
     db.commit()
     db.close()
 
@@ -1310,3 +1310,245 @@ def test_avisa_en_el_log_cuando_cambia_el_modo_de_ingesta(cliente, auth, caplog)
 
     assert "modo de ingesta" in caplog.text
     assert "push → pull" in caplog.text
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# A5 — Correcciones de la auditoría de v1.8.0
+#
+# Tres de estos son bugs REALES que estaban en producción de código, no
+# hipótesis. Los tres nacían del mismo patrón: listas negras que enumeran lo
+# prohibido, así que una clave nueva pasa por defecto. Ahora es lista blanca.
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+# Todas las claves de conexión que existen hoy en el código, más una inventada
+# para probar el caso que importa: qué pasa con lo que nadie previó.
+BLOQUE_COMPLETO = {
+    "url": "https://api.ejemplo.com/track",
+    "method": "GET",
+    "auth_type": "basic",
+    "auth_user": "usuario_visible",
+    "auth_pass": "SECRETO_PASS",
+    "api_key": "SECRETO_APIKEY",
+    "apikey": "SECRETO_APIKEY2",
+    "secret": "SECRETO_SECRET",
+    "pass": "SECRETO_PASS2",
+    "x-api-key": "SECRETO_XAPIKEY",
+    "bearer_token": "SECRETO_BEARER",
+    "access_token": "SECRETO_ACCESSTOKEN",
+    "headers": '{"X-API-Key": "SECRETO_EN_HEADER", "Authorization": "Bearer SECRETO_AUTH"}',
+    "clave_que_nadie_previo": "SECRETO_FUTURO",
+}
+
+VALORES_SECRETOS = [v for k, v in BLOQUE_COMPLETO.items()
+                    if k not in ("url", "method", "auth_type", "auth_user")]
+
+
+@pytest.mark.parametrize("secreto", VALORES_SECRETOS)
+def test_ninguna_clave_de_conexion_se_filtra_al_yaml(cliente, auth, secreto):
+    """
+    La lista negra dejaba pasar access_token y el contenido de headers, que es
+    un JSON string donde vive la autenticación por cabecera. Con lista blanca,
+    lo que no es estructural no sale — incluida una clave que nadie previó.
+    """
+    from app.database import get_session
+    from app.models.config_models import ProviderConfig
+
+    db = get_session("system_config", "global")
+    db.add(ProviderConfig(provider_name="fuga", env="test",
+                          fetch_config=dict(BLOQUE_COMPLETO),
+                          enrichment_config=dict(BLOQUE_COMPLETO)))
+    db.commit()
+    db.close()
+
+    texto = cliente.get("/api/config/export", auth=auth).text
+    assert secreto not in texto, f"El export filtró {secreto!r}"
+
+
+def test_lo_estructural_si_sale(cliente, auth):
+    """Filtrar de más dejaría el archivo inútil como mapa."""
+    from app.database import get_session
+    from app.models.config_models import ProviderConfig
+
+    db = get_session("system_config", "global")
+    db.add(ProviderConfig(provider_name="mapa", env="test",
+                          fetch_config=dict(BLOQUE_COMPLETO)))
+    db.commit()
+    db.close()
+
+    tel = _descargar(cliente, auth)["proveedores"][0]["telemetria"]
+    assert tel["url"] == "https://api.ejemplo.com/track"
+    assert tel["auth_user"] == "usuario_visible"
+    assert tel["auth_type"] == "basic"
+    assert tel["method"] == "GET"
+
+
+@pytest.mark.parametrize("clave", [k for k in BLOQUE_COMPLETO
+                                   if k not in ("url", "method", "auth_type", "auth_user")])
+def test_el_import_no_borra_ninguna_credencial(cliente, auth, clave):
+    """
+    El bug crítico: el export quitaba 9 claves y el import reponía 4. El hueco
+    —api_key, apikey, pass, secret, x-api-key— hacía que un export→import de
+    rutina BORRARA la credencial. Ahora la regla es una sola y es simétrica.
+    """
+    import json as _json
+
+    from app.core.crypto import decrypt
+    from app.database import get_session
+    from app.models.config_models import ProviderConfig
+
+    db = get_session("system_config", "global")
+    db.add(ProviderConfig(provider_name="conservar", env="test", provider_type="pull",
+                          fetch_config=dict(BLOQUE_COMPLETO),
+                          enrichment_config=dict(BLOQUE_COMPLETO)))
+    db.commit()
+    db.close()
+
+    texto = _yaml_de(cliente, auth)
+    # Se cambia la URL para FORZAR la reescritura del bloque. Sin un cambio real
+    # el import no toca nada —correcto, pero entonces el test no probaría la
+    # conservación, que es justo lo que se rompía.
+    texto = texto.replace("url: https://api.ejemplo.com/track",
+                          "url: https://api.nueva.com/track")
+    assert _importar(cliente, auth, texto, sobrescribir=True).status_code == 200
+
+    conf = _leer("conservar")
+    fetch = _json.loads(decrypt(conf.fetch_config_enc))
+    assert fetch["url"] == "https://api.nueva.com/track", "No aplicó el cambio pedido"
+    assert fetch.get(clave) == BLOQUE_COMPLETO[clave], f"El import borró {clave!r}"
+    assert conf.enrichment_config.get(clave) == BLOQUE_COMPLETO[clave]
+
+
+def test_avisa_de_todo_lo_que_hay_que_recargar(cliente, auth):
+    """La lista sale de lo que la lista blanca dejó afuera, no de una enumeración."""
+    from app.database import get_session
+    from app.models.config_models import ProviderConfig
+
+    db = get_session("system_config", "global")
+    db.add(ProviderConfig(provider_name="avisar", env="test",
+                          fetch_config={"url": "https://x", "auth_pass": "p",
+                                        "headers": '{"X-API-Key":"k"}'}))
+    db.commit()
+    db.close()
+
+    faltan = " · ".join(_descargar(cliente, auth)["proveedores"][0]["credenciales_a_cargar"])
+    assert "contraseña del PULL" in faltan
+    assert "cabeceras HTTP" in faltan
+
+
+# ─── Validación de tipos y tamaño ────────────────────────────────────────────
+
+@pytest.mark.parametrize("campo,valor", [
+    ("intervalo_ejecucion_seg", "no_soy_un_numero"),
+    ("intervalo_purga_min", "quince"),
+    ("limite_push_por_min", -99999),
+    ("intervalo_ejecucion_seg", 0),
+    ("intervalo_purga_min", 999999),
+])
+def test_un_numero_invalido_se_rechaza_antes_de_tocar_la_base(cliente, auth, campo, valor):
+    """
+    Sin esto, SQLite guardaba cualquier cosa, el import commiteaba limpio y el
+    worker reventaba después haciendo aritmética sobre una cadena. El archivo
+    malo hay que rechazarlo en la puerta.
+    """
+    texto = f"formato: 1\nproveedores:\n- {{nombre: x, entorno: test, {campo}: {valor!r}}}"
+    r = _importar(cliente, auth, texto)
+    assert r.status_code == 400
+    assert campo in r.json()["detail"]
+    assert _leer("x") is None
+
+
+@pytest.mark.parametrize("campo", ["mapeo", "telemetria", "diccionario"])
+def test_un_bloque_que_no_es_diccionario_da_400_y_no_500(cliente, auth, campo):
+    """Antes rompía con `"str".get(...)` y devolvía un 500 opaco."""
+    texto = f"formato: 1\nproveedores:\n- {{nombre: x, entorno: test, {campo}: soy_un_string}}"
+    r = _importar(cliente, auth, texto)
+    assert r.status_code == 400, f"Devolvió {r.status_code} en vez de un 400 explicativo"
+    assert campo in r.json()["detail"]
+
+
+def test_un_tipo_que_no_es_push_ni_pull_se_rechaza(cliente, auth):
+    texto = "formato: 1\nproveedores:\n- {nombre: x, entorno: test, tipo: cualquiera}"
+    r = _importar(cliente, auth, texto)
+    assert r.status_code == 400
+    assert "push" in r.json()["detail"]
+
+
+def test_un_booleano_que_no_es_booleano_se_rechaza(cliente, auth):
+    texto = "formato: 1\nproveedores:\n- {nombre: x, entorno: test, activo: quizas}"
+    assert _importar(cliente, auth, texto).status_code == 400
+
+
+def test_un_archivo_enorme_se_rechaza_sin_parsearlo(cliente, auth):
+    """
+    yaml.safe_load expande aliases: un archivo chico con anidamiento explota en
+    memoria. El tope va ANTES de parsear, que es donde sirve.
+    """
+    from app.api.routers.config_backup import MAX_BYTES_RESPALDO
+
+    r = _importar(cliente, auth, "x" * (MAX_BYTES_RESPALDO + 1))
+    assert r.status_code == 400
+    assert "MB" in r.json()["detail"]
+
+
+def test_los_valores_validos_siguen_pasando(cliente, auth):
+    """Validar de más sería tan malo como no validar."""
+    texto = """
+formato: 1
+proveedores:
+- nombre: valido
+  entorno: test
+  tipo: push
+  activo: true
+  intervalo_ejecucion_seg: 55
+  intervalo_purga_min: 15
+  limite_push_por_min: 12000
+"""
+    assert _importar(cliente, auth, texto).status_code == 200
+    assert _leer("valido").run_interval_sec == 55
+
+
+# ─── DASHBOARD_USER y la tabla de precedencia ────────────────────────────────
+
+def test_el_usuario_del_panel_no_se_publica(cliente, auth):
+    """
+    Es la mitad de las credenciales de acceso. El archivo está pensado para
+    guardarse en cualquier lado: solo sale el nombre de la variable.
+
+    No se toca DASHBOARD_USER con monkeypatch: cambiarlo a mitad del test rompe
+    la autenticación del propio request, la respuesta pasa a ser un 401 y la
+    aserción de "no aparece" se cumpliría por la razón equivocada.
+    """
+    usuario = os.environ["DASHBOARD_USER"]
+    r = cliente.get("/api/config/export", auth=auth)
+    assert r.status_code == 200, "Sin un 200 el resto del test no prueba nada"
+    assert usuario not in r.text, "El export publicó el usuario del panel"
+    assert "DASHBOARD_USER" in yaml.safe_load(r.text)["entorno"]["secretas_definidas"]
+
+
+def test_el_limite_de_recepcion_solo_aparece_en_proveedores_push(cliente, auth):
+    """
+    El límite se aplica únicamente en los endpoints de webhook. Un PULL no
+    tiene webhook: mostrar la fila invita a ajustar algo que no se usa.
+    """
+    from app.database import get_session
+    from app.models.config_models import ProviderConfig
+
+    db = get_session("system_config", "global")
+    db.add(ProviderConfig(provider_name="empuja", env="test", provider_type="push"))
+    db.add(ProviderConfig(provider_name="consulta", env="test", provider_type="pull"))
+    db.commit()
+    db.close()
+
+    filas = _precedencia(cliente, auth)["limite_push"]["por_proveedor"]
+    nombres = [f["proveedor"] for f in filas]
+    assert "empuja/test" in nombres
+    assert "consulta/test" not in nombres, "Mostró el límite en un proveedor PULL"
+
+
+def test_la_descripcion_aclara_que_es_de_entrada(cliente, auth):
+    """Se confundía con el envío a RC, que lo gobierna la liberación por tanda."""
+    d = _precedencia(cliente, auth)["limite_push"]
+    assert "ACEPTA" in d["descripcion"]
+    assert "Recurso Confiable" in d["descripcion"]
+    assert d["titulo"] == "Límite de recepción (webhook)"

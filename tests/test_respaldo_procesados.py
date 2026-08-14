@@ -183,3 +183,76 @@ def test_evento_vacio_no_rompe_la_purga():
     assert registro["code"] is None
     assert registro["job_id"] is None
     assert registro["chassis"] is None
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Latencia del hub: datetime.now() local contra columna UTC
+#
+# Tercera aparición de la misma trampa. created_at lo escribe SQLite con
+# CURRENT_TIMESTAMP, que es UTC. El código restaba datetime.now(), que dentro
+# del contenedor devuelve hora local por el TZ=America/Argentina/Buenos_Aires
+# del Dockerfile. La resta daba -10800 s, el max(...,0.0) la clampaba, y la
+# latencia de proceso del hub leía CERO siempre — justo la métrica que se
+# estuvo mirando para decidir sobre el SLA de certificación.
+# ═══════════════════════════════════════════════════════════════════════════
+
+import inspect
+import re
+
+from app.worker import processor
+
+
+def _codigo_sin_comentarios(texto: str) -> str:
+    """
+    Quita los comentarios antes de analizar.
+
+    Sin esto el propio comentario que explica el bug —que menciona
+    `datetime.now()`— hacía saltar el test. Un test que se dispara con la
+    documentación del arreglo no verifica nada.
+    """
+    return "\n".join(
+        linea.split("#", 1)[0] for linea in texto.split("\n")
+    )
+
+
+def test_la_latencia_del_hub_no_se_calcula_con_hora_local():
+    """
+    Invariante de código, no de comportamiento: reproducir el bug exigiría
+    montar un lote completo con SOAP simulado, y el defecto es una sola línea.
+    Se verifica que la resta contra created_at use UTC explícito.
+
+    Este test falla contra v1.8.0 y pasa con el fix.
+    """
+    fuente = inspect.getsource(processor)
+    # El corte arranca en la condición, no en `hub_sec = max(`: el cálculo de la
+    # hora vive en la línea anterior y quedaba fuera del bloque analizado.
+    bloque = fuente[fuente.index("if db_event.created_at:"):]
+    bloque = _codigo_sin_comentarios(bloque[:bloque.index("transmision_sec = max(")])
+
+    assert "datetime.now(timezone.utc)" in bloque, (
+        "La latencia del hub vuelve a restar hora local contra created_at, que "
+        "está en UTC. En una zona horaria negativa el resultado queda clampeado "
+        "en 0.0 y la métrica lee cero siempre."
+    )
+    assert not re.search(r"datetime\.now\(\s*\)", bloque), (
+        "Quedó un datetime.now() sin zona horaria en el cálculo de latencia."
+    )
+
+
+def test_ninguna_comparacion_contra_created_at_usa_hora_local():
+    """
+    Invariante transversal: cualquier resta o comparación nueva contra
+    created_at o updated_at tiene que usar UTC. La trampa ya apareció en el
+    reaper y en la latencia del hub; esto frena la tercera.
+    """
+    fuente = _codigo_sin_comentarios(inspect.getsource(processor))
+    sospechosas = [
+        linea.strip()
+        for linea in fuente.split("\n")
+        if re.search(r"datetime\.now\(\s*\)", linea)
+        and ("created_at" in linea or "updated_at" in linea)
+    ]
+    assert not sospechosas, (
+        "Estas líneas comparan hora local contra una columna UTC:\n  "
+        + "\n  ".join(sospechosas)
+    )
