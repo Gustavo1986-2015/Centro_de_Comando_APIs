@@ -497,8 +497,19 @@ async def process_provider_events(provider: str, env: str):
                                 transmision_sec = None
                                 try:
                                     if db_event.created_at:
+                                        # created_at lo escribe SQLite con
+                                        # CURRENT_TIMESTAMP, que es UTC. Acá había
+                                        # un datetime.now(), que dentro del
+                                        # contenedor devuelve hora local por el
+                                        # TZ=America/Argentina/Buenos_Aires del
+                                        # Dockerfile: la resta daba -10800 s y el
+                                        # max(...,0.0) la clampaba, así que la
+                                        # latencia de proceso del hub leía 0
+                                        # SIEMPRE. Es la misma trampa que ya había
+                                        # aparecido en el reaper.
+                                        ahora_utc = datetime.now(timezone.utc).replace(tzinfo=None)
                                         hub_sec = max(
-                                            (datetime.now() - db_event.created_at).total_seconds() - elapsed_sec,
+                                            (ahora_utc - db_event.created_at).total_seconds() - elapsed_sec,
                                             0.0,
                                         )
                                         if hub_sec > 300:      # descartar outliers
