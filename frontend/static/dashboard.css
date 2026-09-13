@@ -1074,6 +1074,20 @@
 .health-chip.ok .health-icon   { color: var(--color-green-bright); }
 .health-chip.ok .health-detail { color: var(--color-gray-label); }
 
+/* Esperando datos: activa en configuracion, sin trafico todavia.
+   Va en VERDE TENUE, no en gris: la integracion esta encendida y lista, y
+   pintarla apagada mentiria al reves — fue el caso de SCHMITZ/PROD esperando
+   el arranque de la certificacion. Se distingue de 'Operativo' por la
+   intensidad y por el circulo vacio, no por el color.
+   Las integraciones DESACTIVADAS no llegan aca: no se muestran. */
+.health-chip.idle {
+    border-color: rgba(52, 211, 153, 0.25);
+    background: rgba(52, 211, 153, 0.04);
+}
+.health-chip.idle .health-icon  { color: rgba(52, 211, 153, 0.5); }
+.health-chip.idle .health-name  { color: rgba(52, 211, 153, 0.75); }
+.health-chip.idle .health-detail { color: var(--color-gray-label); }
+
 .health-chip.warn {
     border-color: rgba(234, 179, 8, 0.4);
     background: rgba(234, 179, 8, 0.07);

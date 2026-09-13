@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 
 from app.database import get_session
 from app.models.db_models import NormalizedRCEvent
-from app.models.config_models import ProviderConfig
+from app.models.config_models import ProviderConfig, DailyStat
 from app.worker.processor import _rc_circuit_breaker
 from datetime import datetime, timezone, timedelta
 from sqlalchemy import func, case
@@ -106,6 +106,39 @@ def _fetch_providers_sync() -> list:
         return providers
     finally:
         config_db.close()
+
+def _totales_del_dia_sync() -> dict:
+    """
+    Enviados y fallidos de HOY, leídos del acumulado diario.
+
+    Antes esto se contaba sobre `normalized_rc_events` con
+    `status='sent' AND created_at >= hoy`. El problema es que esa tabla es un
+    colchón de tránsito: la retención borra los eventos ya despachados a las
+    pocas horas. O sea que la tarjeta decía "ENVIADOS (HOY)" pero mostraba
+    "los que todavía no se purgaron" — con 24.915 eventos despachados en el
+    día, la tarjeta marcaba 1.939, que era justo lo que quedaba en disco.
+
+    `daily_stats` es un contador que suma al despachar y nunca se purga: es la
+    misma fuente que alimenta el Historial de Envíos Diarios. Leer de acá hace
+    que las dos vistas coincidan por construcción, en vez de por casualidad.
+    """
+    hoy = datetime.now(timezone.utc).date()
+    db = get_session("system_config", "global")
+    try:
+        fila = db.query(
+            func.coalesce(func.sum(DailyStat.sent_count), 0),
+            func.coalesce(func.sum(DailyStat.failed_count), 0),
+        ).filter(DailyStat.date == hoy).first()
+        return {"sent": int(fila[0] or 0), "failed": int(fila[1] or 0)}
+    except Exception as e:
+        # Que falle el acumulado no puede tumbar el dashboard entero: se
+        # devuelve None para que el llamador caiga al conteo sobre la tabla,
+        # que subestima pero no miente sobre su propia naturaleza.
+        logger.warning(f"No se pudo leer el acumulado diario: {e}")
+        return None
+    finally:
+        db.close()
+
 
 def _fetch_events_for_provider_sync(provider_name, provider_env, status_filter, today_start, thirty_secs_ago):
     """Queries SQLite de un proveedor específico. Sync, para ejecutar en ThreadPool."""
@@ -215,6 +248,15 @@ async def get_stats_data(
         throughput_count = int(stats.throughput or 0)
         throughput_per_provider[f"{provider_name}_{provider_env}"] = throughput_count
         recent_events_global.extend(recent)
+
+    # El acumulado diario manda sobre el conteo en tabla: la tarjeta dice "HOY"
+    # y tiene que decir la verdad aunque la retención ya haya purgado las filas.
+    # Si el acumulado no está disponible se usa el conteo sobre la tabla, que
+    # subestima, antes que dejar la tarjeta vacía.
+    acumulado = await asyncio.to_thread(_totales_del_dia_sync)
+    if acumulado is not None:
+        total_sent = acumulado["sent"]
+        total_failed = acumulado["failed"]
 
     # Ordenar los recientes de todas las BDs y quedarnos con los 200 últimos absolutos
     recent_events_global.sort(key=lambda x: x.updated_at or x.created_at, reverse=True)
@@ -471,6 +513,30 @@ async def logs_stream(request: Request, _=Depends(verify_dashboard_auth)):
 # millones de eventos) conviene poder ver el tamaño real y forzar la purga sin
 # esperar al próximo ciclo.
 
+def _espacio_recuperable_mb(ruta: str) -> float:
+    """
+    MB que devolvería un VACUUM: páginas marcadas como libres dentro del
+    archivo.
+
+    SQLite no encoge al borrar filas: marca las páginas como reutilizables y el
+    archivo conserva su tamaño. Por eso una integración puede mostrar 406 MB
+    con cero eventos, que sin este dato parece un error de conteo.
+    """
+    import sqlite3
+
+    try:
+        conn = sqlite3.connect(ruta, timeout=5.0)
+        try:
+            libres = conn.execute("PRAGMA freelist_count").fetchone()[0]
+            tam_pagina = conn.execute("PRAGMA page_size").fetchone()[0]
+            return round((libres * tam_pagina) / (1024 * 1024), 2)
+        finally:
+            conn.close()
+    except Exception:
+        # No poder consultarlo no es un error que deba romper el panel.
+        return 0.0
+
+
 @router.get("/api/maintenance/db-stats")
 async def db_stats(_=Depends(verify_dashboard_auth)):
     """Tamaño en disco y conteo de eventos por integración."""
@@ -478,6 +544,15 @@ async def db_stats(_=Depends(verify_dashboard_auth)):
     from app.models.db_models import NormalizedRCEvent
 
     resultado = []
+    # El corte de retención es el mismo que aplica la purga: así lo que el
+    # panel promete borrar coincide con lo que el botón borra de verdad.
+    try:
+        from app.worker.processor import obtener_parametros_rc
+        horas_retencion = obtener_parametros_rc()["retencion_horas"]
+    except Exception:
+        horas_retencion = 2
+    corte = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=horas_retencion)
+
     for ruta in sorted(glob.glob("./db/*/*.db")):
         rel = os.path.relpath(ruta, "./db").replace("\\", "/")
         partes = rel.split("/")
@@ -512,6 +587,33 @@ async def db_stats(_=Depends(verify_dashboard_auth)):
         except Exception as e:
             logger.warning(f"No se pudo contar eventos de {rel}: {e}")
 
+        # Lo purgable es lo ya despachado que ADEMÁS superó la retención. Antes
+        # esto contaba todo lo despachado sin mirar la antigüedad: el panel
+        # decía "1.945 purgables", se apretaba Purgar y no se borraba casi
+        # nada, porque purge_provider_events solo toca lo que pasó el corte.
+        # Un número que promete más de lo que cumple es peor que no tenerlo.
+        purgables = 0
+        try:
+            db = get_session(provider, env)
+            try:
+                purgables = (
+                    db.query(func.count(NormalizedRCEvent.id))
+                    .filter(
+                        NormalizedRCEvent.status.in_(["sent", "failed"]),
+                        NormalizedRCEvent.updated_at < corte,
+                    )
+                    .scalar()
+                ) or 0
+            finally:
+                db.close()
+        except Exception as e:
+            logger.warning(f"No se pudo contar lo purgable de {rel}: {e}")
+
+        # Espacio que devolvería un VACUUM: páginas libres dentro del archivo.
+        # Es lo que explica un archivo de 406 MB con cero eventos — SQLite no
+        # encoge al borrar. Sin este dato, ese caso parece un misterio.
+        recuperable_mb = _espacio_recuperable_mb(ruta)
+
         resultado.append({
             "provider": provider,
             "env": env,
@@ -519,8 +621,8 @@ async def db_stats(_=Depends(verify_dashboard_auth)):
             "size_mb": round(tamano / (1024 * 1024), 2),
             "total_events": total,
             "by_status": conteos,
-            # Lo purgable es lo ya despachado: pendientes y en proceso no se tocan
-            "purgeable": conteos["sent"] + conteos["failed"],
+            "purgeable": purgables,
+            "reclaimable_mb": recuperable_mb,
         })
 
     resultado.sort(key=lambda x: x["size_mb"], reverse=True)
