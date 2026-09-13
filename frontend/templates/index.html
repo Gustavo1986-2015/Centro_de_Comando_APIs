@@ -510,6 +510,9 @@
                     <div>
                         <label style="font-weight: bold; display: block; margin-bottom: 0.5rem;">Logs crudos (audit/):</label>
                         <select id="audit-retention-select" style="padding: 0.5rem; border-radius: 4px; background: var(--color-gray); color: white; border: none;">
+                            <option value="1">1 día</option>
+                            <option value="2">2 días</option>
+                            <option value="3">3 días</option>
                             <option value="7">7 días</option>
                             <option value="14">14 días</option>
                             <option value="30">30 días</option>
@@ -520,6 +523,9 @@
                     <div>
                         <label style="font-weight: bold; display: block; margin-bottom: 0.5rem;">Logs procesados (backups_diarios/):</label>
                         <select id="processed-retention-select" style="padding: 0.5rem; border-radius: 4px; background: var(--color-gray); color: white; border: none;">
+                            <option value="1">1 día</option>
+                            <option value="2">2 días</option>
+                            <option value="3">3 días</option>
                             <option value="7">7 días</option>
                             <option value="14">14 días</option>
                             <option value="30">30 días</option>
@@ -641,7 +647,7 @@
                 </div>
                 <div>
                     <label style="font-weight: bold;">Días de antigüedad (min 7):</label><br>
-                    <input type="number" id="purge-days" value="30" min="7" style="padding: 0.5rem; border-radius: 4px; background: var(--color-gray); color: white; border: none; width: 100px;">
+                    <input type="number" id="purge-days" value="30" min="1" style="padding: 0.5rem; border-radius: 4px; background: var(--color-gray); color: white; border: none; width: 100px;">
                 </div>
                 <div>
                     <label style="font-weight: bold;">Confirmación:</label><br>

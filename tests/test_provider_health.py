@@ -65,6 +65,9 @@ def test_estado_ok_cuando_todo_funciona():
     ph.report_auth_ok("protrack", "prod")
     ph.report_dict_sync_ok("protrack", "prod", 31)
     ph.report_fetch_ok("protrack", "prod")
+    # "Operativo" ahora exige trafico real: un sondeo que vuelve vacio deja la
+    # integracion en 'idle', que es justo lo que el panel tiene que distinguir.
+    ph.report_events_in("protrack", "prod", 12)
 
     e = _get(ph.get_health_snapshot(), "protrack", "prod")
     assert e["status"] == "ok"
@@ -148,6 +151,9 @@ def test_sync_exitosa_limpia_el_error_previo():
     ph.report_dict_error("protrack", "prod", "fallo temporal")
     ph.report_dict_sync_ok("protrack", "prod", 31)
     ph.report_fetch_ok("protrack", "prod")
+    # "Operativo" ahora exige trafico real: un sondeo que vuelve vacio deja la
+    # integracion en 'idle', que es justo lo que el panel tiene que distinguir.
+    ph.report_events_in("protrack", "prod", 12)
 
     e = _get(ph.get_health_snapshot(), "protrack", "prod")
     assert e["status"] == "ok"
@@ -159,6 +165,9 @@ def test_auth_ok_limpia_el_error_previo():
     ph.report_auth_error("protrack", "prod", "token vencido")
     ph.report_auth_ok("protrack", "prod")
     ph.report_fetch_ok("protrack", "prod")
+    # "Operativo" ahora exige trafico real: un sondeo que vuelve vacio deja la
+    # integracion en 'idle', que es justo lo que el panel tiene que distinguir.
+    ph.report_events_in("protrack", "prod", 12)
 
     e = _get(ph.get_health_snapshot(), "protrack", "prod")
     assert e["auth_ok"] is True
@@ -171,6 +180,9 @@ def test_fetch_ok_limpia_el_error_previo():
     ph.report_auth_ok("protrack", "prod")
     ph.report_fetch_error("protrack", "prod", "timeout")
     ph.report_fetch_ok("protrack", "prod")
+    # "Operativo" ahora exige trafico real: un sondeo que vuelve vacio deja la
+    # integracion en 'idle', que es justo lo que el panel tiene que distinguir.
+    ph.report_events_in("protrack", "prod", 12)
 
     e = _get(ph.get_health_snapshot(), "protrack", "prod")
     assert e["status"] == "ok"
@@ -184,6 +196,9 @@ def test_edades_en_segundos_no_timestamps():
     ph.set_mode("protrack", "prod", "pull")
     ph.report_dict_sync_ok("protrack", "prod", 5)
     ph.report_fetch_ok("protrack", "prod")
+    # "Operativo" ahora exige trafico real: un sondeo que vuelve vacio deja la
+    # integracion en 'idle', que es justo lo que el panel tiene que distinguir.
+    ph.report_events_in("protrack", "prod", 12)
 
     e = _get(ph.get_health_snapshot(), "protrack", "prod")
     assert isinstance(e["dict_age_sec"], int) and e["dict_age_sec"] >= 0
@@ -203,6 +218,7 @@ def test_diccionario_deshabilitado_no_marca_error():
     ph.set_mode("schmitz", "prod", "push")
     ph.report_dict_disabled("schmitz", "prod")
     ph.report_fetch_ok("schmitz", "prod")
+    ph.report_events_in("schmitz", "prod", 5)
 
     e = _get(ph.get_health_snapshot(), "schmitz", "prod")
     assert e["dict_enabled"] is False
@@ -320,3 +336,175 @@ def test_snapshot_es_serializable_a_json():
     ph.report_dict_sync_ok("protrack", "prod", 31)
     ph.report_fetch_ok("protrack", "prod")
     json.dumps(ph.get_health_snapshot())   # no debe lanzar
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Estado "idle": la integración existe y está sana, pero no recibe nada
+#
+# Antes, un proveedor sin tráfico se pintaba igual que uno procesando 87
+# ev/min. Eso rompía lo único para lo que sirve el encabezado: ver de un
+# vistazo qué está entrando y qué no.
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+def test_un_pull_que_sondea_bien_pero_vuelve_vacio_queda_idle():
+    """
+    La distinción que importa: consultar con éxito no es recibir. Protrack
+    puede responder 200 con cero posiciones durante horas.
+    """
+    ph.set_mode("protrack", "prod", "pull")
+    ph.report_auth_ok("protrack", "prod")
+    ph.report_dict_sync_ok("protrack", "prod", 29)
+    ph.report_fetch_ok("protrack", "prod")
+
+    e = _get(ph.get_health_snapshot(), "protrack", "prod")
+    assert e["status"] == "idle"
+    assert e["detail"] == "Esperando datos"
+
+
+def test_un_push_sin_trafico_queda_idle():
+    """Un webhook sano que no recibe nada tampoco está operativo."""
+    ph.set_mode("schmitz", "prod", "push")
+    ph.report_dict_disabled("schmitz", "prod")
+
+    e = _get(ph.get_health_snapshot(), "schmitz", "prod")
+    assert e["status"] == "idle"
+
+
+def test_con_eventos_entrando_pasa_a_operativo():
+    ph.set_mode("schmitz", "prod", "push")
+    ph.report_dict_disabled("schmitz", "prod")
+    ph.report_events_in("schmitz", "prod", 40)
+
+    e = _get(ph.get_health_snapshot(), "schmitz", "prod")
+    assert e["status"] == "ok"
+    assert e["event_age_sec"] is not None
+
+
+def test_cero_eventos_no_cuenta_como_trafico():
+    """
+    Un lote vacío no puede marcar la integración como activa: es exactamente
+    el caso que el estado idle viene a mostrar.
+    """
+    ph.set_mode("schmitz", "prod", "push")
+    ph.report_dict_disabled("schmitz", "prod")
+    ph.report_events_in("schmitz", "prod", 0)
+
+    assert _get(ph.get_health_snapshot(), "schmitz", "prod")["status"] == "idle"
+
+
+def test_el_silencio_prolongado_vuelve_a_idle(monkeypatch):
+    """
+    Una integración que recibió hace horas y dejó de recibir tiene que
+    apagarse sola. Si no, el panel muestra en verde algo que murió anoche.
+    """
+    import time as _time
+
+    ph.set_mode("schmitz", "prod", "push")
+    ph.report_dict_disabled("schmitz", "prod")
+    ph.report_events_in("schmitz", "prod", 10)
+    assert _get(ph.get_health_snapshot(), "schmitz", "prod")["status"] == "ok"
+
+    # Se envejece el último evento más allá del umbral, sin dormir el test.
+    entrada = ph._HEALTH[ph._key("schmitz", "prod")]
+    entrada["last_event_ts"] = _time.time() - (ph.SEGUNDOS_SIN_TRAFICO + 60)
+
+    e = _get(ph.get_health_snapshot(), "schmitz", "prod")
+    assert e["status"] == "idle"
+    assert "hace" in e["detail"]
+
+
+def test_un_error_real_sigue_ganando_sobre_idle():
+    """
+    idle es "sano pero ocioso". Un fallo de autenticación no puede quedar
+    escondido detrás de esa etiqueta: se vería apagado en vez de rojo.
+    """
+    ph.set_mode("protrack", "prod", "pull")
+    ph.report_auth_error("protrack", "prod", "token vencido")
+
+    assert _get(ph.get_health_snapshot(), "protrack", "prod")["status"] == "error"
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Una integración apagada no puede seguir mostrándose
+#
+# Bug real: PROTRACK/TEST tenía el worker apagado desde el panel y su píldora
+# seguía en el encabezado. `_HEALTH` vive en memoria y no se limpiaba sola: al
+# apagar el worker, la entrada sobrevivía y el panel mostraba algo que ya no
+# existía.
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+def _esta(snapshot, provider, env) -> bool:
+    """Si la integración aparece o no. _get lanza excepción cuando falta."""
+    return any(x["provider"] == provider and x["env"] == env for x in snapshot)
+
+
+def test_al_apagar_una_integracion_su_pildora_desaparece():
+    ph.set_mode("protrack", "test", "pull")
+    ph.report_auth_ok("protrack", "test")
+    assert _esta(ph.get_health_snapshot(), "protrack", "test")
+
+    ph.forget("protrack", "test")
+    assert not _esta(ph.get_health_snapshot(), "protrack", "test")
+
+
+def test_olvidar_no_toca_las_demas_integraciones():
+    """Apagar una no puede hacer desaparecer a las que siguen corriendo."""
+    ph.set_mode("protrack", "test", "pull")
+    ph.set_mode("protrack", "prod", "pull")
+    ph.report_auth_ok("protrack", "prod")
+
+    ph.forget("protrack", "test")
+
+    assert not _esta(ph.get_health_snapshot(), "protrack", "test")
+    assert _esta(ph.get_health_snapshot(), "protrack", "prod")
+
+
+def test_olvidar_algo_no_registrado_no_falla():
+    """El worker la llama en cada ciclo mientras está apagado: tiene que ser idempotente."""
+    ph.forget("inexistente", "prod")
+    ph.forget("inexistente", "prod")
+
+
+def test_una_integracion_activa_sin_trafico_dice_esperando_datos():
+    """
+    Distinción clave: 'esperando' no es 'apagado'. SCHMITZ/PROD estuvo activo y
+    listo durante días antes de que arrancara la certificación, y mostrarlo
+    apagado habría mentido al revés.
+    """
+    ph.set_mode("schmitz", "prod", "push")
+    ph.report_dict_disabled("schmitz", "prod")
+
+    e = _get(ph.get_health_snapshot(), "schmitz", "prod")
+    assert e["status"] == "idle"
+    assert e["detail"] == "Esperando datos"
+
+
+def test_una_integracion_push_figura_aunque_nunca_haya_recibido():
+    """
+    Hueco real: para los PUSH, set_mode vivía dentro del handler del webhook,
+    así que un proveedor activo que todavía no recibió nada no aparecía en el
+    encabezado. Schmitz estuvo encendido y esperando la certificación durante
+    días sin figurar en ningún lado.
+
+    Un worker corriendo es una integración viva, reciba o no.
+    """
+    ph.set_mode("schmitz", "prod", "push")
+
+    e = _get(ph.get_health_snapshot(), "schmitz", "prod")
+    assert e["status"] == "idle"
+    assert e["detail"] == "Esperando datos"
+    assert e["mode"] == "push"
+
+
+def test_el_ciclo_completo_alta_trafico_y_baja():
+    """Arranca el worker, entra tráfico, se apaga desde el panel."""
+    ph.set_mode("schmitz", "prod", "push")
+    assert _get(ph.get_health_snapshot(), "schmitz", "prod")["status"] == "idle"
+
+    ph.report_events_in("schmitz", "prod", 40)
+    assert _get(ph.get_health_snapshot(), "schmitz", "prod")["status"] == "ok"
+
+    ph.forget("schmitz", "prod")
+    assert not _esta(ph.get_health_snapshot(), "schmitz", "prod")
