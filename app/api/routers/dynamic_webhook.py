@@ -8,6 +8,7 @@ import asyncio
 from app.database import get_session
 from app.models.config_models import ProviderConfig
 from app.core.dynamic_mapper import DynamicMapper
+from app.core import provider_health
 from app.core.rate_limit import check_rate_limit
 from app.models.db_models import NormalizedRCEvent
 from app.core.auditor import log_raw_payload
@@ -112,6 +113,7 @@ def _save_dynamic_events(provider_name, env, canonical_events, payload):
                 next_retry_at=None
             ))
         db_provider.add_all(new_events)
+        provider_health.report_events_in(provider_name, env, len(new_events))
         db_provider.commit()
     except Exception as e:
         logger.warning(f"Excepción capturada en dynamic_webhook: {e}")

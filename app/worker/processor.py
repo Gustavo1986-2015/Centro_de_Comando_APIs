@@ -5,6 +5,7 @@ import time
 from sqlalchemy.orm import Session
 from datetime import datetime, timezone, timedelta
 
+from app.core import provider_health
 from app.database import get_session
 from app.models.db_models import NormalizedRCEvent
 from app.schemas.canonical import RCCanonicalModel
@@ -1082,6 +1083,13 @@ async def api_worker_loop(provider: str, env: str):
                 run_interval = config["run_interval_sec"]
                 purge_min = config["purge_interval_min"]
                 
+                if not is_active:
+                    # Apagado desde el panel: se borra su estado para que la
+                    # píldora desaparezca del encabezado. Sin esto, la entrada
+                    # en memoria sobrevivía y seguía mostrándose como si la
+                    # integración estuviera viva.
+                    provider_health.forget(provider, env)
+
                 if is_active:
                     # El worker simplemente procesa un lote de hasta 2000 eventos.
                     # Internamente `process_provider_events` particiona en sub-lotes de 50 
@@ -1321,6 +1329,15 @@ async def worker_loop():
                         f"{provider_name.upper()} ({env.upper()}) — modo {tipo.upper()}"
                     )
                     running_providers.add(clave)
+
+                    # La integración se registra al ARRANCAR el worker, no al
+                    # recibir el primer evento. Antes, un proveedor PUSH solo
+                    # aparecía en el encabezado cuando llegaba tráfico, porque
+                    # set_mode vivía dentro del handler del webhook: Schmitz
+                    # estuvo activo y esperando la certificación durante días
+                    # sin figurar en ningún lado. Un worker corriendo es una
+                    # integración viva, reciba o no.
+                    provider_health.set_mode(provider_name, env, tipo)
 
                     # El despachador hacia RC corre siempre: la cola se llena
                     # igual, venga por sondeo o por webhook.

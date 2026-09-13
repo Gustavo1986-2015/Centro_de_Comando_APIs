@@ -136,8 +136,12 @@
             if (!_providerHealth.length) return '';
 
             return _providerHealth.map(h => {
+                // Circulo vacio para 'idle': se distingue del lleno incluso
+                // sin color, que es lo que ve alguien con daltonismo o en una
+                // captura en blanco y negro.
                 const icon = h.status === 'error' ? '\u26A0'
                            : h.status === 'warn'  ? '\u25D1'
+                           : h.status === 'idle'  ? '\u25CB'
                            : '\u25CF';
 
                 // Throughput del proveedor (se cuenta por proveedor, no por env)
@@ -562,7 +566,14 @@
                     // El color acompaña el tamaño: a partir de 1 GB conviene mirarlo.
                     const cls = db.size_mb > 1024 ? 'size-alto'
                               : db.size_mb > 256  ? 'size-medio' : '';
-                    const puedePurgar = db.purgeable > 0;
+                    // El boton se habilita si hay filas que borrar O si hay
+                    // espacio que devolver al sistema. Antes solo miraba las
+                    // filas, y una base de 406 MB con cero eventos quedaba en
+                    // un callejon sin salida: nada que purgar, boton gris, y
+                    // ninguna forma de recuperar el disco desde el panel.
+                    const recuperable = db.reclaimable_mb || 0;
+                    const puedePurgar = db.purgeable > 0 || recuperable >= 1;
+                    const soloCompactar = db.purgeable === 0 && recuperable >= 1;
                     return `<tr>
                         <td><strong>${db.provider.toUpperCase()}</strong>
                             <span class="env-tag env-${db.env}">${db.env.toUpperCase()}</span></td>
@@ -572,12 +583,17 @@
                         <td>${b.processing.toLocaleString()}</td>
                         <td>${b.sent.toLocaleString()}</td>
                         <td class="${b.failed > 0 ? 'size-alto' : ''}">${b.failed.toLocaleString()}</td>
-                        <td><strong>${db.purgeable.toLocaleString()}</strong></td>
+                        <td><strong>${db.purgeable.toLocaleString()}</strong>
+                            ${recuperable >= 1 ? `<br><span style="font-size:0.7rem;color:var(--color-gray-label);">
+                                ${recuperable.toLocaleString()} MB recuperables</span>` : ''}</td>
                         <td>
                             <button class="btn-purge" ${puedePurgar ? '' : 'disabled'}
-                                    onclick="purgeNow('${db.provider}','${db.env}',${db.purgeable},event)"
-                                    title="${puedePurgar ? 'Respalda a JSONL y elimina los eventos ya despachados' : 'No hay eventos despachados para purgar'}">
-                                Purgar
+                                    onclick="purgeNow('${db.provider}','${db.env}',${db.purgeable},${recuperable},event)"
+                                    title="${soloCompactar
+                                        ? 'No hay eventos para borrar, pero se puede devolver al sistema el espacio libre del archivo'
+                                        : puedePurgar ? 'Respalda a JSONL y elimina los eventos ya despachados'
+                                        : 'No hay nada para purgar ni espacio para recuperar'}">
+                                ${soloCompactar ? 'Compactar' : 'Purgar'}
                             </button>
                         </td>
                     </tr>`;
@@ -588,12 +604,18 @@
             }
         }
 
-        async function purgeNow(provider, env, purgeable, ev) {
-            const ok = confirm(
-                `Purgar ${provider.toUpperCase()}/${env.toUpperCase()}\n\n` +
-                `Se respaldarán a JSONL y se eliminarán ${purgeable.toLocaleString()} eventos ya despachados.\n` +
-                `Los pendientes y los que están en proceso no se tocan.\n\n¿Continuar?`
-            );
+        async function purgeNow(provider, env, purgeable, recuperable, ev) {
+            // Dos operaciones distintas con el mismo boton, asi que el aviso
+            // tiene que decir cual de las dos va a pasar.
+            const mensaje = purgeable > 0
+                ? `Purgar ${provider.toUpperCase()}/${env.toUpperCase()}\n\n` +
+                  `Se respaldarán a JSONL y se eliminarán ${purgeable.toLocaleString()} eventos ya despachados.\n` +
+                  `Los pendientes y los que están en proceso no se tocan.\n\n¿Continuar?`
+                : `Compactar ${provider.toUpperCase()}/${env.toUpperCase()}\n\n` +
+                  `No hay eventos para borrar. Se devolverán al sistema unos ` +
+                  `${(recuperable || 0).toLocaleString()} MB de espacio libre dentro del archivo.\n` +
+                  `No se elimina ningún dato.\n\n¿Continuar?`;
+            const ok = confirm(mensaje);
             if (!ok) return;
 
             const btn = ev ? ev.currentTarget : null;

@@ -189,6 +189,7 @@ def _persist_batch(batch: list):
             if events_to_add:
                 db.add_all(events_to_add)
                 db.commit()
+                provider_health.report_events_in("schmitz", current_env, len(events_to_add))
         except Exception as e:
             logger.warning(f"Excepción capturada en schmitz: {e}")
             logger.error(f"Error saving batch: {e}")

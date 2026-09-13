@@ -350,10 +350,14 @@ def update_retention_config(
     request: Request,
     _auth: HTTPBasicCredentials = Depends(verify_dashboard_auth)
 ):
-    if not (7 <= body.audit_retention_days <= 90):
-        raise HTTPException(status_code=400, detail="Retención de auditoría debe estar entre 7 y 90 días")
-    if not (7 <= body.processed_retention_days <= 30):
-        raise HTTPException(status_code=400, detail="Retención de procesados debe estar entre 7 y 30 días")
+    # El mínimo bajó de 7 días a 1. Con la certificación a 40 msg/s un solo día
+    # de crudos son varios GB, y obligar a guardar una semana llenaba el disco
+    # sin que nadie pudiera evitarlo desde el panel. Un día sigue siendo un
+    # piso real: nunca se borra lo del día en curso.
+    if not (1 <= body.audit_retention_days <= 90):
+        raise HTTPException(status_code=400, detail="Retención de auditoría debe estar entre 1 y 90 días")
+    if not (1 <= body.processed_retention_days <= 30):
+        raise HTTPException(status_code=400, detail="Retención de procesados debe estar entre 1 y 30 días")
     if body.export_max_days is not None and not (1 <= body.export_max_days <= 31):
         raise HTTPException(status_code=400, detail="El tope de días por descarga debe estar entre 1 y 31")
 
