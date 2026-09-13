@@ -885,6 +885,9 @@ async def process_and_enqueue(
 
         if events_to_add:
             db_provider.add_all(events_to_add)
+            # Marca que esta integración está recibiendo de verdad. Un sondeo
+            # exitoso que vuelve vacío no cuenta: report_fetch_ok ya cubre eso.
+            provider_health.report_events_in(provider_name, env, len(events_to_add))
             db_provider.commit()
             trigger_worker(provider_name, env)
     except Exception as e:

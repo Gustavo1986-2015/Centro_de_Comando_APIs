@@ -68,11 +68,62 @@ def _entry(provider: str, env: str) -> dict:
             "auth_last_error": None,
             "last_fetch_ok_ts": None,    # último PULL exitoso
             "last_fetch_error": None,
+            # Último evento realmente ingresado. Es lo que distingue una
+            # integración que está recibiendo de una que solo existe: el PULL
+            # puede consultar con éxito y traer cero eventos, y un PUSH sano
+            # puede no recibir nada en horas.
+            "last_event_ts": None,
         }
     return _HEALTH[k]
 
 
 # ── Reportes desde el worker ─────────────────────────────────────────────────
+
+# Cuánto silencio convierte a una integración en "sin tráfico". Diez minutos
+# cubre con margen el sondeo más lento configurado hoy (55 s) y las ráfagas
+# espaciadas de un PUSH, sin que una pausa normal la apague.
+SEGUNDOS_SIN_TRAFICO = 600
+
+
+def _fmt_edad(seg: float) -> str:
+    """Antigüedad en palabras, para el detalle de la píldora."""
+    seg = int(seg)
+    if seg < 3600:
+        return f"{seg // 60}m"
+    if seg < 86400:
+        return f"{seg // 3600}h"
+    return f"{seg // 86400}d"
+
+
+def report_events_in(provider: str, env: str, cantidad: int = 1):
+    """
+    Registra que entraron eventos. Lo llaman los dos modos de ingesta.
+
+    Cero eventos NO cuenta: un PULL que consulta bien y vuelve vacío no está
+    recibiendo nada, y esa es exactamente la diferencia que la píldora tiene
+    que mostrar.
+    """
+    if cantidad <= 0:
+        return
+    with _LOCK:
+        _entry(provider, env)["last_event_ts"] = time.time()
+
+
+def forget(provider: str, env: str):
+    """
+    Borra el estado de una integración que se apagó desde el panel.
+
+    `_HEALTH` vive en memoria y nunca se limpiaba solo. Cuando se apagaba el
+    worker de un proveedor, su entrada quedaba ahí y la píldora seguía
+    apareciendo en el encabezado: se veía PROTRACK/TEST en naranja "Sin datos
+    todavía" cuando en realidad estaba desactivado. El panel mostraba algo que
+    ya no existía.
+
+    Es idempotente: llamarla sobre algo que no está registrado no hace nada.
+    """
+    with _LOCK:
+        _HEALTH.pop(_key(provider, env), None)
+
 
 def set_mode(provider: str, env: str, mode: str):
     """Marca la integración como 'pull' o 'push'."""
@@ -176,6 +227,20 @@ def _derive_status(e: dict) -> tuple[str, str]:
     if e.get("mode") == "pull" and e.get("last_fetch_ok_ts") is None:
         return "warn", "Sin datos todavía"
 
+    # Sin tráfico reciente no es "operativo": es una integración que existe
+    # pero no está recibiendo nada. Pintarla igual que una que procesa 87
+    # ev/min hace que el header no sirva para lo único que tiene que servir —
+    # ver de un vistazo qué está entrando y qué no.
+    #
+    # Es un estado propio y no un error: una integración recién dada de alta,
+    # o un proveedor que todavía no arrancó, están así legítimamente.
+    if not e.get("last_event_ts"):
+        return "idle", "Esperando datos"
+
+    inactividad = time.time() - e["last_event_ts"]
+    if inactividad > SEGUNDOS_SIN_TRAFICO:
+        return "idle", f"Esperando datos · sin tráfico hace {_fmt_edad(inactividad)}"
+
     return "ok", "Operativo"
 
 
@@ -217,6 +282,9 @@ def get_health_snapshot() -> list[dict]:
                     int(now - e["last_fetch_ok_ts"]) if e["last_fetch_ok_ts"] else None
                 ),
                 "fetch_error": e["last_fetch_error"],
+                "event_age_sec": (
+                    int(now - e["last_event_ts"]) if e["last_event_ts"] else None
+                ),
                 "rate": _rate_usage(e["provider"], e["env"]),
             })
     out.sort(key=lambda x: (x["provider"], x["env"]))
