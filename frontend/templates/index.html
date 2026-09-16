@@ -37,6 +37,7 @@
             <li id="tab-simulator" onclick="switchView('simulator')">Simulador de Webhooks</li>
             <li id="tab-history" onclick="switchView('history')">Historial Diario</li>
             <li id="tab-db-viewer" onclick="switchView('db-viewer')">Visor de Base de Datos</li>
+            <li id="tab-diagnostico" onclick="switchView('diagnostico')">Diagnóstico y Salud</li>
             <li id="tab-monitor" onclick="switchView('monitor')">Monitor Interno (APIs)</li>
             <li id="tab-console" onclick="switchView('console')">Consola en Vivo</li>
         </ul>
@@ -375,13 +376,10 @@
                         Un archivo por día. Retención configurable más abajo, en Retención de Logs.
                     </div>
                     <div class="donde-aviso">
-                        <strong>Cambio en esta versión:</strong> la retención de crudos ahora se
-                        aplica de verdad. Hasta la versión anterior había un error de ruta que
-                        hacía que <em>nunca</em> se borrara nada, así que los crudos se acumulaban
-                        sin límite. Si venías asumiendo que tenías el histórico completo guardado
-                        acá, revisá el valor de retención antes de que corra la primera limpieza:
-                        todo lo anterior a ese plazo se va a eliminar.
-                    </div>
+                    <strong>Retención de crudos.</strong> Los archivos anteriores al plazo
+                    configurado se eliminan automáticamente en la primera limpieza. Verificá el
+                    valor antes de cambiarlo si necesitás conservar un histórico más largo.
+                </div>
                 </div>
 
                 <div class="donde-card">
@@ -941,6 +939,79 @@
     </main>
 
     <!-- VISTA MONITOR INTERNO -->
+    <main id="view-diagnostico" style="display: none;">
+        <div class="recent-section" style="margin-top: 2rem;">
+            <h2>Diagnóstico de Latencia</h2>
+            <div class="donde-intro">
+                Cuánto tarda el hub en aceptar un mensaje de un proveedor PUSH, tramo por tramo.
+                Sirve para saber qué optimizar en vez de suponerlo, y para responder con datos
+                cuando un proveedor pregunta por los tiempos.
+            </div>
+
+            <details style="margin-top:1rem; font-size:0.85rem;">
+                <summary style="cursor:pointer; color:var(--color-green);">
+                    Qué mide y qué no — leer antes de compartir estos números</summary>
+                <div style="padding:0.9rem 0 0.2rem 0; line-height:1.8; color:#d4d4d8;">
+                    <strong>Qué mide.</strong> El tiempo que transcurre dentro del proceso, desde
+                    que recibe la petición hasta que responde. Los tramos son secuenciales y suman
+                    el total.<br><br>
+
+                    <strong>Qué NO mide.</strong> La red entre el proveedor y el servidor, la
+                    negociación TLS y el proxy que está delante. Nada de eso es observable desde
+                    adentro del proceso.<br><br>
+
+                    <strong>Cómo usarlo frente a un proveedor.</strong> Si el proveedor reporta
+                    una latencia mayor que el total de esta tabla, la diferencia corresponde a
+                    infraestructura: distancia física, TLS y proxy. Es un descarte, no una
+                    estimación — el hub no puede tardar menos de lo que mide acá ni más de lo que
+                    mide el proveedor.<br><br>
+
+                    <strong>Promedio contra percentiles.</strong> El promedio, el peor y el mejor
+                    cubren toda la corrida desde que arrancó la medición. La mediana y el p95
+                    salen de la ventana reciente, porque los percentiles necesitan las muestras
+                    guardadas. Un promedio bajo con p95 alto significa picos ocasionales; un
+                    promedio alto y parejo es otro problema, y se arregla distinto.<br><br>
+
+                    <strong>Qué exportar.</strong> El CSV trae las cuatro tablas —tramos,
+                    distribución, evolución por hora y retraso del proceso— con el encabezado de
+                    contexto. Es lo que conviene adjuntar si hace falta documentar una medición.
+                </div>
+            </details>
+
+            <div style="display:flex; gap:0.6rem; align-items:center; margin-top:1rem; flex-wrap:wrap;">
+                <label style="font-size:0.8rem;">Integración:</label>
+                <select id="latencia-filtro" onchange="cargarDiagnosticoLatencia()"
+                        style="padding:0.45rem; border-radius:4px; background:var(--color-gray);
+                               color:white; border:none;">
+                    <option value="">Todas</option>
+                </select>
+                <button class="btn-save" onclick="cargarDiagnosticoLatencia()"
+                        style="background:#6366F1; color:white;">Actualizar</button>
+                <button class="btn-save" onclick="descargarLatenciaCSV()"
+                        style="background:#10B981; color:white;">Descargar CSV</button>
+                <button class="btn-save" onclick="reiniciarDiagnosticoLatencia()"
+                        style="background:var(--color-gray); color:white;">Reiniciar medición</button>
+                <span id="latencia-muestras" style="font-size:0.8rem; color:#a1a1aa;"></span>
+            </div>
+
+            <div id="latencia-contenedor" style="margin-top:1rem;">
+                <div style="color:#a1a1aa; font-size:0.85rem;">Sin datos todavía.</div>
+            </div>
+        </div>
+
+        <div class="recent-section" style="margin-top: 2rem;">
+            <h2>Red de Seguridad de Ingesta</h2>
+            <div class="donde-intro">
+                Eventos a los que se respondió aceptado y todavía no están en la base.
+                Se reintentan solos hasta entrar: ninguno se descarta.
+            </div>
+            <div id="red-seguridad-contenedor" style="margin-top:1rem;">
+                <div style="color:#a1a1aa; font-size:0.85rem;">Consultando…</div>
+            </div>
+        </div>
+
+    </main>
+
     <main id="view-monitor" style="display: none;">
         <div class="recent-section">
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">

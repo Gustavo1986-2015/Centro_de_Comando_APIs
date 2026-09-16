@@ -57,11 +57,14 @@ def log_raw_payload(provider: str, env: str, payload: dict):
     log_file = os.path.join(month_dir, f"crudos_{day_str}.jsonl")
     json_str_strict = json.dumps(audit_record, ensure_ascii=False)
     try:
-        with open(log_file, "a", encoding="utf-8") as f:
-            f.write(json_str_strict + "\n")
+        # Anexador dedicado: un hilo y un descriptor abierto por archivo, con
+        # flush por lote. Antes esto hacía open/write/close por cada payload,
+        # sobre el mismo pool de hilos que la persistencia y las consultas del
+        # panel. A 40/s esa competencia se le sumaba a la latencia de ingesta.
+        from app.core.safety_net import anexador_por_ruta
+        anexador_por_ruta(log_file).anexar(json_str_strict)
     except Exception as e:
         logger.warning(f"Excepción capturada en auditor (log_raw_payload): {e}")
-        print(f"Error escribiendo auditoria para {provider}_{env}: {e}")
 
 def log_admin_action(action: str, params: dict, request, user: str):
     """
