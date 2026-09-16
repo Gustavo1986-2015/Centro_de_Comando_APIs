@@ -43,6 +43,35 @@
         }
 
         const _providerEventCounts = {};
+
+        // Caudal REAL, calculado por el servidor sobre la tabla completa.
+        //
+        // _providerEventCounts contaba eventos de la muestra de actividad
+        // reciente, que está acotada a 200 filas. A 40 msg/s esas 200 filas se
+        // consumen en 5 segundos, y la ventana de cálculo es de 60: la píldora
+        // marcaba 200 ev/min mientras entraban ~2.400. No era un error de
+        // aritmética, miraba una muestra truncada.
+        //
+        // El servidor ya publicaba este contador (dashboard.py:185-187) y el
+        // Monitor Interno ya lo consumía; la píldora simplemente no lo miraba.
+        // Clave: "proveedor_entorno". Ventana: 30 segundos.
+        let _throughputServidor = {};
+
+        const VENTANA_THROUGHPUT_SEG = 30;
+
+        function _caudalPorMinuto(proveedor, entorno) {
+            // El servidor cuenta sobre 30 s; la píldora muestra por minuto.
+            if (entorno) {
+                const n = _throughputServidor[`${proveedor}_${entorno}`.toLowerCase()];
+                return n ? Math.round(n * (60 / VENTANA_THROUGHPUT_SEG)) : 0;
+            }
+            // Sin entorno: sumar todos los del proveedor.
+            let total = 0;
+            for (const [clave, n] of Object.entries(_throughputServidor)) {
+                if (clave.toLowerCase().startsWith(`${proveedor.toLowerCase()}_`)) total += n;
+            }
+            return total ? Math.round(total * (60 / VENTANA_THROUGHPUT_SEG)) : 0;
+        }
         const _seenEventIds = new Set();
         const SEEN_IDS_MAX = 2000;
         const RATE_WINDOW_MS = 60_000;
@@ -101,7 +130,7 @@
             }
 
             bar.innerHTML = allProviders.map(key => {
-                const rate      = _providerEventCounts[key].length;
+                const rate      = _caudalPorMinuto(key, null);
                 const hasFailed = failedProviders.has(key);
                 const isActive  = rate > 0;
                 const cls       = hasFailed ? 'has-failed' : (isActive ? 'active' : 'inactive');
@@ -144,8 +173,9 @@
                            : h.status === 'idle'  ? '\u25CB'
                            : '\u25CF';
 
-                // Throughput del proveedor (se cuenta por proveedor, no por env)
-                const rate = (_providerEventCounts[h.provider] || []).length;
+                // Caudal real del servidor, por proveedor Y entorno.
+                // Antes contaba una muestra de 200 filas y sumaba PROD con TEST.
+                const rate = _caudalPorMinuto(h.provider, h.env);
 
                 // Detalle completo en el tooltip
                 const lines = [
@@ -572,8 +602,13 @@
                     // un callejon sin salida: nada que purgar, boton gris, y
                     // ninguna forma de recuperar el disco desde el panel.
                     const recuperable = db.reclaimable_mb || 0;
-                    const puedePurgar = db.purgeable > 0 || recuperable >= 1;
-                    const soloCompactar = db.purgeable === 0 && recuperable >= 1;
+                    // Lo despachado que todavía no venció la retención. El
+                    // operador puede querer liberarlo igual: es su decisión, y
+                    // como se respalda antes de borrar no hay pérdida.
+                    const despachados = (db.by_status?.sent || 0) + (db.by_status?.failed || 0);
+                    const sinVencer = Math.max(0, despachados - db.purgeable);
+                    const puedePurgar = db.purgeable > 0 || recuperable >= 1 || sinVencer > 0;
+                    const soloCompactar = db.purgeable === 0 && sinVencer === 0 && recuperable >= 1;
                     return `<tr>
                         <td><strong>${db.provider.toUpperCase()}</strong>
                             <span class="env-tag env-${db.env}">${db.env.toUpperCase()}</span></td>
@@ -584,11 +619,13 @@
                         <td>${b.sent.toLocaleString()}</td>
                         <td class="${b.failed > 0 ? 'size-alto' : ''}">${b.failed.toLocaleString()}</td>
                         <td><strong>${db.purgeable.toLocaleString()}</strong>
+                            ${sinVencer > 0 ? `<br><span style="font-size:0.7rem;color:var(--color-gray-label);">
+                                + ${sinVencer.toLocaleString()} sin vencer</span>` : ''}
                             ${recuperable >= 1 ? `<br><span style="font-size:0.7rem;color:var(--color-gray-label);">
                                 ${recuperable.toLocaleString()} MB recuperables</span>` : ''}</td>
                         <td>
                             <button class="btn-purge" ${puedePurgar ? '' : 'disabled'}
-                                    onclick="purgeNow('${db.provider}','${db.env}',${db.purgeable},${recuperable},event)"
+                                    onclick="purgeNow('${db.provider}','${db.env}',${db.purgeable},${recuperable},${sinVencer},event)"
                                     title="${soloCompactar
                                         ? 'No hay eventos para borrar, pero se puede devolver al sistema el espacio libre del archivo'
                                         : puedePurgar ? 'Respalda a JSONL y elimina los eventos ya despachados'
@@ -604,17 +641,33 @@
             }
         }
 
-        async function purgeNow(provider, env, purgeable, recuperable, ev) {
+        async function purgeNow(provider, env, purgeable, recuperable, sinVencer, ev) {
             // Dos operaciones distintas con el mismo boton, asi que el aviso
             // tiene que decir cual de las dos va a pasar.
-            const mensaje = purgeable > 0
-                ? `Purgar ${provider.toUpperCase()}/${env.toUpperCase()}\n\n` +
-                  `Se respaldarán a JSONL y se eliminarán ${purgeable.toLocaleString()} eventos ya despachados.\n` +
-                  `Los pendientes y los que están en proceso no se tocan.\n\n¿Continuar?`
-                : `Compactar ${provider.toUpperCase()}/${env.toUpperCase()}\n\n` +
-                  `No hay eventos para borrar. Se devolverán al sistema unos ` +
-                  `${(recuperable || 0).toLocaleString()} MB de espacio libre dentro del archivo.\n` +
-                  `No se elimina ningún dato.\n\n¿Continuar?`;
+            let ignorarRetencion = false;
+            let mensaje;
+
+            if (purgeable > 0) {
+                mensaje = `Purgar ${provider.toUpperCase()}/${env.toUpperCase()}\n\n` +
+                    `Se respaldarán a JSONL y se eliminarán ${purgeable.toLocaleString()} ` +
+                    `eventos ya despachados que superaron la retención.\n` +
+                    `Los pendientes y los que están en proceso no se tocan.\n\n¿Continuar?`;
+            } else if ((sinVencer || 0) > 0) {
+                // Nada vencido, pero hay despachados recientes. Se ofrece igual:
+                // es una decisión del operador y no implica pérdida, porque se
+                // respalda antes de borrar y solo alcanza lo ya enviado.
+                ignorarRetencion = true;
+                mensaje = `Purgar AHORA ${provider.toUpperCase()}/${env.toUpperCase()}\n\n` +
+                    `No hay eventos vencidos, pero hay ${sinVencer.toLocaleString()} ya ` +
+                    `despachados que aún no cumplieron la retención.\n\n` +
+                    `Se respaldan a JSONL y se eliminan igual. Los pendientes y los que ` +
+                    `están en proceso no se tocan.\n\n¿Continuar?`;
+            } else {
+                mensaje = `Compactar ${provider.toUpperCase()}/${env.toUpperCase()}\n\n` +
+                    `No hay eventos para borrar. Se devolverán al sistema unos ` +
+                    `${(recuperable || 0).toLocaleString()} MB de espacio libre dentro del archivo.\n` +
+                    `No se elimina ningún dato.\n\n¿Continuar?`;
+            }
             const ok = confirm(mensaje);
             if (!ok) return;
 
@@ -623,7 +676,9 @@
             if (btn) { btn.disabled = true; btn.textContent = 'Purgando...'; }
 
             try {
-                const res = await fetch(`/api/maintenance/purge/${provider}/${env}`, { method: 'POST' });
+                const res = await fetch(
+                    `/api/maintenance/purge/${provider}/${env}?ignorar_retencion=${ignorarRetencion}`,
+                    { method: 'POST' });
                 const data = await res.json().catch(() => ({}));
                 if (res.ok) {
                     if (btn) btn.textContent = 'Listo';
@@ -767,6 +822,9 @@
             document.getElementById('view-history').style.display = view === 'history' ? 'flex' : 'none';
             document.getElementById('view-db-viewer').style.display = view === 'db-viewer' ? 'flex' : 'none';
             document.getElementById('view-monitor').style.display = view === 'monitor' ? 'flex' : 'none';
+            if(document.getElementById('view-diagnostico')) {
+                document.getElementById('view-diagnostico').style.display = view === 'diagnostico' ? 'flex' : 'none';
+            }
             if(document.getElementById('view-console')) {
                 document.getElementById('view-console').style.display = view === 'console' ? 'flex' : 'none';
             }
@@ -780,6 +838,9 @@
             document.getElementById('tab-history').classList.toggle('active-tab', view === 'history');
             document.getElementById('tab-db-viewer').classList.toggle('active-tab', view === 'db-viewer');
             document.getElementById('tab-monitor').classList.toggle('active-tab', view === 'monitor');
+            if(document.getElementById('tab-diagnostico')) {
+                document.getElementById('tab-diagnostico').classList.toggle('active-tab', view === 'diagnostico');
+            }
             if(document.getElementById('tab-console')) {
                 document.getElementById('tab-console').classList.toggle('active-tab', view === 'console');
             }
@@ -802,6 +863,9 @@
                 cargarOpcionesDeExportacion();
                 cargarInventarioDeDatos();
                 cargarPrecedencia();
+            } else if (view === 'diagnostico') {
+                cargarDiagnosticoLatencia();
+                cargarRedSeguridad();
             } else if (view === 'simulator') {
                 loadSimulator();
             } else if (view === 'history') {
@@ -1158,6 +1222,8 @@
                 // La salud se actualiza temprano: si algo falla más abajo (por ejemplo
                 // un elemento del DOM ausente), la barra igual queda al día.
                 setProviderHealth(data.provider_health);
+                // Caudal real del servidor, para las píldoras del encabezado.
+                _throughputServidor = data.throughput || {};
                 updateMockBanner(data.mock_providers);
 
                 // Populate provider dropdown dynamically
@@ -3082,6 +3148,298 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
         // Van por endpoint, no por el DOM: los datos viven en archivos de disco
         // y en la base, y un solo día puede pesar varios GB.
 
+
+
+        // ─── Diagnóstico de latencia ────────────────────────────────────────
+
+        async function cargarDiagnosticoLatencia() {
+            const cont = document.getElementById('latencia-contenedor');
+            const info = document.getElementById('latencia-muestras');
+            if (!cont) return;
+            const filtro = (document.getElementById('latencia-filtro') || {}).value || '';
+            const [fp, fe] = filtro ? filtro.split(':') : ['', ''];
+            const qs = fp ? `?provider=${encodeURIComponent(fp)}&env=${encodeURIComponent(fe)}` : '';
+            try {
+                const res = await fetch('/api/diagnostico/latencia' + qs);
+                if (!res.ok) throw new Error('respuesta ' + res.status);
+                const d = await res.json();
+
+                // Poblar el selector con las integraciones que efectivamente
+                // tienen mediciones, conservando lo elegido.
+                const sel = document.getElementById('latencia-filtro');
+                if (sel && d.integraciones) {
+                    const actual = sel.value;
+                    sel.innerHTML = '<option value="">Todas</option>' +
+                        d.integraciones.map(k => {
+                            const [pr, en] = k.split(':');
+                            return `<option value="${k}">${pr.toUpperCase()} / ${en.toUpperCase()}</option>`;
+                        }).join('');
+                    sel.value = actual;
+                }
+
+                if (!d.muestras) {
+                    cont.innerHTML = '<div style="color:#a1a1aa;font-size:0.85rem;">' +
+                        'Todavía no entró tráfico PUSH desde que arrancó el hub.</div>';
+                    info.textContent = '';
+                    return;
+                }
+                // El promedio cubre TODA la corrida; mediana y p95 salen de la
+                // ventana reciente. Decirlo evita leer mal la tabla.
+                info.textContent = `${d.muestras.toLocaleString()} peticiones medidas` +
+                    (d.muestras_percentiles && d.muestras_percentiles < d.muestras
+                        ? ` · percentiles sobre las últimas ${d.muestras_percentiles.toLocaleString()}`
+                        : '');
+
+                // El total va al final y se destaca: es el número comparable
+                // contra lo que reporta el proveedor.
+                const filas = d.tramos.map(t => {
+                    const esTotal = t.tramo === 'total_handler';
+                    const estilo = esTotal
+                        ? 'font-weight:700;border-top:1px solid var(--color-gray);'
+                        : '';
+                    // La explicación va en el título: quien mira la tabla tiene
+                    // que entender qué mide cada fila sin abrir el código.
+                    const ayuda = (t.explicacion || '').replace(/"/g, '&quot;');
+                    return `<tr style="${estilo}">
+                        <td title="${ayuda}" style="cursor:help;">${t.etiqueta}
+                            <span style="color:#6b7280;font-size:0.7rem;">&#9432;</span></td>
+                        <td class="num">${t.promedio_ms.toFixed(2)} ms</td>
+                        <td class="num">${t.mediana_ms.toFixed(2)} ms</td>
+                        <td class="num">${t.p95_ms.toFixed(2)} ms</td>
+                        <td class="num" style="color:${t.peor_ms > 100 ? 'var(--color-yellow)' : 'inherit'};">
+                            ${t.peor_ms.toFixed(2)} ms</td>
+                        <td class="num">${(t.mejor_ms ?? 0).toFixed(2)} ms</td>
+                    </tr>`;
+                }).join('');
+
+                const total = d.tramos.find(t => t.tramo === 'total_handler');
+                const estimacion = total ? `
+                    <div style="margin-top:0.75rem;font-size:0.8rem;color:#a1a1aa;line-height:1.7;">
+                      Trabajo del proceso: <strong>${total.promedio_ms.toFixed(2)} ms</strong> de
+                      promedio. Lo que el proveedor reporte por encima de ese valor corresponde a
+                      red, TLS y proxy.<br>
+                      Umbral configurado: ${d.sla_ms} ms.
+                    </div>` : '';
+
+                // Distribución como barras: el porcentaje que cumple el umbral
+                // dice más que el promedio, y la forma muestra si los picos son
+                // raros o sistemáticos.
+                const maxPct = Math.max(...(d.distribucion || []).map(b => b.porcentaje), 1);
+                const barras = (d.distribucion || []).map(b => {
+                    const limite = b.tramo.startsWith('>') ? Infinity
+                                 : parseFloat(b.tramo.split('-')[1]);
+                    const cumple = limite <= d.sla_ms;
+                    return `<div style="display:flex;align-items:center;gap:0.5rem;margin-bottom:0.25rem;">
+                        <span style="width:90px;font-size:0.72rem;color:#a1a1aa;text-align:right;">${b.tramo}</span>
+                        <div style="flex:1;background:rgba(255,255,255,0.04);border-radius:3px;height:18px;position:relative;">
+                          <div style="width:${(b.porcentaje / maxPct * 100).toFixed(1)}%;height:100%;
+                               background:${cumple ? '#10B981' : 'var(--color-yellow)'};
+                               border-radius:3px;opacity:0.8;"></div>
+                        </div>
+                        <span style="width:110px;font-size:0.72rem;">
+                          ${b.porcentaje.toFixed(1)}% · ${b.peticiones.toLocaleString()}</span>
+                    </div>`;
+                }).join('');
+
+                const colorSla = d.bajo_sla_pct >= 95 ? '#10B981'
+                               : d.bajo_sla_pct >= 80 ? 'var(--color-yellow)' : '#EF4444';
+
+                // Aviso arriba de todo, donde no se pueda pasar por alto.
+                const avisoSla = d.alerta_sla ? `
+                    <div style="border-left:3px solid #EF4444;padding:0.75rem 1rem;
+                         background:rgba(239,68,68,0.06);border-radius:4px;
+                         font-size:0.85rem;margin-bottom:1rem;">
+                      <strong>El cumplimiento cayó por debajo del ${d.umbral_alerta_pct}%.</strong><br>
+                      Solo el ${d.bajo_sla_pct.toFixed(2)}% de las peticiones está bajo los
+                      ${d.sla_ms} ms. Revisar antes de que lo reporte el proveedor.
+                    </div>` : '';
+
+                cont.innerHTML = avisoSla + `
+                    <div style="overflow-x:auto;">
+                    <table class="inventario-tabla">
+                      <thead><tr>
+                        <th>Tramo</th><th class="num">Promedio</th><th class="num">Mediana</th>
+                        <th class="num">p95</th><th class="num">Peor</th><th class="num">Mejor</th>
+                      </tr></thead>
+                      <tbody>${filas}</tbody>
+                    </table></div>
+
+                    ${_bloqueRetrasoBucle(d.retraso_bucle)}
+
+                    <h3 style="margin:1.25rem 0 0.5rem 0;font-size:0.95rem;">
+                      Distribución del total dentro del hub</h3>
+                    <div style="font-size:0.8rem;margin-bottom:0.6rem;">
+                      Bajo el umbral de ${d.sla_ms} ms:
+                      <strong style="color:${colorSla};">${d.bajo_sla_pct.toFixed(2)}%</strong>
+                      de ${d.muestras.toLocaleString()} peticiones
+                    </div>
+                    ${barras}
+                    ${_tablaPorHora(d)}
+                    ${estimacion}
+                    <div style="font-size:0.72rem;color:#6b7280;margin-top:0.5rem;">
+                      Promedio, peor y mejor cubren toda la corrida. Mediana y p95 salen de la
+                      ventana reciente, porque los percentiles necesitan las muestras guardadas.
+                      Un promedio bajo con p95 alto es un problema distinto de una lentitud pareja.
+                    </div>`;
+            } catch (e) {
+                cont.innerHTML = '<div style="color:#a1a1aa;font-size:0.85rem;">No se pudo consultar el diagnóstico.</div>';
+                console.warn('Diagnóstico de latencia:', e);
+            }
+        }
+
+        function descargarLatenciaCSV() {
+            const filtro = (document.getElementById('latencia-filtro') || {}).value || '';
+            const [fp, fe] = filtro ? filtro.split(':') : ['', ''];
+            const qs = fp ? `?provider=${encodeURIComponent(fp)}&env=${encodeURIComponent(fe)}` : '';
+            window.location.href = '/api/diagnostico/latencia/csv' + qs;
+        }
+
+        function _tablaPorHora(d) {
+            // El acumulado desde el arranque es un número plano. La evolución
+            // muestra si el problema apareció a media corrida o si empeora con
+            // el tiempo, que es lo que un promedio esconde.
+            if (!d.por_hora || !d.por_hora.length) return '';
+            const filas = d.por_hora.map(h => {
+                const color = h.bajo_sla_pct >= 95 ? '#10B981'
+                            : h.bajo_sla_pct >= 80 ? 'var(--color-yellow)' : '#EF4444';
+                return `<tr>
+                    <td>${h.hora} UTC</td>
+                    <td class="num">${h.peticiones.toLocaleString()}</td>
+                    <td class="num">${h.promedio_ms.toFixed(2)} ms</td>
+                    <td class="num">${h.peor_ms.toFixed(2)} ms</td>
+                    <td class="num" style="color:${color};">${h.bajo_sla_pct.toFixed(1)}%</td>
+                </tr>`;
+            }).join('');
+            return `
+                <h3 style="margin:1.25rem 0 0.5rem 0;font-size:0.95rem;">Evolución por hora</h3>
+                <div style="overflow-x:auto;">
+                <table class="inventario-tabla">
+                  <thead><tr>
+                    <th>Hora</th><th class="num">Peticiones</th><th class="num">Promedio</th>
+                    <th class="num">Peor</th><th class="num">Bajo ${d.sla_ms} ms</th>
+                  </tr></thead>
+                  <tbody>${filas}</tbody>
+                </table></div>`;
+        }
+
+        function _edad(seg) {
+            if (seg < 60) return `${seg}s`;
+            if (seg < 3600) return `${Math.floor(seg / 60)} min`;
+            if (seg < 86400) return `${Math.floor(seg / 3600)} h`;
+            return `${Math.floor(seg / 86400)} d`;
+        }
+
+        function _bloqueRetrasoBucle(rb) {
+            // El tramo que el cronómetro no puede medir: si el bucle de eventos
+            // está trabado, la petición espera ANTES de llegar al handler.
+            // Es lo que separa "la latencia es de la red" de "es nuestra".
+            if (!rb || !rb.sondeos) return '';
+            // Si el pico ya no está vigente, se muestra en gris: es historia,
+            // no una alarma. Un número acumulado sin contexto temporal deja de
+            // informar y empieza a hacer ruido.
+            const color = !rb.pico_vigente ? '#6b7280'
+                        : rb.peor_ms < 25 ? '#10B981'
+                        : rb.peor_ms < 100 ? 'var(--color-yellow)' : '#EF4444';
+            return `
+                <h3 style="margin:1.25rem 0 0.5rem 0;font-size:0.95rem;">
+                  Retraso del bucle de eventos</h3>
+                <div style="font-size:0.8rem;color:#a1a1aa;margin-bottom:0.6rem;line-height:1.6;">
+                  Cuánto tarda el proceso en volver a atender. Se mide pidiendo dormir un
+                  tiempo fijo y comparando con lo que durmió de verdad. No lo cubre el
+                  desglose de arriba, porque ocurre <em>antes</em> de que la petición llegue
+                  al handler.
+                </div>
+                <div style="display:flex;gap:1.5rem;flex-wrap:wrap;font-size:0.85rem;">
+                  <div>Promedio <strong>${rb.promedio_ms.toFixed(2)} ms</strong></div>
+                  <div>Mediana <strong>${rb.mediana_ms.toFixed(2)} ms</strong></div>
+                  <div>p95 <strong>${rb.p95_ms.toFixed(2)} ms</strong></div>
+                  <div title="El mayor atraso registrado desde que arrancó la medición.">
+                    Peor <strong style="color:${color};">${rb.peor_ms.toFixed(2)} ms</strong>
+                    ${rb.peor_hace_seg !== null && rb.peor_hace_seg !== undefined
+                        ? `<span style="color:#6b7280;font-size:0.75rem;"> · hace ${_edad(rb.peor_hace_seg)}</span>`
+                        : ''}</div>
+                  <div style="color:#6b7280;">${rb.sondeos.toLocaleString()} sondeos</div>
+                </div>
+                <div style="border-left:3px solid ${color};padding:0.6rem 0.9rem;margin-top:0.6rem;
+                     background:rgba(255,255,255,0.03);border-radius:4px;font-size:0.82rem;">
+                  ${rb.veredicto}
+                </div>`;
+        }
+
+        async function reiniciarDiagnosticoLatencia() {
+            if (!confirm('Descartar las muestras acumuladas y empezar a medir de cero?')) return;
+            try {
+                await fetch('/api/diagnostico/latencia/reiniciar', { method: 'POST' });
+                cargarDiagnosticoLatencia();
+            } catch (e) {
+                console.warn('No se pudo reiniciar:', e);
+            }
+        }
+
+        // ─── Red de seguridad de ingesta ────────────────────────────────────
+
+        async function cargarRedSeguridad() {
+            const cont = document.getElementById('red-seguridad-contenedor');
+            if (!cont) return;
+            try {
+                const res = await fetch('/api/diagnostico/red-seguridad');
+                if (!res.ok) throw new Error('respuesta ' + res.status);
+                const d = await res.json();
+
+                if (!d.integraciones.length) {
+                    cont.innerHTML = `<div style="border-left:3px solid #10B981;padding:0.75rem 1rem;
+                        background:rgba(255,255,255,0.03);border-radius:4px;font-size:0.82rem;">
+                        Nada pendiente. Todos los eventos aceptados están en la base.</div>`;
+                    return;
+                }
+
+                const filas = d.integraciones.map(i => {
+                    const edad = i.antiguedad_mas_viejo_seg;
+                    const edadTxt = edad === null || edad === undefined ? '—'
+                                  : edad < 60 ? `${edad}s`
+                                  : edad < 3600 ? `${Math.floor(edad / 60)}m`
+                                  : `${Math.floor(edad / 3600)}h`;
+                    return `<tr>
+                        <td><strong>${i.provider.toUpperCase()}</strong>
+                            <span class="env-badge">${i.env.toUpperCase()}</span></td>
+                        <td class="num" style="color:${i.pendientes ? 'var(--color-yellow)' : 'inherit'};">
+                            ${i.pendientes.toLocaleString()}</td>
+                        <td class="num">${edadTxt}</td>
+                        <td class="num">${i.recuperados.toLocaleString()}</td>
+                        <td class="num" style="color:${i.en_cuarentena ? '#EF4444' : 'inherit'};">
+                            ${i.en_cuarentena.toLocaleString()}</td>
+                    </tr>`;
+                }).join('');
+
+                // Pendientes que no bajan es el problema silencioso que esta
+                // red viene a eliminar: se avisa fuerte.
+                const alerta = d.alerta ? `<div style="border-left:3px solid #EF4444;
+                    padding:0.75rem 1rem;background:rgba(239,68,68,0.06);border-radius:4px;
+                    font-size:0.82rem;margin-top:0.75rem;">
+                    <strong>El reintento no está progresando.</strong> Hay eventos esperando
+                    hace más de 5 minutos. Revisar si la base está bloqueada o el disco lleno.
+                    </div>` : '';
+
+                cont.innerHTML = `
+                    <div style="overflow-x:auto;">
+                    <table class="inventario-tabla">
+                      <thead><tr>
+                        <th>Integración</th><th class="num">Esperando</th>
+                        <th class="num">El más viejo</th><th class="num">Recuperados</th>
+                        <th class="num">En cuarentena</th>
+                      </tr></thead>
+                      <tbody>${filas}</tbody>
+                    </table></div>${alerta}
+                    <div style="font-size:0.72rem;color:#6b7280;margin-top:0.5rem;">
+                      "Esperando" son eventos con respuesta aceptada que todavía no entraron a la
+                      base; se reintentan solos. "En cuarentena" son los que no van a entrar nunca:
+                      quedan guardados con su motivo, no se borran.
+                    </div>`;
+            } catch (e) {
+                cont.innerHTML = '<div style="color:#a1a1aa;font-size:0.85rem;">No se pudo consultar la red de seguridad.</div>';
+                console.warn('Red de seguridad:', e);
+            }
+        }
 
         // ─── Respaldo de configuración ──────────────────────────────────────
         // El import es el endpoint que escribe: nunca se llama directo. Primero

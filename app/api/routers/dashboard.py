@@ -2,6 +2,7 @@ import os
 import re
 from fastapi import APIRouter, Request, Query, Depends, HTTPException
 from fastapi.responses import HTMLResponse, StreamingResponse
+import io
 from fastapi.templating import Jinja2Templates
 import asyncio
 import json
@@ -16,50 +17,152 @@ from app.worker.processor import _rc_circuit_breaker
 from datetime import datetime, timezone, timedelta
 from sqlalchemy import func, case
 
-from collections import deque
 import time as _time
+import threading as _threading
 
 
 
 PUSH_SLA_MS   = 250
 PUSH_WIN_SECS = 86400  # 24h
 
-push_latency_store: dict[str, deque] = {}
-# formato: { "schmitz": deque([(timestamp, latency_sec), ...]) }
+# Acumuladores en vez de muestras.
+#
+# Antes esto era un deque sin tope con 24 horas de muestras: a 40 msg/s son
+# 3.456.000 tuplas en memoria, y CADA consulta copiaba la lista entera y la
+# recorría dos veces. Medido: 992 ms por consulta contra 1,26 ms acotado. Es lo
+# que explica la degradación progresiva de una corrida de alto caudal — la
+# latencia arrancaba baja y subía durante el día.
+#
+# Acotar el deque arreglaba la memoria pero rompía el SIGNIFICADO: diez mil
+# muestras son cuatro minutos a 40 msg/s y cien horas a 100 eventos por minuto.
+# La ventana cambiaba sola según el caudal, y la tarjeta seguía diciendo "24h".
+#
+# Para un promedio no hace falta la lista: alcanzan la suma y la cantidad. Para
+# el cumplimiento del SLA, contar cuántas quedaron por debajo del umbral. Para
+# los percentiles, un histograma de rangos fijos.
+#
+# Resultado: promedio EXACTO sobre todos los eventos, cumplimiento EXACTO, y
+# percentiles aproximados al rango — con memoria constante, entren mil o diez
+# millones.
+
+# Bordes de los rangos del histograma, en milisegundos. Más finos alrededor del
+# SLA de 250 ms, que es donde interesa distinguir.
+BUCKETS_MS = (10, 25, 50, 100, 150, 200, 250, 350, 500, 750, 1000, 2000, 5000)
+
+
+def _nuevo_acumulador() -> dict:
+    return {
+        "count": 0,
+        "suma_ms": 0.0,
+        "min_ms": None,
+        "max_ms": 0.0,
+        "bajo_sla": 0,
+        # Un contador por rango, más uno final para lo que supera el último borde.
+        "buckets": [0] * (len(BUCKETS_MS) + 1),
+        "desde": _time.time(),
+    }
+
+
+# { "schmitz:prod": {acumulador} }
+push_latency_store: dict[str, dict] = {}
+
+# Protege el diccionario y los acumuladores. Sumar es O(1), así que el lock se
+# toma y se suelta al instante: ya no se copia nada adentro.
+_PUSH_LOCK = _threading.Lock()
+
 
 def record_push_latency(provider: str, latency: float):
     key = provider.lower()
-    if key not in push_latency_store:
-        push_latency_store[key] = deque()
-    push_latency_store[key].append((_time.time(), latency))
-    cutoff = _time.time() - PUSH_WIN_SECS
-    while push_latency_store[key] and push_latency_store[key][0][0] < cutoff:
-        push_latency_store[key].popleft()
+    ms = latency * 1000.0
+
+    # El rango se calcula fuera del lock: es la parte más costosa y no necesita
+    # exclusión.
+    indice = len(BUCKETS_MS)
+    for i, borde in enumerate(BUCKETS_MS):
+        if ms <= borde:
+            indice = i
+            break
+
+    with _PUSH_LOCK:
+        acc = push_latency_store.get(key)
+        if acc is None:
+            acc = push_latency_store[key] = _nuevo_acumulador()
+        acc["count"] += 1
+        acc["suma_ms"] += ms
+        acc["max_ms"] = max(acc["max_ms"], ms)
+        acc["min_ms"] = ms if acc["min_ms"] is None else min(acc["min_ms"], ms)
+        if ms <= PUSH_SLA_MS:
+            acc["bajo_sla"] += 1
+        acc["buckets"][indice] += 1
+
+
+def _percentil_de_buckets(buckets: list[int], total: int, p: float) -> float:
+    """
+    Percentil aproximado al borde del rango donde cae.
+
+    Es aproximado por construcción: informa el techo del rango, no el valor
+    exacto. Para decidir si hay picos alcanza de sobra, y cuesta memoria
+    constante en vez de guardar cada muestra.
+    """
+    objetivo = total * p
+    acumulado = 0
+    for i, n in enumerate(buckets):
+        acumulado += n
+        if acumulado >= objetivo:
+            return float(BUCKETS_MS[i]) if i < len(BUCKETS_MS) else float(BUCKETS_MS[-1])
+    return 0.0
+
+
+def reset_push_stats():
+    """Descarta los acumuladores. Para empezar a medir una corrida de cero."""
+    with _PUSH_LOCK:
+        push_latency_store.clear()
+
 
 def get_push_stats(provider_key: str | None = None) -> dict:
-    """Calcula avg_ms, compliance_pct y count para el provider dado (o todos)."""
-    if provider_key and provider_key.lower() != 'all':
-        # Las claves son "proveedor:entorno". Consultar solo por proveedor
-        # agrega sus entornos; con ":" filtra uno solo.
-        buscado = provider_key.lower()
-        if ":" in buscado:
-            samples = list(push_latency_store.get(buscado, []))
+    """Promedio y cumplimiento del SLA. Exactos, no muestreados."""
+    with _PUSH_LOCK:
+        if provider_key and provider_key.lower() != 'all':
+            buscado = provider_key.lower()
+            if ":" in buscado:
+                claves = [buscado] if buscado in push_latency_store else []
+            else:
+                claves = [k for k in push_latency_store if k.split(":")[0] == buscado]
         else:
-            samples = [
-                s for clave, q in push_latency_store.items()
-                if clave.split(":")[0] == buscado for s in q
-            ]
-    else:
-        samples = [s for q in push_latency_store.values() for s in q]
-    if not samples:
+            claves = list(push_latency_store.keys())
+
+        count = suma = bajo_sla = 0
+        maximo = 0.0
+        minimo = None
+        desde = None
+        buckets = [0] * (len(BUCKETS_MS) + 1)
+        for k in claves:
+            acc = push_latency_store[k]
+            count += acc["count"]
+            suma += acc["suma_ms"]
+            bajo_sla += acc["bajo_sla"]
+            maximo = max(maximo, acc["max_ms"])
+            if acc["min_ms"] is not None:
+                minimo = acc["min_ms"] if minimo is None else min(minimo, acc["min_ms"])
+            desde = acc["desde"] if desde is None else min(desde, acc["desde"])
+            for i, n in enumerate(acc["buckets"]):
+                buckets[i] += n
+
+    if not count:
         return {"avg_ms": 0.0, "compliance_pct": 100.0, "count": 0}
-    ms_vals    = [lat * 1000 for _, lat in samples]
-    compliant  = sum(1 for v in ms_vals if v <= PUSH_SLA_MS)
+
     return {
-        "avg_ms":          round(sum(ms_vals) / len(ms_vals), 3),
-        "compliance_pct":  round(compliant / len(ms_vals) * 100, 1),
-        "count":           len(ms_vals),
+        "avg_ms":         round(suma / count, 3),
+        "compliance_pct": round(bajo_sla / count * 100, 1),
+        "count":          count,
+        "min_ms":         round(minimo, 3) if minimo is not None else 0.0,
+        "max_ms":         round(maximo, 3),
+        "p50_ms":         _percentil_de_buckets(buckets, count, 0.50),
+        "p95_ms":         _percentil_de_buckets(buckets, count, 0.95),
+        "p99_ms":         _percentil_de_buckets(buckets, count, 0.99),
+        "midiendo_hace_seg": int(_time.time() - desde) if desde else 0,
     }
+
 
 
 from app.core.auth import verify_dashboard_auth
@@ -374,7 +477,10 @@ async def get_stats_data(
     push_stats = get_push_stats(provider_filter)
     # Incluir stats por proveedor para filtrado client-side
     push_per_provider = {
-        k: get_push_stats(k) for k in push_latency_store
+        # list() sobre las claves: record_push_latency puede insertar una
+        # clave nueva mientras esto corre, y ahí saltaba
+        # "dictionary changed size during iteration".
+        k: get_push_stats(k) for k in list(push_latency_store.keys())
     }
 
     return {
@@ -539,7 +645,18 @@ def _espacio_recuperable_mb(ruta: str) -> float:
 
 @router.get("/api/maintenance/db-stats")
 async def db_stats(_=Depends(verify_dashboard_auth)):
-    """Tamaño en disco y conteo de eventos por integración."""
+    """
+    Tamaño en disco y conteo de eventos por integración.
+
+    Todo el trabajo va a un hilo aparte: abre una conexión por base, cuenta por
+    estado, cuenta lo purgable y consulta el espacio libre. Hacerlo en el bucle
+    de eventos lo bloqueaba durante toda la consulta, y el panel la pide cada
+    60 segundos — con tráfico entrando, eso se traduce en latencia de recepción.
+    """
+    return await asyncio.to_thread(_db_stats_sync)
+
+
+def _db_stats_sync():
     import glob
     from app.models.db_models import NormalizedRCEvent
 
@@ -633,13 +750,17 @@ async def db_stats(_=Depends(verify_dashboard_auth)):
 
 
 @router.post("/api/maintenance/purge/{provider}/{env}")
-async def purge_now(provider: str, env: str, _=Depends(verify_dashboard_auth)):
+async def purge_now(provider: str, env: str, ignorar_retencion: bool = False,
+                    _=Depends(verify_dashboard_auth)):
     """
-    Fuerza la purga de una integración sin esperar el intervalo configurado.
+    Purga una integración a pedido, sin esperar el intervalo configurado.
 
-    Respeta exactamente las mismas reglas que la purga automática: solo elimina
-    eventos ya despachados (sent/failed) y respalda a JSONL antes de borrar.
-    Los pendientes y los que están en proceso no se tocan nunca.
+    Solo elimina eventos ya despachados (sent/failed) y respalda a JSONL antes
+    de borrar. Los pendientes y los que están en proceso no se tocan nunca.
+
+    Con `ignorar_retencion` alcanza además lo despachado que todavía no cumplió
+    el plazo. Es una decisión explícita del operador para liberar disco en el
+    momento: como respalda antes y solo toca lo ya enviado, no hay pérdida.
     """
     if not re.match(r"^[a-zA-Z0-9_]+$", provider) or not re.match(r"^[a-zA-Z0-9_]+$", env):
         raise HTTPException(status_code=400, detail="Proveedor o entorno inválido")
@@ -651,7 +772,7 @@ async def purge_now(provider: str, env: str, _=Depends(verify_dashboard_auth)):
 
     logger.info(f"Purga manual solicitada para {provider}/{env} desde el panel.")
     try:
-        await purge_provider_events(provider, env)
+        await purge_provider_events(provider, env, ignorar_retencion=ignorar_retencion)
     except Exception as e:
         logger.error(f"Error en purga manual de {provider}/{env}: {e}")
         raise HTTPException(status_code=500, detail=f"Error durante la purga: {e}")
@@ -779,4 +900,151 @@ async def queue_wait(_=Depends(verify_dashboard_auth)):
     return {
         "schmitz": obtener_estadisticas("schmitz"),
         "rechazos_auth": resumen_actual(),
+    }
+
+
+@router.get("/api/diagnostico/latencia")
+async def diagnostico_latencia(
+    provider: str | None = None,
+    env: str | None = None,
+    _=Depends(verify_dashboard_auth),
+):
+    """
+    Desglose de latencia por tramo dentro del hub.
+
+    Responde en qué tramo se va el tiempo de una petición de recepción.
+
+    IMPORTANTE para leer bien estos números: solo cubren lo que ocurre DENTRO
+    del proceso. La red, el TLS y el proxy no son observables desde acá. Lo que
+    el proveedor mida por encima de este total es, por descarte, infraestructura.
+    """
+    from app.core import latencia
+
+    datos = latencia.desglose(provider, env)
+    return {
+        **datos,
+        "integraciones": latencia.integraciones_medidas(),
+        # El tramo que el cronómetro no puede ver: cuánto se atrasa el bucle
+        # antes de que la petición llegue al handler.
+        "retraso_bucle": latencia.retraso_bucle(),
+        "nota": (
+            "Estos tramos miden solo lo que ocurre dentro del hub. La red, el "
+            "TLS y nginx quedan afuera y no son medibles desde el proceso: lo "
+            "que el proveedor reporta menos el 'Total dentro del hub' es "
+            "infraestructura."
+        ),
+        "nota_alcance": (
+            "El total mide el trabajo del proceso. La diferencia contra la "
+            "latencia que reporte el proveedor corresponde a red, TLS y proxy."
+        ),
+        }
+
+
+@router.get("/api/diagnostico/latencia/csv")
+async def exportar_latencia_csv(
+    provider: str | None = None,
+    env: str | None = None,
+    _=Depends(verify_dashboard_auth),
+):
+    """
+    Descarga el desglose como CSV, para adjuntar como evidencia.
+
+    Trae las dos tablas en un solo archivo: los tramos y la distribución. Un
+    promedio solo no alcanza para discutir una certificación; la distribución
+    muestra qué porcentaje cumplió y dónde están los picos.
+    """
+    import csv
+    import io as _io
+
+    from app.core import latencia
+
+    d = latencia.desglose(provider, env)
+    buffer = _io.StringIO()
+    w = csv.writer(buffer, delimiter=";")
+
+    etiqueta = f"{provider or 'todos'}/{env or 'todos'}"
+    w.writerow(["Desglose de latencia del hub"])
+    w.writerow(["Integracion", etiqueta])
+    w.writerow(["Generado", datetime.now(timezone.utc).isoformat()])
+    w.writerow(["Peticiones medidas", d["muestras"]])
+    w.writerow(["Umbral SLA (ms)", d["sla_ms"]])
+    w.writerow(["Bajo el umbral (%)", d["bajo_sla_pct"]])
+    w.writerow([])
+    w.writerow(["NOTA: estos tramos miden solo lo que ocurre dentro del hub. "
+                "La red, el TLS y nginx quedan afuera."])
+    w.writerow([])
+
+    w.writerow(["Tramo", "Promedio (ms)", "Mediana (ms)", "p95 (ms)",
+                "Peor (ms)", "Mejor (ms)", "Peticiones"])
+    for t in d["tramos"]:
+        w.writerow([t["etiqueta"], t["promedio_ms"], t["mediana_ms"], t["p95_ms"],
+                    t["peor_ms"], t.get("mejor_ms", ""), t["muestras"]])
+
+    w.writerow([])
+    w.writerow(["Distribucion del total", "Peticiones", "Porcentaje"])
+    for b in d["distribucion"]:
+        w.writerow([b["tramo"], b["peticiones"], b["porcentaje"]])
+
+    w.writerow([])
+    w.writerow(["Evolucion por hora (UTC)", "Peticiones", "Promedio (ms)",
+                "Peor (ms)", "Bajo el umbral (%)"])
+    for h in d.get("por_hora", []):
+        w.writerow([h["hora"], h["peticiones"], h["promedio_ms"],
+                    h["peor_ms"], h["bajo_sla_pct"]])
+
+    w.writerow([])
+    w.writerow(["Retraso del bucle de eventos"])
+    rb = latencia.retraso_bucle()
+    w.writerow(["Promedio (ms)", rb["promedio_ms"]])
+    w.writerow(["Peor (ms)", rb["peor_ms"]])
+    w.writerow(["Sondeos", rb["sondeos"]])
+    w.writerow(["Veredicto", rb["veredicto"]])
+
+    nombre = f"latencia_{(provider or 'todos')}_{(env or 'todos')}_{datetime.now().strftime('%Y-%m-%d')}.csv"
+    return StreamingResponse(
+        io.BytesIO(("\ufeff" + buffer.getvalue()).encode("utf-8")),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{nombre}"'},
+    )
+
+
+@router.post("/api/diagnostico/latencia/reiniciar")
+async def reiniciar_diagnostico_latencia(_=Depends(verify_dashboard_auth)):
+    """Descarta las muestras acumuladas para empezar a medir de cero."""
+    from app.core import latencia
+
+    latencia.limpiar()
+    return {"ok": True, "mensaje": "Muestras de latencia reiniciadas."}
+
+
+@router.get("/api/diagnostico/red-seguridad")
+async def diagnostico_red_seguridad(_=Depends(verify_dashboard_auth)):
+    """
+    Estado de la red de seguridad por integración.
+
+    Un reintento que nunca progresa es un problema silencioso: por eso se
+    expone la antigüedad del más viejo y no solo cuántos hay.
+    """
+    from app.core import safety_net
+
+    integraciones = []
+    for provider, env in safety_net.integraciones_con_pendientes():
+        est = safety_net.estado(provider, env)
+        est.update({"provider": provider, "env": env})
+        integraciones.append(est)
+
+    total_pendientes = sum(i["pendientes"] for i in integraciones)
+    total_cuarentena = sum(i["en_cuarentena"] for i in integraciones)
+    mas_viejo = max(
+        (i["antiguedad_mas_viejo_seg"] or 0 for i in integraciones), default=0
+    )
+
+    return {
+        "integraciones": integraciones,
+        "total_pendientes": total_pendientes,
+        "total_en_cuarentena": total_cuarentena,
+        "antiguedad_mas_viejo_seg": mas_viejo,
+        # El aviso que importa: pendientes que no bajan significan que el
+        # reintentador no está progresando.
+        "alerta": mas_viejo > 300,
     }

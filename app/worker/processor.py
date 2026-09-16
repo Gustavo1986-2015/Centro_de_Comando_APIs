@@ -937,8 +937,17 @@ def evento_a_registro_respaldo(r: NormalizedRCEvent, env: str) -> dict:
     }
 
 
-async def purge_provider_events(provider: str, env: str):
-    """Purga una BD individual eliminando solo los eventos enviados/fallidos anteriores al día de hoy local. Genera un backup JSON mensual y limpia backups > 30 días."""
+async def purge_provider_events(provider: str, env: str, ignorar_retencion: bool = False):
+    """
+    Purga una integración: respalda a JSONL y elimina eventos ya despachados.
+
+    Los pendientes y los que están en proceso NO se tocan nunca, en ningún modo.
+
+    `ignorar_retencion` es para la purga manual desde el panel. La automática
+    respeta siempre el plazo configurado; la manual es una decisión explícita
+    del operador que puede querer liberar disco antes de que venza. Como solo
+    alcanza lo ya despachado y siempre respalda primero, no hay pérdida.
+    """
     db: Session = get_session(provider, env)
     try:
         from datetime import datetime, timezone
@@ -959,7 +968,11 @@ async def purge_provider_events(provider: str, env: str):
         # La base es un colchón de tránsito: recibe, despacha y suelta. Lo que
         # ya salió hacia RC vive en los respaldos JSONL, no acá.
         horas_retencion = obtener_parametros_rc()["retencion_horas"]
-        corte = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=horas_retencion)
+        if ignorar_retencion:
+            # Corte en "ahora": alcanza todo lo despachado, sin esperar el plazo.
+            corte = datetime.now(timezone.utc).replace(tzinfo=None)
+        else:
+            corte = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=horas_retencion)
 
         # Los registros a eliminar, en streaming para no cargar todo en memoria
         query = db.query(NormalizedRCEvent).filter(
