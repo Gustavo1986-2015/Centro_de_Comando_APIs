@@ -206,3 +206,49 @@ def test_los_topes_superiores_siguen_vigentes(cliente_config, auth):
         auth=auth,
     )
     assert r.status_code == 400
+
+
+# ─── Purga a demanda ─────────────────────────────────────────────────────────
+
+def test_la_purga_manual_puede_alcanzar_lo_que_no_vencio(base_limpia, monkeypatch):
+    """
+    El operador tiene que poder liberar disco cuando lo necesita, sin esperar la
+    retención. Solo alcanza lo ya despachado y siempre respalda antes, así que
+    no hay pérdida: es una decisión suya, no un atajo peligroso.
+    """
+    import asyncio
+    from datetime import datetime, timezone
+
+    from app.database import check_and_migrate_provider_db, get_engine, get_session
+    from app.models.db_models import NormalizedRCEvent
+    from app.worker.processor import purge_provider_events
+
+    NormalizedRCEvent.metadata.create_all(bind=get_engine("schmitz", "prod"))
+    check_and_migrate_provider_db("schmitz", "prod")
+
+    ahora = datetime.now(timezone.utc).replace(tzinfo=None)
+    db = get_session("schmitz", "prod")
+    for i in range(10):
+        db.add(NormalizedRCEvent(chassis_number=f"R{i}", status="sent",
+                                 code="1", updated_at=ahora))
+    for i in range(3):
+        db.add(NormalizedRCEvent(chassis_number=f"P{i}", status="pending", code="1"))
+    db.commit()
+    db.close()
+
+    # Sin ignorar la retención: los recientes no se tocan.
+    asyncio.run(purge_provider_events("schmitz", "prod"))
+    db = get_session("schmitz", "prod")
+    assert db.query(NormalizedRCEvent).count() == 13, "Borró antes de tiempo"
+    db.close()
+
+    # Ignorándola: se van los despachados, nunca los pendientes.
+    asyncio.run(purge_provider_events("schmitz", "prod", ignorar_retencion=True))
+    db = get_session("schmitz", "prod")
+    restantes = db.query(NormalizedRCEvent).all()
+    db.close()
+
+    assert len(restantes) == 3, f"Debían quedar los 3 pendientes, quedaron {len(restantes)}"
+    assert all(e.status == "pending" for e in restantes), (
+        "La purga manual tocó algo que no estaba despachado"
+    )

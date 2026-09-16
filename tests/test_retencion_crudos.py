@@ -18,6 +18,7 @@ import time
 import pytest
 
 from app.core.auditor import log_raw_payload
+from app.core.safety_net import esperar_vaciado_global
 from app.worker import processor
 
 
@@ -54,6 +55,7 @@ def _correr_limpieza(monkeypatch, provider, env, audit_dias=30, procesados_dias=
 def test_la_limpieza_mira_el_mismo_directorio_que_escribe_el_auditor(disco, monkeypatch):
     """El bug exacto: la ruta de limpieza no coincidía con la de escritura."""
     log_raw_payload("schmitz", "test", {"ChassisNumber": "AB1234"})
+    esperar_vaciado_global()
 
     escritos = _archivos_crudos(disco)
     assert escritos, "El auditor no escribió nada; el test no prueba lo que dice"
@@ -71,6 +73,7 @@ def test_la_limpieza_mira_el_mismo_directorio_que_escribe_el_auditor(disco, monk
 def test_los_crudos_recientes_no_se_borran(disco, monkeypatch):
     """La retención borra lo vencido, no lo vigente."""
     log_raw_payload("schmitz", "test", {"ChassisNumber": "AB1234"})
+    esperar_vaciado_global()
     reciente = _archivos_crudos(disco)[0]
     _envejecer(reciente, dias=5)
 
@@ -82,6 +85,7 @@ def test_los_crudos_recientes_no_se_borran(disco, monkeypatch):
 def test_la_retencion_de_crudos_es_configurable(disco, monkeypatch):
     """El valor sale de SystemSettings, editable desde el panel."""
     log_raw_payload("protrack", "prod", {"imei": "123"})
+    esperar_vaciado_global()
     archivo = _archivos_crudos(disco)[0]
     _envejecer(archivo, dias=10)
 
@@ -95,6 +99,7 @@ def test_la_retencion_de_crudos_es_configurable(disco, monkeypatch):
 def test_la_limpieza_de_un_proveedor_no_toca_a_otro(disco, monkeypatch):
     """Cada proveedor y entorno tiene su propia carpeta y su propio ciclo."""
     log_raw_payload("schmitz", "test", {"a": 1})
+    esperar_vaciado_global()
     log_raw_payload("protrack", "prod", {"b": 2})
     for ruta in _archivos_crudos(disco):
         _envejecer(ruta, dias=60)
@@ -113,6 +118,7 @@ def test_el_contenido_del_crudo_no_se_altera_al_escribirlo(disco):
     """
     payload = {"ChassisNumber": "AB1234", "Nested": {"lista": [1, 2, {"x": None}]}}
     log_raw_payload("schmitz", "test", payload)
+    esperar_vaciado_global()
 
     with open(_archivos_crudos(disco)[0], encoding="utf-8") as f:
         registro = json.loads(f.readline())

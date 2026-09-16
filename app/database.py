@@ -265,11 +265,28 @@ def check_and_migrate_provider_db(provider: str, env: str):
             if "next_retry_at" not in columns:
                 cursor.execute("ALTER TABLE normalized_rc_events ADD COLUMN next_retry_at DATETIME")
                 conn.commit()
+            if "ingest_id" not in columns:
+                # Sin backfill: las filas viejas quedan en NULL y SQLite admite
+                # múltiples NULL en un índice único. Ver db_models.py.
+                cursor.execute("ALTER TABLE normalized_rc_events ADD COLUMN ingest_id TEXT")
+                conn.commit()
+                logger.info(
+                    f"Migración: columna ingest_id agregada en {provider}/{env}. "
+                    f"Las filas existentes quedan sin identificador, que es lo esperado."
+                )
             
             # Crear índices optimizados para selección rápida de lotes y búsquedas
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_pending_retry ON normalized_rc_events(status, next_retry_at, id)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_chassis_status ON normalized_rc_events(chassis_number, status)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_updated_processing ON normalized_rc_events(status, updated_at)")
+            # Índice ÚNICO: es la garantía de que un reintento no duplique.
+            # El INSERT del reintentador usa ON CONFLICT DO NOTHING contra este
+            # índice, así que reinsertar algo ya persistido no hace nada en vez
+            # de crear una copia que terminaría viajando a RC.
+            cursor.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_ingest_id_unico "
+                "ON normalized_rc_events(ingest_id)"
+            )
             conn.commit()
     except Exception as e:
         logger.warning(f"Migracion idempotente omitida: {e}")
@@ -293,7 +310,15 @@ def get_engine(provider: str, env: str = "prod"):
             except Exception:
                 pass  # Ya está en WAL o transient lock — ignorar
             cursor.execute("PRAGMA synchronous=NORMAL")
-            cursor.execute("PRAGMA busy_timeout=3000")
+            # 30 segundos, no 3. SQLite en WAL admite UN SOLO escritor por
+            # archivo: el consumidor del webhook insertando y el worker
+            # actualizando estados compiten permanentemente. Con 3 segundos, el
+            # que perdía la carrera FALLABA en vez de esperar, y en el camino
+            # PUSH ese fallo descartaba el lote (ver safety_net.py).
+            # Es mitigación, no solución: reduce la frecuencia del choque pero
+            # no elimina la posibilidad. La red de seguridad es lo que cierra
+            # el agujero.
+            cursor.execute("PRAGMA busy_timeout=30000")
             cursor.close()
         
         # Asegurar que los modelos estén registrados en Base.metadata
