@@ -252,3 +252,61 @@ def test_la_purga_manual_puede_alcanzar_lo_que_no_vencio(base_limpia, monkeypatc
     assert all(e.status == "pending" for e in restantes), (
         "La purga manual tocó algo que no estaba despachado"
     )
+
+
+# ─── La fecha de "hoy" tiene que ser la misma en las dos puntas ──────────────
+
+def test_el_contador_del_dia_usa_la_misma_fecha_que_el_acumulado(base_limpia):
+    """
+    Bug real detectado en producción: `daily_stats` se graba con
+    datetime.now().date() —hora LOCAL— y la tarjeta lo consultaba con la fecha
+    UTC. Entre las 21:00 y las 00:00 de Argentina son días distintos, así que
+    la tarjeta buscaba una fila que no existía y mostraba 0 mientras el
+    historial marcaba decenas de miles.
+
+    Es la cuarta aparición de la misma trampa de zona horaria en este código.
+    """
+    from datetime import datetime
+
+    from app.api.routers.dashboard import _totales_del_dia_sync
+    from app.database import get_session
+    from app.models.config_models import DailyStat
+
+    # Se graba igual que processor.py:787, con la fecha local.
+    hoy_local = datetime.now().date()
+    db = get_session("system_config", "global")
+    db.add(DailyStat(date=hoy_local, provider="schmitz", env="prod",
+                     sent_count=596, failed_count=0))
+    db.add(DailyStat(date=hoy_local, provider="protrack", env="prod",
+                     sent_count=42223, failed_count=0))
+    db.commit()
+    db.close()
+
+    totales = _totales_del_dia_sync()
+    assert totales["sent"] == 42819, (
+        "La tarjeta no encuentra lo que grabó el acumulado: las dos puntas "
+        "están usando zonas horarias distintas"
+    )
+
+
+def test_el_criterio_de_fecha_esta_escrito_en_un_solo_lugar():
+    """
+    Invariante contra la reaparición: si una punta usa hora local y la otra
+    UTC, vuelven a desincronizarse. Ya pasó.
+    """
+    import inspect
+
+    from app.api.routers import dashboard
+    from app.worker import processor
+
+    fuente_tarjeta = inspect.getsource(dashboard._totales_del_dia_sync)
+    assert "datetime.now(timezone.utc).date()" not in fuente_tarjeta, (
+        "La tarjeta volvió a consultar por fecha UTC mientras el acumulado se "
+        "graba con fecha local"
+    )
+    # Y confirmar que el acumulado sigue grabando en local, que es el criterio
+    # que se eligió: si eso cambia, hay que cambiar las dos puntas a la vez.
+    fuente_processor = inspect.getsource(processor)
+    assert "today_date = datetime.now().date()" in fuente_processor, (
+        "El acumulado cambió su criterio de fecha: revisar también la tarjeta"
+    )
