@@ -17,7 +17,15 @@ function extraer(nombre) {
   throw new Error(`Bloque sin cerrar en ${nombre}`);
 }
 
-const cuerpo = ['_edad', '_bloqueRetrasoBucle', '_tablaPorHora'].map(extraer).join('\n');
+// Variables de módulo que las funciones usan y no declaran ellas mismas.
+// Sin esto el verificador daría un falso positivo: el navegador sí las tiene.
+const declaraciones = [];
+for (const m of src.matchAll(/^\s{8}let (_\w+)\s*=\s*([^;]+);/gm)) {
+  declaraciones.push(`let ${m[1]} = ${m[2]};`);
+}
+
+const cuerpo = declaraciones.join('\n') + '\n' +
+  ['_edad', '_bloqueRetrasoBucle', '_tablaPorHora'].map(extraer).join('\n');
 
 // Se reconstruye el tramo que arma el HTML del diagnóstico.
 const ini = src.indexOf('                // Poblar el selector');

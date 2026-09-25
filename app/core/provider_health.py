@@ -73,16 +73,48 @@ def _entry(provider: str, env: str) -> dict:
             # puede consultar con éxito y traer cero eventos, y un PUSH sano
             # puede no recibir nada en horas.
             "last_event_ts": None,
+            # Intervalo típico entre eventos, promediado suavemente. Es lo que
+            # permite que el umbral de silencio se adapte a cada proveedor en
+            # vez de aplicar el mismo número a todos.
+            "intervalo_tipico_seg": None,
         }
     return _HEALTH[k]
 
 
 # ── Reportes desde el worker ─────────────────────────────────────────────────
 
-# Cuánto silencio convierte a una integración en "sin tráfico". Diez minutos
-# cubre con margen el sondeo más lento configurado hoy (55 s) y las ráfagas
-# espaciadas de un PUSH, sin que una pausa normal la apague.
-SEGUNDOS_SIN_TRAFICO = 600
+# Cuánto silencio convierte a una integración en "sin tráfico".
+#
+# NO es un número fijo: se adapta al ritmo de cada integración. Un valor único
+# no puede servir a la vez para un proveedor que manda 40 por segundo y para
+# otro que manda uno cada dos minutos.
+#
+# Con 600 segundos fijos, SCHMITZ/PROD —que promedia un evento cada ~130 s— se
+# apagaba en cualquier pausa nocturna normal y el panel mostraba "sin tráfico"
+# con tres placas reportando.
+#
+# El criterio: se considera silencio cuando pasó bastante más de lo que esa
+# integración suele tardar entre eventos. El intervalo típico se calcula solo,
+# observando lo que llega.
+SEGUNDOS_SIN_TRAFICO_MINIMO = 600      # piso: nunca apagar antes de 10 minutos
+SEGUNDOS_SIN_TRAFICO_MAXIMO = 7200     # techo: 2 h sin nada es silencio, seguro
+FACTOR_TOLERANCIA = 6                  # cuántos intervalos típicos se toleran
+
+
+def _umbral_silencio(e: dict) -> float:
+    """
+    Cuánto silencio tolera ESTA integración antes de considerarse inactiva.
+
+    Se deriva del intervalo típico observado entre eventos. Si todavía no hay
+    suficientes observaciones, se usa el piso.
+    """
+    tipico = e.get("intervalo_tipico_seg")
+    if not tipico:
+        return SEGUNDOS_SIN_TRAFICO_MINIMO
+    return min(
+        max(tipico * FACTOR_TOLERANCIA, SEGUNDOS_SIN_TRAFICO_MINIMO),
+        SEGUNDOS_SIN_TRAFICO_MAXIMO,
+    )
 
 
 def _fmt_edad(seg: float) -> str:
@@ -105,8 +137,19 @@ def report_events_in(provider: str, env: str, cantidad: int = 1):
     """
     if cantidad <= 0:
         return
+    ahora = time.time()
     with _LOCK:
-        _entry(provider, env)["last_event_ts"] = time.time()
+        e = _entry(provider, env)
+        anterior = e.get("last_event_ts")
+        if anterior:
+            intervalo = ahora - anterior
+            # Media móvil suave: un silencio puntual no dispara el umbral, y un
+            # cambio sostenido de ritmo sí se refleja en pocas observaciones.
+            previo = e.get("intervalo_tipico_seg")
+            e["intervalo_tipico_seg"] = (
+                intervalo if previo is None else (previo * 0.8 + intervalo * 0.2)
+            )
+        e["last_event_ts"] = ahora
 
 
 def forget(provider: str, env: str):
@@ -238,7 +281,7 @@ def _derive_status(e: dict) -> tuple[str, str]:
         return "idle", "Esperando datos"
 
     inactividad = time.time() - e["last_event_ts"]
-    if inactividad > SEGUNDOS_SIN_TRAFICO:
+    if inactividad > _umbral_silencio(e):
         return "idle", f"Esperando datos · sin tráfico hace {_fmt_edad(inactividad)}"
 
     return "ok", "Operativo"
@@ -282,6 +325,10 @@ def get_health_snapshot() -> list[dict]:
                     int(now - e["last_fetch_ok_ts"]) if e["last_fetch_ok_ts"] else None
                 ),
                 "fetch_error": e["last_fetch_error"],
+                "intervalo_tipico_seg": (
+                    round(e["intervalo_tipico_seg"], 1)
+                    if e.get("intervalo_tipico_seg") else None
+                ),
                 "event_age_sec": (
                     int(now - e["last_event_ts"]) if e["last_event_ts"] else None
                 ),

@@ -3294,12 +3294,26 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
             window.location.href = '/api/diagnostico/latencia/csv' + qs;
         }
 
+        // Sentido del orden de la tabla por hora. Arranca en descendente: lo
+        // más reciente primero, que es lo que uno quiere ver al abrir el panel.
+        let _ordenHoraDesc = true;
+
+        function ordenarPorHora() {
+            _ordenHoraDesc = !_ordenHoraDesc;
+            cargarDiagnosticoLatencia();
+        }
+
         function _tablaPorHora(d) {
             // El acumulado desde el arranque es un número plano. La evolución
             // muestra si el problema apareció a media corrida o si empeora con
             // el tiempo, que es lo que un promedio esconde.
             if (!d.por_hora || !d.por_hora.length) return '';
-            const filas = d.por_hora.map(h => {
+            // El backend devuelve ascendente; se ordena acá para no pedir de
+            // nuevo al servidor por un cambio de vista.
+            const horas = [...d.por_hora].sort((a, b) =>
+                _ordenHoraDesc ? b.hora.localeCompare(a.hora) : a.hora.localeCompare(b.hora));
+
+            const filas = horas.map(h => {
                 const color = h.bajo_sla_pct >= 95 ? '#10B981'
                             : h.bajo_sla_pct >= 80 ? 'var(--color-yellow)' : '#EF4444';
                 return `<tr>
@@ -3315,7 +3329,10 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
                 <div style="overflow-x:auto;">
                 <table class="inventario-tabla">
                   <thead><tr>
-                    <th>Hora</th><th class="num">Peticiones</th><th class="num">Promedio</th>
+                    <th onclick="ordenarPorHora()" style="cursor:pointer;user-select:none;"
+                        title="Clic para invertir el orden">
+                      Hora ${_ordenHoraDesc ? '&#9660;' : '&#9650;'}</th>
+                    <th class="num">Peticiones</th><th class="num">Promedio</th>
                     <th class="num">Peor</th><th class="num">Bajo ${d.sla_ms} ms</th>
                   </tr></thead>
                   <tbody>${filas}</tbody>
