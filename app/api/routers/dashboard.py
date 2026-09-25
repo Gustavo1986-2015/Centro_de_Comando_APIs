@@ -225,7 +225,17 @@ def _totales_del_dia_sync() -> dict:
     misma fuente que alimenta el Historial de Envíos Diarios. Leer de acá hace
     que las dos vistas coincidan por construcción, en vez de por casualidad.
     """
-    hoy = datetime.now(timezone.utc).date()
+    # Fecha LOCAL, no UTC.
+    #
+    # `daily_stats` se graba con datetime.now().date() (processor.py:787), que
+    # es hora local. Consultarlo con la fecha UTC hacía que, entre las 21:00 y
+    # las 00:00 de Argentina, la tarjeta buscara el día siguiente, no
+    # encontrara la fila y mostrara 0 con el historial marcando miles.
+    #
+    # Las dos puntas tienen que usar el mismo criterio. Se elige el local
+    # porque es el que ya usa el acumulado y el que ve el operador: "hoy" para
+    # quien mira el panel es su hoy, no el de UTC.
+    hoy = datetime.now().date()
     db = get_session("system_config", "global")
     try:
         fila = db.query(

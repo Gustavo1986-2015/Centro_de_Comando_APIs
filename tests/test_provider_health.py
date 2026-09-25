@@ -407,7 +407,7 @@ def test_el_silencio_prolongado_vuelve_a_idle(monkeypatch):
 
     # Se envejece el último evento más allá del umbral, sin dormir el test.
     entrada = ph._HEALTH[ph._key("schmitz", "prod")]
-    entrada["last_event_ts"] = _time.time() - (ph.SEGUNDOS_SIN_TRAFICO + 60)
+    entrada["last_event_ts"] = _time.time() - (ph.SEGUNDOS_SIN_TRAFICO_MAXIMO + 60)
 
     e = _get(ph.get_health_snapshot(), "schmitz", "prod")
     assert e["status"] == "idle"
@@ -508,3 +508,96 @@ def test_el_ciclo_completo_alta_trafico_y_baja():
 
     ph.forget("schmitz", "prod")
     assert not _esta(ph.get_health_snapshot(), "schmitz", "prod")
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# El umbral de silencio se adapta al ritmo de cada integración
+#
+# Bug real: SCHMITZ/PROD promedia un evento cada ~130 segundos. Con un umbral
+# fijo de 600 s, cualquier pausa nocturna normal lo apagaba y el panel decía
+# "sin tráfico" con tres placas reportando. Un número único no puede servir a
+# la vez para 40 eventos por segundo y para uno cada dos minutos.
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+def test_un_proveedor_de_bajo_caudal_no_se_apaga_en_una_pausa_normal():
+    """El caso exacto del bug: eventos espaciados, pausa normal, sigue activo."""
+    import time as _time
+
+    ph.set_mode("schmitz", "prod", "push")
+    ph.report_dict_disabled("schmitz", "prod")
+
+    # Ritmo observado: un evento cada ~130 segundos.
+    entrada = ph._HEALTH[ph._key("schmitz", "prod")]
+    for _ in range(6):
+        ph.report_events_in("schmitz", "prod", 1)
+        entrada["last_event_ts"] -= 130
+
+    entrada["last_event_ts"] = _time.time() - 700     # 11 min de silencio
+
+    e = _get(ph.get_health_snapshot(), "schmitz", "prod")
+    assert e["status"] == "ok", (
+        f"Se apagó con una pausa normal para su ritmo: {e['detail']}"
+    )
+
+
+def test_un_silencio_desproporcionado_si_lo_apaga():
+    """Adaptarse no puede significar no detectar nunca una caída."""
+    import time as _time
+
+    ph.set_mode("schmitz", "prod", "push")
+    ph.report_dict_disabled("schmitz", "prod")
+
+    entrada = ph._HEALTH[ph._key("schmitz", "prod")]
+    for _ in range(6):
+        ph.report_events_in("schmitz", "prod", 1)
+        entrada["last_event_ts"] -= 130
+
+    entrada["last_event_ts"] = _time.time() - 3600    # una hora sin nada
+
+    e = _get(ph.get_health_snapshot(), "schmitz", "prod")
+    assert e["status"] == "idle", "Una hora de silencio en un ritmo de 2 min es una caída"
+
+
+def test_el_umbral_nunca_baja_del_piso():
+    """
+    Un proveedor de altísimo caudal tendría un intervalo típico de milésimas.
+    Sin piso, un parpadeo de dos segundos lo apagaría.
+    """
+    ph.set_mode("rafaga", "prod", "push")
+    entrada = ph._HEALTH[ph._key("rafaga", "prod")]
+    entrada["intervalo_tipico_seg"] = 0.025          # 40 por segundo
+
+    assert ph._umbral_silencio(entrada) == ph.SEGUNDOS_SIN_TRAFICO_MINIMO
+
+
+def test_el_umbral_nunca_supera_el_techo():
+    """Un proveedor muy lento no puede volverse indetectable."""
+    ph.set_mode("lento", "prod", "pull")
+    entrada = ph._HEALTH[ph._key("lento", "prod")]
+    entrada["intervalo_tipico_seg"] = 86400          # uno por día
+
+    assert ph._umbral_silencio(entrada) == ph.SEGUNDOS_SIN_TRAFICO_MAXIMO
+
+
+def test_sin_observaciones_usa_el_piso():
+    """Recién arrancado, sin historia, el criterio conservador."""
+    ph.set_mode("nuevo", "prod", "push")
+    entrada = ph._HEALTH[ph._key("nuevo", "prod")]
+    assert ph._umbral_silencio(entrada) == ph.SEGUNDOS_SIN_TRAFICO_MINIMO
+
+
+def test_el_intervalo_tipico_se_aprende_solo():
+    """Nadie lo configura: sale de observar lo que llega."""
+    ph.set_mode("aprende", "prod", "push")
+    entrada = ph._HEALTH[ph._key("aprende", "prod")]
+
+    for _ in range(10):
+        ph.report_events_in("aprende", "prod", 1)
+        entrada["last_event_ts"] -= 60               # un evento por minuto
+
+    e = _get(ph.get_health_snapshot(), "aprende", "prod")
+    assert e["intervalo_tipico_seg"] is not None
+    assert 40 < e["intervalo_tipico_seg"] < 80, (
+        f"No aprendió el ritmo real: {e['intervalo_tipico_seg']}"
+    )
