@@ -11,6 +11,7 @@ from jsonpath_ng import parse
 from app.database import get_session
 from app.models.config_models import ProviderConfig, ProviderDictionary
 from app.models.db_models import NormalizedRCEvent
+from app.core import admision
 from app.core.dynamic_mapper import DynamicMapper
 from app.core.crypto import decrypt
 from app.core import provider_health
@@ -172,6 +173,95 @@ async def _get_protrack_token(base_url: str, account: str, pwd: str) -> str:
             f"Token de proveedor renovado para {account}. "
             f"Proveedor informó expires_in={expires_in}s, "
             f"se cachea {ttl_efectivo}s (próxima renovación en ~{ttl_efectivo // 60} min)."
+        )
+        return token
+
+
+async def _get_oauth2_token(token_url: str, client_id: str, client_secret: str,
+                            formato_body: str = "form", scope: str = "") -> str:
+    """
+    Token OAuth2 por `client_credentials`, reutilizando el cacheado si sigue vigente.
+
+    Transversal: sirve para cualquier API que use este flujo estándar. Las dos
+    variantes que existen en la práctica se eligen por configuración:
+
+      form       application/x-www-form-urlencoded — lo que dice el estándar
+                 OAuth2 (RFC 6749) y lo que usa la mayoría.
+      multipart  multipart/form-data — lo que exige Tive. Un cliente OAuth
+                 genérico que mande "form" recibe error de Tive.
+
+    `expires_in` se acepta como número o como texto: Tive lo manda como
+    "3600", entre comillas, aunque el estándar lo define numérico.
+    """
+    if not token_url:
+        raise ProviderAuthError("auth_type=oauth2_client_credentials pero falta token_url.")
+    if not client_id or not client_secret:
+        raise ProviderAuthError(
+            "auth_type=oauth2_client_credentials requiere client_id (auth_user) "
+            "y client_secret (auth_pass)."
+        )
+    _verificar_destino_permitido(token_url)
+
+    cache_key = f"oauth2|{token_url}|{client_id}"
+    async with _TOKEN_LOCK:
+        cached = _TOKEN_CACHE.get(cache_key)
+        if cached and cached["expires_at"] > time.time():
+            return cached["token"]
+
+        campos = {
+            "grant_type": "client_credentials",
+            "client_id": client_id,
+            "client_secret": client_secret,
+        }
+        if scope:
+            campos["scope"] = scope
+
+        try:
+            async with httpx.AsyncClient(timeout=15) as client:
+                if formato_body == "multipart":
+                    # httpx arma multipart/form-data cuando recibe `files`.
+                    # (None, valor) = campo de texto, no un archivo.
+                    resp = await client.post(
+                        token_url, files={k: (None, v) for k, v in campos.items()},
+                        headers={"accept": "application/json"},
+                    )
+                else:
+                    resp = await client.post(
+                        token_url, data=campos, headers={"accept": "application/json"},
+                    )
+                resp.raise_for_status()
+                datos = resp.json()
+        except httpx.HTTPStatusError as e:
+            raise ProviderAuthError(
+                f"El proveedor rechazó la autenticación OAuth2 en {token_url}: "
+                f"HTTP {e.response.status_code}. Verificar client_id, client_secret "
+                f"y el formato del cuerpo ('{formato_body}')."
+            ) from e
+        except httpx.HTTPError as e:
+            raise ProviderAuthError(f"Error de red al pedir token a {token_url}: {e}") from e
+        except json.JSONDecodeError as e:
+            raise ProviderAuthError(f"La respuesta de {token_url} no es JSON válido: {e}") from e
+
+        token = datos.get("access_token")
+        if not token:
+            raise ProviderAuthError(f"La respuesta de {token_url} no trae access_token.")
+
+        try:
+            expires_in = int(datos.get("expires_in"))
+            if expires_in <= 0:
+                raise ValueError
+        except (TypeError, ValueError):
+            logger.warning(
+                f"Respuesta OAuth2 sin 'expires_in' válido, "
+                f"usando fallback de {TOKEN_TTL_FALLBACK_SECONDS}s."
+            )
+            expires_in = TOKEN_TTL_FALLBACK_SECONDS
+
+        ttl_efectivo = max(expires_in - TOKEN_SAFETY_MARGIN_SECONDS, 60)
+        _TOKEN_CACHE[cache_key] = {"token": token, "expires_at": time.time() + ttl_efectivo}
+        logger.info(
+            f"Token OAuth2 renovado para {client_id}. Vigencia informada {expires_in}s, "
+            f"se cachea {ttl_efectivo}s."
         )
         return token
 
@@ -380,6 +470,19 @@ async def execute_fetch(fetch_config: dict) -> dict | list:
         # Puede lanzar ProviderAuthError — se propaga y aborta el ciclo
         params["access_token"] = await _get_protrack_token(base_url, user, pwd)
 
+    elif auth_type == "oauth2_client_credentials":
+        # Estándar OAuth2. Los headers adicionales que el proveedor exija —por
+        # ejemplo `x-tive-account-id`— van en el campo `headers` de la
+        # configuración, como con cualquier otro proveedor.
+        token = await _get_oauth2_token(
+            fetch_config.get("token_url", ""),
+            fetch_config.get("auth_user", ""),
+            fetch_config.get("auth_pass", ""),
+            (fetch_config.get("token_body_format") or "form").lower(),
+            fetch_config.get("scope", ""),
+        )
+        headers["Authorization"] = f"Bearer {token}"
+
     # ── Petición ─────────────────────────────────────────────────────────────
     async with httpx.AsyncClient(timeout=30) as client:
         if method == "GET":
@@ -401,6 +504,18 @@ async def execute_fetch(fetch_config: dict) -> dict | list:
                 json_body = {}
             resp = await client.post(url, params=params, headers=headers, json=json_body)
 
+        if resp.status_code == 401 and auth_type == "oauth2_client_credentials":
+            # Token revocado o vencido antes de lo informado: se descarta del
+            # caché para que el próximo ciclo pida uno nuevo, en vez de seguir
+            # usando uno inválido hasta que expire solo.
+            _TOKEN_CACHE.pop(
+                f"oauth2|{fetch_config.get('token_url', '')}|{fetch_config.get('auth_user', '')}",
+                None,
+            )
+            raise ProviderAuthError(
+                "El proveedor rechazó el token OAuth2 (HTTP 401). Se descartó del "
+                "caché; el próximo ciclo pide uno nuevo."
+            )
         resp.raise_for_status()
         data = resp.json()
 
@@ -488,6 +603,19 @@ async def dictionary_sync_loop(provider_name: str, env: str):
                 "auth_pass": enrich.get("auth_pass") or fetch_c.get("auth_pass", ""),
                 "bearer_token": enrich.get("bearer_token") or fetch_c.get("bearer_token", ""),
             }
+
+            # Campos de OAuth2 y headers adicionales, con la misma herencia:
+            # los del diccionario si están cargados, si no los del PULL.
+            #
+            # Antes esta función copiaba SOLO las seis claves de arriba. Con
+            # OAuth2 eso significaba perder token_url en el camino —el token
+            # nunca se pedía— y perder los headers, así que un proveedor que
+            # exige un header de cuenta (Tive: x-tive-account-id) recibía la
+            # consulta sin él. La lógica de OAuth estaba bien; el cableado no.
+            for clave in ("token_url", "token_body_format", "scope", "headers"):
+                valor = enrich.get(clave) or fetch_c.get(clave)
+                if valor:
+                    fetch_cfg[clave] = valor
 
             data = await execute_fetch(fetch_cfg)
 
@@ -823,6 +951,14 @@ async def process_and_enqueue(
         descartados = 0
         for item in items:
             try:
+                # Filtro de admisión, igual que en el webhook: transversal a
+                # PUSH y PULL. Sin condiciones configuradas entra todo, que es
+                # lo de siempre; Protrack no define ninguna.
+                motivo_descarte = admision.evaluar(item, mapping_schema)
+                if motivo_descarte:
+                    admision.registrar_descarte(provider_name, env, motivo_descarte)
+                    descartados += 1
+                    continue
                 canonical_list = DynamicMapper.map_payload_multi(
                     item, mapping_schema, provider_name, env, require_dict_match,
                     require_dict_match   # sin diccionario configurado no se consulta la tabla

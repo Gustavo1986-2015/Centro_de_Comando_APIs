@@ -106,6 +106,16 @@ def check_and_migrate_db():
             if "enrichment_config" not in columns:
                 cursor.execute("ALTER TABLE provider_config ADD COLUMN enrichment_config TEXT DEFAULT '{}'")
                 conn.commit()
+            if "webhook_auth_config" not in columns:
+                # NULL por defecto a propósito: sin valor, el webhook se
+                # autentica como siempre (secreto fijo en un header). Solo
+                # agrega; no toca ninguna integración existente.
+                cursor.execute("ALTER TABLE provider_config ADD COLUMN webhook_auth_config JSON")
+                conn.commit()
+                logger.info(
+                    "Migración: columna webhook_auth_config agregada en provider_config. "
+                    "Las integraciones existentes quedan en modo de clave fija, como antes."
+                )
             
             # Nuevas columnas Envelope Encryption
             if "rc_password_enc" not in columns:

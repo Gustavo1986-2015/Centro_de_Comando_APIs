@@ -177,6 +177,21 @@ templates = Jinja2Templates(directory="frontend/templates")
 
 
 
+def _formato_rc(ev) -> dict:
+    """
+    Evento en el formato de Recurso Confiable, idéntico al que se envía.
+
+    Delega en rc_soap.construir_evento_rc, la única fuente de verdad. Si la
+    construcción fallara para una fila puntual, se informa el error en vez de
+    inventar un payload que no es el real.
+    """
+    from app.services.rc_soap import construir_evento_rc
+    try:
+        return construir_evento_rc(ev)
+    except Exception as e:
+        return {"_error": f"No se pudo armar el evento RC: {e}"}
+
+
 @router.get("/dashboard", response_class=HTMLResponse)
 async def get_dashboard(request: Request, _: None = Depends(verify_dashboard_auth)):
     """Renderiza el Centro de Comando en Vivo."""
@@ -442,7 +457,9 @@ async def get_stats_data(
             "device_date": device_date_local.strftime("%Y-%m-%d %H:%M:%S") + (" (Local)" if tz_offset != 0 else " (UTC)") if device_date_local else "N/A",
             "speed": getattr(ev, 'speed', 0),
             "coords": f"{ev.latitude}, {ev.longitude}" if getattr(ev, 'latitude') and ev.latitude else "Sin GPS",
-            "ignition": "ON" if getattr(ev, 'ignition') else "OFF",
+            # Tres estados: un dato que el proveedor no mide no es "apagado".
+            "ignition": ("N/A" if getattr(ev, 'ignition', None) is None
+                         else "ON" if ev.ignition else "OFF"),
             "code": getattr(ev, 'code', "N/A"),
             "course": getattr(ev, 'course', None),
             "altitude": getattr(ev, 'altitude', None),
@@ -456,28 +473,10 @@ async def get_stats_data(
             "retry_count": retry_count,
             "next_retry_in_sec": next_retry_in_sec,
             
-            # Exportación estructurada idéntica a Recurso Confiable
-            "rc_format": {
-                "asset": ev.chassis_number,
-                "altitude": getattr(ev, 'altitude', 0) or 0,
-                "battery": getattr(ev, 'battery', 0) or 0,
-                "code": getattr(ev, 'code', "1") or "1",
-                "customer": {"id": "", "name": ""},
-                "date": ev.date.strftime("%Y-%m-%dT%H:%M:%SZ") if getattr(ev, 'date') and ev.date else "",
-                "direction": getattr(ev, 'course', 0) or 0,
-                "humidity": getattr(ev, 'humidity', 0) or 0,
-                "ignition": "true" if getattr(ev, 'ignition') else "false",
-                "latitude": getattr(ev, 'latitude', 0) or 0,
-                "longitude": getattr(ev, 'longitude', 0) or 0,
-                "odometer": getattr(ev, 'odometer', 0) or 0,
-                "serialNumber": getattr(ev, 'serial_number', "") or "",
-                "shipment": getattr(ev, 'shipment', "") or "",
-                "speed": getattr(ev, 'speed', 0) or 0,
-                "temperature": getattr(ev, 'temperature', 0) or 0,
-                "vehicleType": getattr(ev, 'vehicle_type', "") or "",
-                "vehicleBrand": getattr(ev, 'vehicle_brand', "") or "",
-                "vehicleModel": getattr(ev, 'vehicle_model', "") or ""
-            },
+            # Lo que se manda a RC, armado por la MISMA función que el envío
+            # real. Antes este bloque tenía su propia versión y mostraba datos
+            # que RC nunca recibía. Ver rc_soap.construir_evento_rc.
+            "rc_format": _formato_rc(ev),
             "raw_data": ev.raw_data
         })
 

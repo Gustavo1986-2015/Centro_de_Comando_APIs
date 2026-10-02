@@ -297,6 +297,23 @@ async def _batch_processor_loop():
 _retry_task = None
 
 
+async def _persistir_cualquier_integracion(provider: str, env: str, lote) -> int:
+    """
+    Devuelve cada evento de la red de seguridad a quien sabe persistirlo.
+
+    El reintentador es uno solo para todo el hub. Schmitz tiene su mapeo
+    propio; el resto de los PUSH pasa por el mapeador dinámico. Cualquier
+    integración nueva que entre por el Integration Studio queda cubierta sin
+    tocar este código.
+    """
+    if provider.lower() == "schmitz":
+        return await persistir_desde_red_de_seguridad(provider, env, lote)
+    from app.api.routers.dynamic_webhook import (
+        persistir_desde_red_de_seguridad as persistir_dinamico,
+    )
+    return await persistir_dinamico(provider, env, lote)
+
+
 async def start_webhook_batch_processor():
     """Inicia el loop de procesamiento por lotes. Llamar desde el startup de la app principal."""
     global _batch_task, _retry_task
@@ -306,7 +323,7 @@ async def start_webhook_batch_processor():
     # lo que haya quedado sin persistir de una ejecución anterior: ese es el
     # punto de que la red de seguridad viva en disco y no en memoria.
     _retry_task = asyncio.create_task(
-        safety_net.bucle_reintentador(persistir_desde_red_de_seguridad)
+        safety_net.bucle_reintentador(_persistir_cualquier_integracion)
     )
 
     # Sonda del bucle de eventos: mide si el proceso está trabado. Es lo que

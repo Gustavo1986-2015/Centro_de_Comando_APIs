@@ -78,9 +78,46 @@ class DynamicMapper:
         return None
 
     @staticmethod
+    def _resolver_codigo(payload: Dict[str, Any], rc_code) -> str | None:
+        """
+        El código RC de una regla: un literal, o el valor de un campo.
+
+        Un código que empieza con "=" se toma del payload, con la misma sintaxis
+        de rutas del mapeo base: "=AlertType" manda el literal de Tive tal cual
+        —"TemperatureMax", "ShockEvents"—, como Schmitz manda "DoorAlarm". El
+        significado de cada código lo da quien los recibe; el hub no los traduce.
+
+        Devuelve None si el campo vino vacío: no hay código que mandar.
+        """
+        texto = str(rc_code if rc_code is not None else "1").strip()
+        if not texto.startswith("="):
+            return texto
+        valor = DynamicMapper._extract_value(payload, texto[1:].strip())
+        if valor is None or not str(valor).strip():
+            return None
+        return str(valor).strip()
+
+    @staticmethod
     def _evaluate_rule(payload: Dict[str, Any], field: str, operator: str, value: str) -> bool:
-        """Evalúa si un campo del payload cumple la condición de una trigger rule."""
-        raw = payload.get(field)
+        """
+        Evalúa si un campo del payload cumple la condición de una trigger rule.
+
+        El campo puede ser una clave de la raíz —como siempre— o una RUTA
+        anidada con punto y alternativas con '||', igual que el mapeo base:
+        'Alert.ShipmentId', 'ShipmentId || Shipment.Id || Alert.ShipmentId'.
+
+        Antes solo se leía el primer nivel (deuda B1), así que una condición
+        sobre un dato anidado nunca se cumplía y fallaba en silencio.
+
+        Compatibilidad: si el campo existe TAL CUAL como clave de la raíz, se
+        usa ese valor, exactamente como antes. Solo cuando no existe se lo
+        interpreta como ruta. Las reglas existentes —Protrack usa claves de la
+        raíz— dan el mismo resultado que siempre.
+        """
+        if field in payload:
+            raw = payload.get(field)
+        else:
+            raw = DynamicMapper._extract_value(payload, field)
         
         if operator == "exists":
             return raw is not None
@@ -280,10 +317,27 @@ class DynamicMapper:
             })
 
         results = []
+        base_schema_with_code = dict(base_schema)
 
-        # 1. Generar evento base (posición GPS)
+        # Cuándo se emite el evento base:
+        #   always           — siempre, y además los de las reglas que
+        #                      coincidan. Es el comportamiento histórico.
+        #   no_rule_matched  — solo si NINGUNA regla coincidió. Un pulso
+        #                      produce un único evento: o el código de la
+        #                      regla, o el base. Así trabaja Schmitz: una
+        #                      alarma sale con el código de la alarma, no con
+        #                      la alarma más una posición repetida.
+        # Antes este campo existía en la configuración pero el código nunca lo
+        # leía: era configuración muerta. Cualquier otro valor se trata como
+        # "always", que es lo que ya hacía.
+        fire_when = str(default_rule.get("fire_when") or "always").strip().lower()
+        solo_sin_coincidencias = fire_when == "no_rule_matched"
+
+        # 1. Evento base (posición GPS). Se calcula aunque después no se emita:
+        # es el que verifica la traducción del diccionario, y sin traducción se
+        # descarta el pulso entero.
+        base_event = None
         if default_rule.get("enabled", True):
-            base_schema_with_code = dict(base_schema)
             base_event = DynamicMapper.map_payload(
                 payload, base_schema_with_code, provider_name, env, require_dict_match, usar_diccionario
             )
@@ -292,34 +346,40 @@ class DynamicMapper:
             # no puede identificar.
             if base_event is None:
                 return []
-            
+
             # ¿El usuario mapeó explícitamente el 'code' en Tab 3 y NO está usando reglas dinámicas?
             mapped_code_key = base_schema.get("code")
             is_static_code_mapped = bool(mapped_code_key and str(mapped_code_key).strip())
-            
+
             if trigger_rules or not is_static_code_mapped:
                 # Impone regla base si el multiplexor está activo o si no mapeó el code explícitamente
                 base_event.code = str(default_rule.get("rc_code", "1"))
             elif is_static_code_mapped and not base_event.code:
                 # Fallback de seguridad si el JSON vino sin la llave
                 base_event.code = str(default_rule.get("rc_code", "1"))
-                
-            results.append(base_event)
+
+            if not solo_sin_coincidencias:
+                results.append(base_event)
 
         # 2. Evaluar trigger_rules — solo las habilitadas que hacen match
+        coincidencias = []
         for rule in trigger_rules:
             if not rule.get("enabled", True):
                 continue
-            
+
             field    = rule.get("field", "")
             operator = rule.get("operator", "eq")
             value    = rule.get("value", "1")
-            rc_code  = rule.get("rc_code", "1")
-            
+
             if not field:
                 continue
-            
+
             if DynamicMapper._evaluate_rule(payload, field, operator, value):
+                rc_code = DynamicMapper._resolver_codigo(payload, rule.get("rc_code", "1"))
+                if rc_code is None:
+                    # El código sale de un campo que vino vacío: no hay literal
+                    # que mandar, así que la regla no aplica a este pulso.
+                    continue
                 # Clonar el evento base y cambiar solo el code
                 trigger_event = DynamicMapper.map_payload(
                     payload, base_schema_with_code if "base_mapping" in full_schema else full_schema,
@@ -327,8 +387,13 @@ class DynamicMapper:
                 )
                 if trigger_event is None:
                     continue
-                trigger_event.code = str(rc_code)
-                results.append(trigger_event)
+                trigger_event.code = rc_code
+                coincidencias.append(trigger_event)
+
+        results.extend(coincidencias)
+
+        if solo_sin_coincidencias and base_event is not None and not coincidencias:
+            results.append(base_event)
 
         # Garantía: si nada generó eventos (default desactivado y sin matches),
         # generar al menos el evento base con code="1"
