@@ -14,6 +14,7 @@ from app.database import get_session
 from app.models.config_models import ProviderConfig, SystemSettings
 from app.core import config_cache
 from app.core.auditor import log_admin_action
+from app.core import webhook_auth
 from app.core.crypto import encrypt, decrypt
 
 logger = logging.getLogger(__name__)
@@ -33,6 +34,10 @@ class ConfigUpdate(BaseModel):
     queue_backend: str
     webhook_auth_secret: str | None = None
     webhook_auth_header: str | None = None
+    # Esquema de autenticación del webhook entrante (ver app/core/webhook_auth.py).
+    # None = no tocar lo guardado. {} o {"modo": "header"} = secreto fijo, el
+    # comportamiento histórico. {"modo": "hmac", "preset": "tive"} = firma.
+    webhook_auth_config: dict | None = None
     fetch_config: str | None = None
     enable_state_dedup: bool = True
     # Techo de peticiones por minuto del webhook. None = usar el límite global.
@@ -238,6 +243,7 @@ def get_all_configs(_: None = Depends(verify_dashboard_auth)):
             "has_webhook_auth": bool(c.webhook_auth_secret_enc),
             "has_fetch_config": bool(c.fetch_config_enc or c.fetch_config),
             "webhook_auth_header": c.webhook_auth_header or "x-api-key",
+            "webhook_auth_config": getattr(c, "webhook_auth_config", None) or {"modo": "header"},
             "use_mock": c.use_mock,
             "purge_interval_min": c.purge_interval_min,
             "run_interval_sec": c.run_interval_sec,
@@ -271,6 +277,20 @@ def update_configs(updates: List[ConfigUpdate], _: None = Depends(verify_dashboa
                     
                 if hasattr(u, 'webhook_auth_header') and u.webhook_auth_header:
                     conf.webhook_auth_header = u.webhook_auth_header
+
+                if getattr(u, 'webhook_auth_config', None) is not None:
+                    # Se valida ANTES de guardar: una configuración de firma
+                    # rota dejaría el webhook rechazando todo, o peor, sin
+                    # verificar nada. Mejor fallar acá, con el motivo, que
+                    # descubrirlo cuando el proveedor empiece a recibir 500.
+                    try:
+                        webhook_auth.resolver_config(u.webhook_auth_config)
+                    except ValueError as e:
+                        raise HTTPException(
+                            status_code=400,
+                            detail=f"{u.provider_name}/{u.env}: {e}",
+                        )
+                    conf.webhook_auth_config = u.webhook_auth_config or None
                     
                 if hasattr(u, 'fetch_config') and u.fetch_config and u.fetch_config != "••••••••" and u.fetch_config.strip() != "":
                     conf.fetch_config_enc = encrypt(u.fetch_config)

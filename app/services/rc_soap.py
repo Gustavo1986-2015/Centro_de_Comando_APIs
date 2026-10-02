@@ -49,6 +49,83 @@ def _nombre_cache_seguro(username: str) -> str:
     return f"rc_token_cache_{limpio}_{firma}.json"
 
 
+def construir_evento_rc(event) -> dict:
+    """
+    El evento EXACTO que se manda a Recurso Confiable. Única fuente de verdad.
+
+    La usan el envío real y el botón "JSON RC" del panel. Antes el panel
+    armaba su propia versión y no coincidía con lo enviado: mostraba
+    odómetro, altitud y humedad en 0 cuando en realidad se omitían, la fecha
+    con "Z" cuando se envía sin ella, y campos de vehículo que nunca se
+    mandan. Quien miraba el panel para verificar qué recibía RC veía datos
+    que RC nunca recibió.
+
+    Acepta tanto el modelo canónico como una fila de la base: lee los mismos
+    nombres de atributo.
+    """
+    # Recurso Confiable exige UTC estricto, sin desplazamiento horario.
+    # La fecha se serializa como YYYY-MM-DDTHH:MM:SS, SIN sufijo Z: así
+    # lo especifica el contrato D-TI-15 v14 y así lo envía el cliente de
+    # referencia en producción.
+    base_date = event.date if event.date else datetime.now(timezone.utc)
+    if base_date.tzinfo is None:
+        base_date = base_date.replace(tzinfo=timezone.utc)
+    else:
+        base_date = base_date.astimezone(timezone.utc)
+
+    # Sanitizar velocidad por si Schmitz envía literal "null"
+    def clean_speed(s):
+        if s is None:
+            return "0"
+        s_str = str(s).strip().lower()
+        if s_str in ["", "null", "none"]:
+            return "0"
+        return s_str
+
+    # Mapeo estricto soportado por Zeep usando tipos nativos y strings puros
+    event_dict = {
+        'asset': event.chassis_number or "",
+        'code': event.code or "1",
+        'customer': {'id': '', 'name': ''},
+        # Sin sufijo Z: el contrato D-TI-15 v14 especifica
+        # YYYY-MM-DDTHH:MM:SS en UTC, y así lo envía el cliente de
+        # referencia en producción. RC valida el formato de forma
+        # estricta y responde s:Fault DeserializationFailed si no
+        # puede parsearlo como DateTime.
+        'date': base_date.strftime("%Y-%m-%dT%H:%M:%S"),
+        'direction': str(event.course) if event.course is not None else "0",
+        'latitude': str(event.latitude) if event.latitude is not None else "0",
+        'longitude': str(event.longitude) if event.longitude is not None else "0",
+        'speed': clean_speed(event.speed),
+    }
+
+    # Ignición: opcional según el contrato D-TI-15 v14. Antes, un dato
+    # desconocido se mandaba como "false", que afirma que el vehículo
+    # está apagado: un dato que nadie midió. El contrato pide "en
+    # blanco o 0" cuando no hay información, y para un booleano "0" es
+    # ambiguo, así que se omite, igual que los demás opcionales.
+    # Los campos OBLIGATORIOS (speed, latitude, longitude) siguen
+    # yendo con "0" cuando faltan: es lo que el contrato indica.
+    if event.ignition is not None:
+        event_dict['ignition'] = "true" if event.ignition else "false"
+    if event.altitude is not None:
+        event_dict['altitude'] = int(event.altitude)
+    if event.battery is not None:
+        event_dict['battery'] = int(event.battery)
+    if event.humidity is not None:
+        event_dict['humidity'] = int(event.humidity)
+    if event.odometer is not None:
+        event_dict['odometer'] = int(event.odometer)
+    if event.temperature is not None:
+        event_dict['temperature'] = float(event.temperature)
+    if event.serial_number:
+        event_dict['serialNumber'] = str(event.serial_number)
+    if event.shipment:
+        event_dict['shipment'] = str(event.shipment)
+
+    return event_dict
+
+
 class RCResponseCategory(str, Enum):
     """
     Clasificación de la respuesta de Recurso Confiable, según su ESTRUCTURA.
@@ -319,59 +396,7 @@ class RCSOAPClient:
         
         event_dicts = []
         for event in events:
-            # Recurso Confiable exige UTC estricto, sin desplazamiento horario.
-            # La fecha se serializa como YYYY-MM-DDTHH:MM:SS, SIN sufijo Z: así
-            # lo especifica el contrato D-TI-15 v14 y así lo envía el cliente de
-            # referencia en producción.
-            base_date = event.date if event.date else datetime.now(timezone.utc)
-            if base_date.tzinfo is None:
-                base_date = base_date.replace(tzinfo=timezone.utc)
-            else:
-                base_date = base_date.astimezone(timezone.utc)
-            
-            # Sanitizar velocidad por si Schmitz envía literal "null"
-            def clean_speed(s):
-                if s is None:
-                    return "0"
-                s_str = str(s).strip().lower()
-                if s_str in ["", "null", "none"]:
-                    return "0"
-                return s_str
-            
-            # Mapeo estricto soportado por Zeep usando tipos nativos y strings puros
-            event_dict = {
-                'asset': event.chassis_number or "",
-                'code': event.code or "1",
-                'customer': {'id': '', 'name': ''},
-                # Sin sufijo Z: el contrato D-TI-15 v14 especifica
-                # YYYY-MM-DDTHH:MM:SS en UTC, y así lo envía el cliente de
-                # referencia en producción. RC valida el formato de forma
-                # estricta y responde s:Fault DeserializationFailed si no
-                # puede parsearlo como DateTime.
-                'date': base_date.strftime("%Y-%m-%dT%H:%M:%S"),
-                'direction': str(event.course) if event.course is not None else "0",
-                'ignition': "true" if event.ignition else "false",
-                'latitude': str(event.latitude) if event.latitude is not None else "0",
-                'longitude': str(event.longitude) if event.longitude is not None else "0",
-                'speed': clean_speed(event.speed),
-            }
-            
-            if event.altitude is not None:
-                event_dict['altitude'] = int(event.altitude)
-            if event.battery is not None:
-                event_dict['battery'] = int(event.battery)
-            if event.humidity is not None:
-                event_dict['humidity'] = int(event.humidity)
-            if event.odometer is not None:
-                event_dict['odometer'] = int(event.odometer)
-            if event.temperature is not None:
-                event_dict['temperature'] = float(event.temperature)
-            if event.serial_number:
-                event_dict['serialNumber'] = str(event.serial_number)
-            if event.shipment:
-                event_dict['shipment'] = str(event.shipment)
-                
-            event_dicts.append(event_dict)
+            event_dicts.append(construir_evento_rc(event))
         
         # Enviar (Zeep requiere mapear explícitamente el array a la llave 'Event' del esquema XML)
         res = client.service.GPSAssetTracking(token, {'Event': event_dicts})

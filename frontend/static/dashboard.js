@@ -1420,7 +1420,12 @@
 
                 let sensorHtml = `<div style="font-size:0.8rem; color:var(--color-gray); line-height: 1.4;">`;
                 sensorHtml += `<div>Velocidad: <span style="color:var(--color-white)">${ev.speed} km/h</span></div>`;
-                sensorHtml += `<div>Ignición: <span style="${ev.ignition==='ON'?'color:var(--color-green-bright); font-weight:bold;':'color:var(--color-red)'}">${ev.ignition}</span></div>`;
+                // Tres estados. N/A en gris: el proveedor no mide ignición, y
+                // mostrarlo en rojo como "apagado" sería afirmar algo que nadie midió.
+                const estiloIgn = ev.ignition === 'ON' ? 'color:var(--color-green-bright); font-weight:bold;'
+                                : ev.ignition === 'OFF' ? 'color:var(--color-red)'
+                                : 'color:var(--color-gray-label)';
+                sensorHtml += `<div>Ignición: <span style="${estiloIgn}" ${ev.ignition === 'N/A' ? 'title="El proveedor no informa ignición"' : ''}>${ev.ignition}</span></div>`;
                 sensorHtml += `<div>Batería: <span style="color:var(--color-white)">${ev.battery !== null ? ev.battery + '%' : 'N/A'}</span> | Temp: <span style="color:var(--color-white)">${ev.temperature !== null ? ev.temperature + '°' : 'N/A'}</span></div>`;
                 sensorHtml += `<div>Odom: <span style="color:var(--color-white)">${ev.odometer !== null ? ev.odometer : 'N/A'}</span> | Código EV: <span style="color:var(--color-yellow)">${ev.code}</span></div>`;
                 sensorHtml += `</div>`;
@@ -1639,7 +1644,7 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
                                     <span class="slider"></span>
                                 </label>
                             </td>
-                            <td>${esPull(c) ? '<input class="form-control" type="text" disabled value="--- N/A ---" style="width: 100px; color: var(--color-gray); background: var(--level-1); text-align: center; border: 1px dashed var(--card-border);" title="No aplica para proveedores PULL">' : `<input class="form-control" type="text" id="webhook_header_${c._originalIdx}" value="${c.webhook_auth_header || 'x-api-key'}" style="width: 100px;">`}</td>
+                            <td>${esPull(c) ? '<input class="form-control" type="text" disabled value="--- N/A ---" style="width: 100px; color: var(--color-gray); background: var(--level-1); text-align: center; border: 1px dashed var(--card-border);" title="No aplica para proveedores PULL">' : `<input class="form-control" type="text" id="webhook_header_${c._originalIdx}" value="${c.webhook_auth_header || 'x-api-key'}" style="width: 150px;">${_selectorAuthWebhook(c)}`}</td>
                             <td>${esPull(c) ? '<input class="form-control" type="text" disabled value="--- N/A (Es PULL) ---" style="color: var(--color-gray); background: var(--level-1); font-style: italic; border: 1px dashed var(--card-border);" title="No aplica para proveedores PULL">' : `<div style="display:flex; gap:4px; align-items:center;">
                                     <input class="form-control" type="password" id="webhook_auth_${c._originalIdx}" placeholder="${c.has_webhook_auth ? '•••••••• (Cifrado)' : ''}" title="Dejar vacío para mantener el actual">
                                     ${c.has_webhook_auth ? `<button class="btn-ver-clave" title="Ver la clave guardada (pide contraseña)" onclick="verApiKey('${c.provider_name}','${c.env}')">👁</button>` : ''}
@@ -1690,7 +1695,8 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
                     ? (parseInt(document.getElementById(`ratelimit_${idx}`).value) || null)
                     : null,
                 queue_backend: document.getElementById(`queue_${idx}`).value,
-                enable_state_dedup: document.getElementById(`dedup_${idx}`) ? document.getElementById(`dedup_${idx}`).checked : c.enable_state_dedup
+                enable_state_dedup: document.getElementById(`dedup_${idx}`) ? document.getElementById(`dedup_${idx}`).checked : c.enable_state_dedup,
+                webhook_auth_config: _leerAuthWebhook(c, idx)
             }));
 
             // Activar el modo simulado exige revalidar la contraseña de administrador:
@@ -2467,6 +2473,9 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
         }
 
         async function loadMapping(name, env) {
+            // Se limpia ANTES de pedir el nuevo: si la carga falla, guardar no
+            // puede arrastrar el filtro de admisión de la integración anterior.
+            _esquemaCargado = {};
             try {
                 const res = await fetch(`${API_BASE}/${name}/${env}/mapping`);
                 const data = await res.json();
@@ -2477,12 +2486,15 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
                 
                 if (rawMapping.base_mapping) {
                     baseMapping = rawMapping.base_mapping;
+                    _esquemaCargado = rawMapping;
                     _currentRules = rawMapping.trigger_rules || [];
                     const defaultRule = rawMapping.default_rule || {};
                     const defRc = document.getElementById('default_rc_code');
                     const defLab = document.getElementById('default_rc_label');
                     if(defRc) defRc.value = defaultRule.rc_code || '1';
                     if(defLab) defLab.value = defaultRule.label || 'Reporte GPS';
+                    const defFw = document.getElementById('default_fire_when');
+                    if(defFw) defFw.value = defaultRule.fire_when === 'no_rule_matched' ? 'no_rule_matched' : 'always';
                 } else {
                     _currentRules = [];
                 }
@@ -2502,8 +2514,11 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
                     if(f.method) document.getElementById('pullMethod').value = f.method;
                     if(f.auth_type) {
                         document.getElementById('authType').value = f.auth_type;
-                        document.getElementById('pullAuthFields').style.display = f.auth_type === 'none' ? 'none' : 'block';
+                        _mostrarCamposAuth('pull', f.auth_type);
                     }
+                    if(f.token_url) document.getElementById('pullTokenUrl').value = f.token_url;
+                    if(f.token_body_format) document.getElementById('pullTokenFormat').value = f.token_body_format;
+                    if(f.headers) document.getElementById('pullHeaders').value = f.headers;
                     if(f.auth_user) document.getElementById('pullAuthUser').value = f.auth_user;
                     if(f.auth_pass) document.getElementById('pullAuthPass').value = f.auth_pass;
                     if(f.bearer_token) {
@@ -2530,14 +2545,21 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
             const defaultRcLabel = document.getElementById('default_rc_label')?.value || 'Reporte GPS';
             const baseMapping = getCurrentBaseMapping();
 
+            const defaultFireWhen = document.getElementById('default_fire_when')?.value || 'always';
+
+            // Lo que el editor no maneja se conserva tal cual vino.
+            const { base_mapping: _b, trigger_rules: _t, default_rule: reglaBasePrevia = {}, ...otrasClaves } = _esquemaCargado || {};
+
             const fullSchema = {
+                ...otrasClaves,
                 base_mapping:  baseMapping,
                 trigger_rules: _currentRules,
                 default_rule: {
-                    enabled:   true,
+                    ...reglaBasePrevia,
+                    enabled:   reglaBasePrevia.enabled ?? true,
                     rc_code:   defaultRcCode,
                     label:     defaultRcLabel,
-                    fire_when: 'always'
+                    fire_when: defaultFireWhen
                 }
             };
             
@@ -2557,8 +2579,10 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
                 auth_user: elUser ? elUser.value.trim() : "",
                 auth_pass: elPass ? elPass.value.trim() : "",
                 bearer_token: elBearer ? elBearer.value.trim() : "",
-                headers: elHeaders ? elHeaders.value.trim() : "",
-                body: elBody ? elBody.value.trim() : ""
+                headers: elHeaders ? (elHeaders.value.trim() || "{}") : "{}",
+                body: elBody ? elBody.value.trim() : "",
+                token_url: (document.getElementById('pullTokenUrl') || {}).value?.trim() || "",
+                token_body_format: (document.getElementById('pullTokenFormat') || {}).value || "form"
             };
             
             return {
@@ -2712,7 +2736,7 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
                     <select             class="form-control" style="font-size:0.8rem;"                                                              onchange="updateRule('${r.id}','operator',this.value)">${opOptions}</select>
                     <input type="text"  class="form-control" style="font-size:0.8rem;" value="${r.value   || '1'}" placeholder="valor (ej: 1)"    onchange="updateRule('${r.id}','value',   this.value)">
                     <input type="text"  class="form-control" style="font-size:0.8rem;" value="${r.label   || ''}" placeholder="descripción"        onchange="updateRule('${r.id}','label',   this.value)">
-                    <input type="text"  class="form-control" style="font-size:0.8rem;" value="${r.rc_code || ''}" placeholder="código RC"          onchange="updateRule('${r.id}','rc_code', this.value)">
+                    <input type="text"  class="form-control" style="font-size:0.8rem;" value="${r.rc_code || ''}" placeholder="código RC o =campo" title="Un código fijo (ej: 10), o =campo para mandar el valor de ese campo tal cual (ej: =AlertType manda TemperatureMax). Acepta rutas y alternativas: =AlertType || Alert.AlertType" onchange="updateRule('${r.id}','rc_code', this.value)">
                     <select title="Estado: filtra repeticiones del mismo código (motor apagado, puerta abierta). Detecta transiciones si usás Dedup Key. Momentáneo: siempre emite (SOS, crash, geofence)." class="form-control" style="font-size:0.8rem;" onchange="updateRule('${r.id}','event_type',this.value)">${evTypeOptions}</select>
                     <input type="text"  class="form-control" style="font-size:0.8rem;" value="${r.dedup_key || ''}" placeholder="ej: doorstatus" title="Clave de agrupación para estados mutuamente excluyentes del mismo sensor. Ej: doorstatus=1 (code 10) y doorstatus=0 (code 34) deben compartir key 'doorstatus' para que el sistema detecte transiciones (abrir→cerrar→abrir). Si lo dejás vacío, cada código se trata independientemente." onchange="updateRule('${r.id}','dedup_key',this.value)">
                     <div style="display:flex;gap:4px;align-items:center;">
@@ -2725,6 +2749,16 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
         }
 
         let _currentRules = [];
+
+        // El esquema tal como vino del servidor. El editor solo maneja el
+        // mapeo base, las reglas y la regla base; todo lo demás —el filtro de
+        // admisión, por ejemplo— se conserva al guardar.
+        //
+        // Antes, guardar armaba el esquema con esas tres claves y nada más: una
+        // configuración importada por YAML con filtro de admisión quedaba sin
+        // filtro la primera vez que alguien tocaba el Integration Studio, sin
+        // ningún aviso.
+        let _esquemaCargado = {};
 
         function addTriggerRule() {
             _currentRules.push({
@@ -2793,7 +2827,10 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
                     document.getElementById('dictAuthType').value = data.auth_type || "none";
                     document.getElementById('dictAuthUser').value = data.auth_user || "";
                     document.getElementById('dictAuthPass').value = data.auth_pass || "";
-                    document.getElementById('dictAuthFields').style.display = (data.auth_type && data.auth_type !== 'none') ? 'block' : 'none';
+                    _mostrarCamposAuth('dict', data.auth_type || 'none');
+                    document.getElementById('dictTokenUrl').value = data.token_url || "";
+                    document.getElementById('dictTokenFormat').value = data.token_body_format || "form";
+                    document.getElementById('dictHeaders').value = data.headers || "";
                 } else {
                     document.getElementById('enableEnrichment').checked = false;
                     toggleEnrichment();
@@ -2836,7 +2873,10 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
                 value_path: document.getElementById('dictValuePath').value.trim(),
                 auth_type: document.getElementById('dictAuthType').value,
                 auth_user: document.getElementById('dictAuthUser').value.trim(),
-                auth_pass: document.getElementById('dictAuthPass').value.trim()
+                auth_pass: document.getElementById('dictAuthPass').value.trim(),
+                token_url: document.getElementById('dictTokenUrl').value.trim(),
+                token_body_format: document.getElementById('dictTokenFormat').value,
+                headers: document.getElementById('dictHeaders').value.trim()
             };
             
             try {
@@ -3149,6 +3189,66 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
         // y en la base, y un solo día puede pesar varios GB.
 
 
+
+        // ─── Campos de autenticación de PULL y diccionario ──────────────────
+        // `pref` es "pull" o "dict". Los campos de OAuth2 solo se muestran
+        // cuando corresponden, para no confundir con campos que no aplican.
+        function _mostrarCamposAuth(pref, tipo) {
+            const contenedor = document.getElementById(pref === 'pull' ? 'pullAuthFields' : 'dictAuthFields');
+            if (contenedor) contenedor.style.display = (tipo === 'none') ? 'none' : 'block';
+            const oauth = document.getElementById(`${pref}OAuthFields`);
+            if (oauth) oauth.style.display = (tipo === 'oauth2_client_credentials') ? 'block' : 'none';
+        }
+
+        // ─── Autenticación del webhook entrante (PUSH) ─────────────────────
+        //
+        // Dos formas de autenticar a un proveedor que nos empuja datos:
+        //   · Clave fija: el proveedor manda el mismo secreto en un header.
+        //     Es lo histórico y lo que usan las integraciones existentes.
+        //   · Firma HMAC: el proveedor firma CADA petición con una clave
+        //     compartida. El secreto nunca viaja. Es el caso de Tive.
+        // La clave secreta va en el mismo campo de API key en los dos casos.
+
+        function _modoAuthWebhook(c) {
+            const cfg = c.webhook_auth_config || {};
+            if ((cfg.modo || 'header') !== 'hmac') return 'header';
+            return cfg.preset ? `hmac:${cfg.preset}` : 'hmac:personalizado';
+        }
+
+        function _selectorAuthWebhook(c) {
+            const modo = _modoAuthWebhook(c);
+            const idx = c._originalIdx;
+            // Un esquema HMAC armado a mano no se puede editar desde acá, pero
+            // tampoco se puede perder: se ofrece conservarlo tal cual.
+            const personalizado = modo === 'hmac:personalizado'
+                ? '<option value="hmac:personalizado" selected>Firma HMAC (personalizada)</option>' : '';
+            return `<select class="form-control" id="webhook_mode_${idx}"
+                        style="width:150px;margin-top:0.35rem;font-size:0.7rem;padding:0.25rem;"
+                        title="Cómo se autentica el proveedor. 'Clave fija': manda siempre el mismo secreto. 'Firma Tive': firma cada petición con HMAC y el secreto nunca viaja."
+                        onchange="_alCambiarAuthWebhook(${idx}, this.value)">
+                      <option value="header" ${modo === 'header' ? 'selected' : ''}>Clave fija</option>
+                      <option value="hmac:tive" ${modo === 'hmac:tive' ? 'selected' : ''}>Firma Tive (HMAC)</option>
+                      ${personalizado}
+                    </select>`;
+        }
+
+        function _alCambiarAuthWebhook(idx, modo) {
+            // El header de la firma de Tive es fijo: se completa solo para que
+            // no quede apuntando a x-api-key por descuido.
+            const header = document.getElementById(`webhook_header_${idx}`);
+            if (!header) return;
+            if (modo === 'hmac:tive') header.value = 'x-tive-signature';
+            else if (modo === 'header' && header.value === 'x-tive-signature') header.value = 'x-api-key';
+        }
+
+        function _leerAuthWebhook(c, idx) {
+            const sel = document.getElementById(`webhook_mode_${idx}`);
+            // PULL no tiene selector: null = no tocar lo guardado.
+            if (!sel) return null;
+            if (sel.value === 'header') return { modo: 'header' };
+            if (sel.value === 'hmac:personalizado') return c.webhook_auth_config;
+            return { modo: 'hmac', preset: sel.value.split(':')[1] };
+        }
 
         // ─── Diagnóstico de latencia ────────────────────────────────────────
 

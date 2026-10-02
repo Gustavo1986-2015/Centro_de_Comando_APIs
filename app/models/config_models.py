@@ -23,6 +23,12 @@ class ProviderConfig(Base):
     fetch_config_enc = Column(String, nullable=True) # Text en el spec, pero String funciona igual o TEXT
     webhook_auth_secret_enc = Column(String, nullable=True)
     webhook_auth_header = Column(String, default="x-api-key")
+    # Cómo se autentica el webhook entrante. NULL = modo "header" (secreto fijo
+    # en un header), que es el comportamiento histórico: las integraciones que
+    # no lo configuran siguen funcionando exactamente igual.
+    # Para proveedores que FIRMAN cada petición con HMAC (Tive, y muchos otros)
+    # se describe el esquema acá. Ver app/core/webhook_auth.py.
+    webhook_auth_config = Column(JSON, nullable=True)
 
     # Tipo de ingesta y deduplicación de estado
     provider_type = Column(String, default="pull")       # "push" | "pull"

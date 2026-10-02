@@ -39,6 +39,7 @@ from fastapi.responses import StreamingResponse
 from fastapi.security import HTTPBasicCredentials
 from pydantic import BaseModel
 
+from app.core import webhook_auth
 from app.core.auditor import log_admin_action
 from app.core.auth import verify_dashboard_auth
 from app.core import config_cache
@@ -90,6 +91,10 @@ CLAVES_SECRETAS = frozenset({
 CLAVES_ESTRUCTURALES = frozenset({
     "url", "method", "auth_type", "auth_user",
     "enabled", "frequency", "key_path", "value_path", "timezone_offset",
+    # OAuth2 client_credentials: dónde pedir el token y en qué formato. No son
+    # secretos; el client_secret sigue viajando solo en auth_pass, que queda
+    # afuera del respaldo como cualquier otra credencial.
+    "token_url", "token_body_format", "scope",
 })
 
 # Qué decirle al operador sobre lo que quedó fuera, para que sepa qué recargar.
@@ -231,6 +236,9 @@ def _proveedor_a_dict(conf: ProviderConfig) -> dict:
         "intervalo_purga_min": conf.purge_interval_min,
         "motor_cola": conf.queue_backend,
         "webhook_header": conf.webhook_auth_header,
+        # El esquema de firma no es secreto: la clave vive aparte, cifrada, y
+        # no sale en el respaldo.
+        "webhook_autenticacion": getattr(conf, "webhook_auth_config", None),
         "rc_usuario": conf.rc_user,
     }
     for clave, valor in opcionales.items():
@@ -550,6 +558,7 @@ CAMPOS_SIMPLES = {
     "motor_cola": "queue_backend",
     "limite_push_por_min": "rate_limit_per_min",
     "webhook_header": "webhook_auth_header",
+    "webhook_autenticacion": "webhook_auth_config",
     "rc_usuario": "rc_user",
 }
 
@@ -627,6 +636,20 @@ def _validar_proveedor(prov: dict, posicion: int):
                     f"y vino {prov[campo]!r}."
                 ),
             )
+
+    auth = prov.get("webhook_autenticacion")
+    if auth is not None:
+        if not isinstance(auth, dict):
+            raise HTTPException(
+                status_code=400,
+                detail=f"En {etiqueta}, 'webhook_autenticacion' tiene que ser un bloque de configuración.",
+            )
+        # La misma validación que aplica el webhook: si no la pasa acá, la
+        # integración quedaría rechazando todo después de importar.
+        try:
+            webhook_auth.resolver_config(auth)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=f"En {etiqueta}: {e}")
 
     for campo in CAMPOS_DICCIONARIO:
         if campo in prov and prov[campo] is not None and not isinstance(prov[campo], dict):
