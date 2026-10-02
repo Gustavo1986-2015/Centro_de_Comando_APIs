@@ -99,3 +99,5 @@ GUIA_INTEGRACION.md
 
 # Testing (config local)
 pytest.ini
+db_backup*/
+rc_token_cache*.json
