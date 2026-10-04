@@ -268,8 +268,36 @@ def _totales_del_dia_sync() -> dict:
         db.close()
 
 
-def _fetch_events_for_provider_sync(provider_name, provider_env, status_filter, today_start, thirty_secs_ago):
+# Código de posición de Schmitz, medido en sus crudos: "Standard" en 3684 de
+# 6975 payloads; el resto son alarmas (DoorAlarm, IgnitionAlarm, ...).
+_CODIGO_POSICION_SCHMITZ = "Standard"
+
+
+def codigos_de_posicion(p) -> set[str]:
+    """
+    Los códigos que significan "reporte de posición" para una integración.
+
+    Todo lo demás es un evento (alarma, alerta, cambio de estado), y el panel
+    lo etiqueta y lo puede filtrar. Cada camino tiene el suyo: Schmitz manda
+    "Standard"; un módulo dedicado declara el suyo; una integración del
+    Studio usa el código de su regla base.
+    """
+    from app.core.state_dedup import get_base_code
+    from app.providers import registry
+
+    if (p.provider_name or "").lower() == "schmitz":
+        return {_CODIGO_POSICION_SCHMITZ}
+    modulo = registry.modulo_dedicado(p.provider_name)
+    if modulo is not None:
+        return {str(getattr(modulo, "CODIGO_POSICION", "1"))}
+    esquema = p.mapping_schema if isinstance(p.mapping_schema, dict) else {}
+    return {get_base_code(esquema)}
+
+
+def _fetch_events_for_provider_sync(provider_name, provider_env, status_filter, today_start,
+                                    thirty_secs_ago, solo_eventos=False, codigos_posicion=None):
     """Queries SQLite de un proveedor específico. Sync, para ejecutar en ThreadPool."""
+    codigos_posicion = codigos_posicion or {"1"}
     db = get_session(provider_name, provider_env)
     try:
         stats = db.query(
@@ -291,10 +319,18 @@ def _fetch_events_for_provider_sync(provider_name, provider_env, status_filter, 
         query = db.query(NormalizedRCEvent)
         if status_filter and status_filter != 'all':
             query = query.filter(NormalizedRCEvent.status == status_filter)
+        if solo_eventos:
+            # En la base y no en el navegador: sin filtros la grilla trae los
+            # últimos 200, y entre ellos puede no haber ningún evento.
+            query = query.filter(
+                NormalizedRCEvent.code.isnot(None),
+                NormalizedRCEvent.code.notin_(sorted(codigos_posicion)),
+            )
         recent = query.order_by(NormalizedRCEvent.id.desc()).limit(200).all()
         for r in recent:
             r.provider_name = provider_name
             r.env = provider_env
+            r.es_evento = r.code is not None and r.code not in codigos_posicion
         return stats, recent
     finally:
         db.close()
@@ -323,7 +359,8 @@ def _get_mock_providers() -> list[str]:
 
 async def get_stats_data(
     status_filter: str = None,
-    provider_filter: str = None
+    provider_filter: str = None,
+    solo_eventos: bool = False,
 ):
     """
     Retorna las estadísticas en tiempo real sumando los datos de
@@ -366,7 +403,8 @@ async def get_stats_data(
         # Query por proveedor en ThreadPool (operación bloqueante)
         stats, recent = await asyncio.to_thread(
             _fetch_events_for_provider_sync,
-            provider_name, provider_env, status_filter, today_start, thirty_secs_ago
+            provider_name, provider_env, status_filter, today_start, thirty_secs_ago,
+            solo_eventos, codigos_de_posicion(p),
         )
 
         total_pending += int(stats.pending or 0)
@@ -455,12 +493,19 @@ async def get_stats_data(
             "provider": getattr(ev, 'provider_name', "N/A").upper(),
             "env": getattr(ev, 'env', "N/A").upper(),
             "device_date": device_date_local.strftime("%Y-%m-%d %H:%M:%S") + (" (Local)" if tz_offset != 0 else " (UTC)") if device_date_local else "N/A",
-            "speed": getattr(ev, 'speed', 0),
-            "coords": f"{ev.latitude}, {ev.longitude}" if getattr(ev, 'latitude') and ev.latitude else "Sin GPS",
+            # None = el proveedor no mide velocidad: el panel muestra N/A. A RC
+            # le llega "0", que es lo que pide el contrato.
+            "speed": getattr(ev, 'speed', None),
+            # "is not None": una latitud 0 es un dato real, no "Sin GPS".
+            "coords": (f"{ev.latitude}, {ev.longitude}"
+                       if getattr(ev, 'latitude', None) is not None and getattr(ev, 'longitude', None) is not None
+                       else "Sin GPS"),
             # Tres estados: un dato que el proveedor no mide no es "apagado".
             "ignition": ("N/A" if getattr(ev, 'ignition', None) is None
                          else "ON" if ev.ignition else "OFF"),
             "code": getattr(ev, 'code', "N/A"),
+            # Alarma, alerta o cambio de estado: el panel lo etiqueta.
+            "es_evento": bool(getattr(ev, 'es_evento', False)),
             "course": getattr(ev, 'course', None),
             "altitude": getattr(ev, 'altitude', None),
             "temperature": getattr(ev, 'temperature', None),
@@ -518,9 +563,10 @@ async def get_stats_data(
 async def get_stats(
     status_filter: str = Query(None, alias="status"),
     provider_filter: str = Query(None, alias="provider"),
+    solo_eventos: bool = Query(False, description="Solo alarmas y alertas, sin reportes de posición"),
     _: None = Depends(verify_dashboard_auth)
 ):
-    return await get_stats_data(status_filter, provider_filter)
+    return await get_stats_data(status_filter, provider_filter, solo_eventos)
 
 _sse_clients: list[asyncio.Queue] = []
 

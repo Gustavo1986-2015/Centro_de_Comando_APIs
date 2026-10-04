@@ -177,8 +177,12 @@ class DynamicMapper:
                 logger.warning(f"Error de conversión de tipo: {e}")
                 return None
 
-        # Buscar imei original para contingencia PULL y preservación
-        original_imei = "UNKNOWN"
+        # Buscar imei original para contingencia PULL y preservación.
+        # Sin identificador queda en None. Antes se rellenaba con "UNKNOWN", y
+        # ese texto viajaba a RC como si fuera una patente (evento del 02/10
+        # 15:44). Ahora el evento sale sin patente y la validación del
+        # contrato lo descarta con aviso. Ver app/core/contrato.py.
+        original_imei = None
         inner_payload = payload.get("payload", payload) if isinstance(payload, dict) else payload
         
         for imei_key in ["imei", "serial_number", "serial", "device_id"]:
@@ -202,7 +206,7 @@ class DynamicMapper:
         # Antes se consultaba siempre: un proveedor que ya envía la patente
         # pagaba una lectura por evento para no encontrar nada, y en el camino
         # PUSH eso ocurre dentro del request, contra el SLA de recepción.
-        if usar_diccionario and provider_name and env and chassis_number != "UNKNOWN":
+        if usar_diccionario and provider_name and env and chassis_number:
             from app.database import get_session
             from app.models.config_models import ProviderDictionary
             db_global = get_session("system_config", "global")
@@ -235,7 +239,10 @@ class DynamicMapper:
         # Coordenadas y Velocidad
         latitude = parse_float(DynamicMapper._extract_value(payload, schema.get("latitude", "")))
         longitude = parse_float(DynamicMapper._extract_value(payload, schema.get("longitude", "")))
-        speed = parse_float(DynamicMapper._extract_value(payload, schema.get("speed", ""))) or 0.0
+        # Sin "or 0.0": una velocidad que el proveedor no mide queda en None y
+        # el panel muestra N/A. A RC le sigue llegando "0", que es lo que pide
+        # el contrato: lo resuelve rc_soap al armar el envío.
+        speed = parse_float(DynamicMapper._extract_value(payload, schema.get("speed", "")))
         
         # Evento o Motivo (Siempre debe ser string, por defecto '1' para Reporte Periódico de Posición)
         code_raw = DynamicMapper._extract_value(payload, schema.get("code", ""))
@@ -256,7 +263,7 @@ class DynamicMapper:
         ignition = _a_booleano(ignition_raw)
         
         serial_num = DynamicMapper._extract_value(payload, schema.get("serial_number", ""))
-        if serial_num is None and original_imei != "UNKNOWN":
+        if serial_num is None and original_imei is not None:
             serial_num = original_imei
             
         shipment_num = DynamicMapper._extract_value(payload, schema.get("shipment", ""))
@@ -412,4 +419,9 @@ class DynamicMapper:
             fallback.code = "1"
             results.append(fallback)
 
-        return results
+        # Validación del contrato al ingresar. Va acá, y no en cada llamador,
+        # porque por este punto pasan los tres caminos dinámicos: el webhook,
+        # el PULL y la red de seguridad. Un evento sin patente real, fecha o
+        # coordenadas no entra a la cola.
+        from app.core.contrato import filtrar_validos
+        return filtrar_validos(results, provider_name, env)

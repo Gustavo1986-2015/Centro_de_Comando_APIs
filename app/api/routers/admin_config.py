@@ -16,6 +16,7 @@ from app.core import config_cache
 from app.core.auditor import log_admin_action
 from app.core import webhook_auth
 from app.core.crypto import encrypt, decrypt
+from app.providers import registry
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["Admin Config"])
@@ -42,6 +43,8 @@ class ConfigUpdate(BaseModel):
     enable_state_dedup: bool = True
     # Techo de peticiones por minuto del webhook. None = usar el límite global.
     rate_limit_per_min: int | None = None
+    # Interruptores de un módulo dedicado (Tive). None = no tocar lo guardado.
+    module_options: dict | None = None
     # Contraseña de administrador, requerida solo al ACTIVAR el modo simulado.
     # No se envía en operaciones que no lo activan.
     admin_password: str | None = None
@@ -71,7 +74,11 @@ def get_providers(_: None = Depends(verify_dashboard_auth)):
     config_db = get_session("system_config", "global")
     try:
         providers = config_db.query(ProviderConfig).all()
-        return [{"id": p.id, "provider_name": p.provider_name, "env": p.env} for p in providers]
+        # modulo_dedicado: el Integration Studio no los lista. Su lógica vive en
+        # app/providers/<proveedor>/ y un esquema guardado desde el Studio no
+        # tendría ningún efecto, o peor, confundiría a quien lo edita.
+        return [{"id": p.id, "provider_name": p.provider_name, "env": p.env,
+                 "modulo_dedicado": registry.es_dedicado(p.provider_name)} for p in providers]
     finally:
         config_db.close()
 
@@ -140,6 +147,13 @@ def save_mapping(provider_name: str, env: str, payload: dict, _: None = Depends(
         ).first()
         if not config:
             return {"status": "error", "message": "Provider not found"}
+        if registry.es_dedicado(provider_name):
+            return {
+                "status": "error",
+                "message": (f"{provider_name} es una integración dedicada: su lógica no se "
+                            f"configura en el Integration Studio. Sus opciones están en la "
+                            f"tabla de configuración."),
+            }
             
         # Compatibilidad: si el payload tiene la llave 'mapping', extraerla, si no, asumir que todo es mapping
         if 'mapping' in payload:
@@ -220,6 +234,42 @@ def get_enrichment(provider_name: str, env: str, _: None = Depends(verify_dashbo
     finally:
         config_db.close()
 
+def _opciones_de_modulo(c) -> dict:
+    """Interruptores de un módulo dedicado, con su descripción para el panel."""
+    modulo = registry.modulo_dedicado(c.provider_name)
+    if modulo is None:
+        return {"modulo_dedicado": False}
+    efectivas = modulo.opciones_efectivas(getattr(c, "module_options", None))
+    return {
+        "modulo_dedicado": True,
+        "module_options": efectivas,
+        "module_options_labels": dict(modulo.DESCRIPCION_INTERRUPTORES),
+    }
+
+
+def _validar_opciones_de_modulo(conf, opciones: dict) -> dict:
+    """Solo interruptores conocidos y booleanos: lo demás se rechaza con motivo."""
+    modulo = registry.modulo_dedicado(conf.provider_name)
+    if modulo is None:
+        raise HTTPException(
+            status_code=400,
+            detail=f"{conf.provider_name}/{conf.env} no es una integración dedicada: no tiene interruptores.",
+        )
+    desconocidas = sorted(set(opciones) - set(modulo.INTERRUPTORES))
+    if desconocidas:
+        raise HTTPException(
+            status_code=400,
+            detail=f"{conf.provider_name}/{conf.env}: interruptores desconocidos {desconocidas}.",
+        )
+    no_booleanas = sorted(k for k, v in opciones.items() if not isinstance(v, bool))
+    if no_booleanas:
+        raise HTTPException(
+            status_code=400,
+            detail=f"{conf.provider_name}/{conf.env}: {no_booleanas} tienen que ser true o false.",
+        )
+    return modulo.opciones_efectivas(opciones)
+
+
 @router.get("/api/config")
 def get_all_configs(_: None = Depends(verify_dashboard_auth)):
     db = get_session("system_config", "global")
@@ -251,7 +301,8 @@ def get_all_configs(_: None = Depends(verify_dashboard_auth)):
             "provider_type": getattr(c, 'provider_type', 'pull') or 'pull',
             # NULL = usar el límite global; solo aplica a proveedores PUSH
             "rate_limit_per_min": getattr(c, 'rate_limit_per_min', None),
-            "enable_state_dedup": bool(getattr(c, 'enable_state_dedup', True))
+            "enable_state_dedup": bool(getattr(c, 'enable_state_dedup', True)),
+            **_opciones_de_modulo(c),
         } for c in configs]
     finally:
         db.close()
@@ -337,6 +388,19 @@ def update_configs(updates: List[ConfigUpdate], _: None = Depends(verify_dashboa
                         invalidate_limit_cache(conf.provider_name)
                     except Exception as e:
                         logger.warning(f"No se pudo invalidar la caché del limitador: {e}")
+
+                if u.module_options is not None:
+                    nuevas = _validar_opciones_de_modulo(conf, u.module_options)
+                    anteriores = registry.modulo_dedicado(conf.provider_name).opciones_efectivas(
+                        getattr(conf, "module_options", None)
+                    )
+                    if nuevas != anteriores:
+                        cambios = ", ".join(
+                            f"{k}: {'SÍ' if anteriores[k] else 'NO'} -> {'SÍ' if v else 'NO'}"
+                            for k, v in nuevas.items() if anteriores.get(k) != v
+                        )
+                        logger.warning(f"Interruptores de {conf.provider_name}/{conf.env} cambiados: {cambios}.")
+                    conf.module_options = nuevas
 
                 conf.use_mock = u.use_mock
                 conf.purge_interval_min = u.purge_interval_min

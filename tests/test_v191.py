@@ -162,7 +162,13 @@ def test_el_primer_descarte_se_registra_enseguida(caplog):
 
 @pytest.fixture
 def webhook_tive(tmp_path, monkeypatch):
-    """Router del webhook dinámico con una integración Tive filtrada, sin firma."""
+    """
+    Router del webhook dinámico con una integración del Studio filtrada, sin firma.
+
+    Desde la v1.9.2 Tive tiene módulo dedicado; el filtro de admisión sigue
+    siendo una capacidad genérica del Integration Studio, así que se prueba con
+    un proveedor genérico configurado como estaba Tive.
+    """
     from cryptography.fernet import Fernet
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
@@ -186,7 +192,7 @@ def webhook_tive(tmp_path, monkeypatch):
     database.check_and_migrate_provider_db("system_config", "global")
     db = database.get_session("system_config", "global")
     db.add(ProviderConfig(
-        provider_name="tive", env="prod", provider_type="push", is_active=True,
+        provider_name="studio", env="prod", provider_type="push", is_active=True,
         use_mock=True, webhook_auth_secret_enc=encrypt("CLAVE"),
         mapping_schema={
             "base_mapping": {"chassis_number": "DeviceName", "latitude": "Location.Latitude",
@@ -198,8 +204,8 @@ def webhook_tive(tmp_path, monkeypatch):
     ))
     db.commit()
     db.close()
-    NormalizedRCEvent.metadata.create_all(bind=database.get_engine("tive", "prod"))
-    database.check_and_migrate_provider_db("tive", "prod")
+    NormalizedRCEvent.metadata.create_all(bind=database.get_engine("studio", "prod"))
+    database.check_and_migrate_provider_db("studio", "prod")
 
     app = FastAPI()
     app.include_router(dynamic_webhook.router)
@@ -215,7 +221,7 @@ def webhook_tive(tmp_path, monkeypatch):
 def _filas_tive():
     from app.database import get_session
     from app.models.db_models import NormalizedRCEvent
-    db = get_session("tive", "prod")
+    db = get_session("studio", "prod")
     try:
         return [(f.chassis_number, f.shipment) for f in db.query(NormalizedRCEvent).all()]
     finally:
@@ -231,9 +237,9 @@ def test_el_webhook_aplica_el_filtro(webhook_tive):
     sin_envio = {**BASE, "AccountId": 9831, "DeviceName": "Q48548", "ShipmentId": None}
     muestra = {**BASE, "AccountId": -1, "DeviceName": "SAMPLEDEVICEID", "ShipmentId": "Shipment Id"}
 
-    r_ok = webhook_tive.post("/webhook/dynamic/tive", json=con_envio, headers=h)
-    r_sin = webhook_tive.post("/webhook/dynamic/tive", json=sin_envio, headers=h)
-    r_muestra = webhook_tive.post("/webhook/dynamic/tive", json=muestra, headers=h)
+    r_ok = webhook_tive.post("/webhook/dynamic/studio", json=con_envio, headers=h)
+    r_sin = webhook_tive.post("/webhook/dynamic/studio", json=sin_envio, headers=h)
+    r_muestra = webhook_tive.post("/webhook/dynamic/studio", json=muestra, headers=h)
 
     # Los descartes responden éxito: el proveedor no tiene que reintentarlos.
     assert r_ok.status_code == r_sin.status_code == r_muestra.status_code == 200
@@ -368,14 +374,14 @@ def test_el_endpoint_del_panel_usa_la_funcion_del_envio(webhook_tive):
     from app.database import get_session
     from app.models.db_models import NormalizedRCEvent
 
-    webhook_tive.post("/webhook/dynamic/tive", headers={"x-api-key": "CLAVE"},
+    webhook_tive.post("/webhook/dynamic/studio", headers={"x-api-key": "CLAVE"},
                       json={**BASE, "AccountId": 10471, "DeviceName": "Q92951",
                             "ShipmentId": "4600410383"})
 
     datos = asyncio.run(get_stats_data())
     evento_panel = next(e for e in datos["recent"] if e.get("rc_format", {}).get("asset") == "Q92951")
 
-    db = get_session("tive", "prod")
+    db = get_session("studio", "prod")
     fila = db.query(NormalizedRCEvent).filter_by(chassis_number="Q92951").first()
     db.close()
 

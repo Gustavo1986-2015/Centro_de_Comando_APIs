@@ -152,7 +152,7 @@
                 <div style="display: flex; align-items: center; gap: 1rem;">
                     <h2 style="margin: 0;">Última Actividad Global <span id="current-filter-label" style="font-size: 0.9rem; font-weight: normal; color: var(--color-yellow); margin-left: 10px;"></span></h2>
                     <span id="event-count" style="color: #94a3b8; font-size: 0.85rem;">Cargando...</span>
-                    <input type="text" id="search-chassis" placeholder="🔍 Buscar por placa o IMEI..." 
+                    <input type="text" id="search-chassis" placeholder="🔍 Buscar por placa, IMEI o envío..."
                            style="background: #1e293b; border: 1px solid #334155; color: #e2e8f0; 
                                   padding: 6px 12px; border-radius: 6px; font-size: 0.85rem; width: 250px;">
                 </div>
@@ -167,6 +167,10 @@
                         <option value="medium" style="color: black; background: white;">Media (3-9s)</option>
                         <option value="high" style="color: black; background: white;">Alta (≥ 10s)</option>
                     </select>
+                    <label title="Solo alarmas y alertas: oculta los reportes de posición" style="display:flex; align-items:center; gap:6px; color: var(--color-gray); font-size: 0.9rem; cursor:pointer;">
+                        <input type="checkbox" id="filter-solo-eventos" onchange="setFilterSoloEventos(this.checked)" style="width:15px; height:15px; cursor:pointer;">
+                        Solo eventos
+                    </label>
                     <button class="btn-save" onclick="resetFilters()" style="background: var(--level-2); color: var(--color-text); border: 1px solid var(--card-border); padding: 4px 8px;">Quitar Filtros</button>
                     <button class="btn-save" onclick="downloadExcel()" style="background: #10B981; color: white; padding: 4px 8px;" title="Descargar registros filtrados en formato Excel (CSV)">📥 Descargar Excel</button>
                 </div>
@@ -219,6 +223,7 @@
                             <th title="Frecuencia en segundos en que el worker escanea y procesa datos nuevos.">Ejecución (seg)</th>
                             <th title="Peticiones por minuto que acepta el webhook de este proveedor. Vacío = usar el límite global del sistema. No aplica a proveedores PULL.">Límite Push (req/min)</th>
                             <th title="Motor de base de datos usado para la cola interna de procesamiento.">Motor Cola</th>
+                            <th title="Qué envía una integración con módulo dedicado (Tive). No aplica a las integraciones del Integration Studio.">Opciones del Módulo</th>
 
                         </tr>
                     </thead>

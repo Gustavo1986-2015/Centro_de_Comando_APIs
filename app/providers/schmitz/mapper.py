@@ -39,7 +39,7 @@ def unwrap_ex(obj, default=None):
     return obj if obj is not None else default
 
 
-def map_schmitz_payload(payload: Dict[str, Any], headers: Dict[str, str] = None) -> list:
+def map_schmitz_payload(payload: Dict[str, Any], headers: Dict[str, str] = None, env: str = None) -> list:
     """
     Mapea un payload crudo de Schmitz a UNA LISTA de RCCanonicalModel.
     Retorna entre 1 y N eventos segun las reglas del hub:
@@ -151,6 +151,17 @@ def map_schmitz_payload(payload: Dict[str, Any], headers: Dict[str, str] = None)
 
     for ev_type in events_to_process:
         result.append(build_event(ev_type))
+
+    # ── Validación del contrato, ANTES de tocar la caché de estados ──────────
+    # Todos los eventos de un pulso comparten patente, fecha y posición, así
+    # que pasan o caen juntos. Se valida acá y no después: si el pulso se
+    # descarta, la caché no puede registrar un cambio de estado (puerta,
+    # enganche) que nunca llegó a RC, porque el siguiente pulso válido ya no
+    # lo emitiría.
+    from app.core.contrato import filtrar_validos
+    result = filtrar_validos(result, "schmitz", env)
+    if not result:
+        return []
 
     # ── 2. Estados de sensores fisicos (solo cuando cambian) ─────────────────
     # El cache persiste en memoria entre payloads del mismo remolque.

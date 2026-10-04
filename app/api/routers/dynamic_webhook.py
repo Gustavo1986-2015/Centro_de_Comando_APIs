@@ -15,6 +15,7 @@ from app.core.auditor import log_raw_payload
 from app.core import admision, safety_net, webhook_auth
 from app.core.crypto import decrypt
 from app.core.auth_alerts import registrar_rechazo
+from app.providers import registry
 
 logger = logging.getLogger(__name__)
 
@@ -90,8 +91,11 @@ def _validate_dynamic_auth(
         # crudo, que se lee en el handler. Se devuelve lo necesario para que la
         # haga ahí, antes de parsear nada.
             
+        # Un proveedor con módulo dedicado (Tive) no usa el esquema del
+        # Integration Studio: su lógica vive en app/providers/<proveedor>/.
+        dedicado = registry.es_dedicado(provider_name)
         mapping_schema = config.mapping_schema or {}
-        if not mapping_schema:
+        if not mapping_schema and not dedicado:
             raise HTTPException(status_code=400, detail="El proveedor no tiene un esquema visual configurado (mapping_schema).")
         
         # Pasar configuración de dedup junto con mapping_schema
@@ -102,6 +106,8 @@ def _validate_dynamic_auth(
             "auth_cfg": auth_cfg,
             # Solo se entrega en modo HMAC, que lo necesita para verificar.
             "secreto_hmac": stored_key if auth_cfg["modo"] == webhook_auth.MODO_HMAC else None,
+            "dedicado": dedicado,
+            "opciones_modulo": getattr(config, "module_options", None) or {},
         }
     finally:
         db_global.close()
@@ -216,67 +222,105 @@ async def dynamic_webhook_receive(
     # 2.5 Auditoría cruda (fire-and-forget asíncrona)
     asyncio.create_task(asyncio.to_thread(log_raw_payload, provider_name, env, payload))
 
-    # 2.6 Filtro de admisión. Va DESPUÉS de la auditoría a propósito: un
-    # evento descartado igual queda en el respaldo crudo, y si mañana cambia
-    # el filtro se puede reprocesar. Se responde éxito porque el descarte es
-    # deliberado: un error haría que el proveedor reintente algo que no
-    # queremos, y sumaría ruido a sus métricas de entrega.
-    motivo_descarte = admision.evaluar(payload, mapping_schema)
-    if motivo_descarte:
-        admision.registrar_descarte(provider_name, env, motivo_descarte)
-        return {
-            "status": "ok",
-            "note": "descartado por el filtro de admisión",
-            "motivo": motivo_descarte,
-            "events_count": 0,
-        }
-
-    # 3. Transformación Dinámica al Modelo Canónico (RC)
-    try:
-        canonical_events = await run_in_threadpool(
-            DynamicMapper.map_payload_multi, 
-            payload, mapping_schema, provider_name, env, require_dict_match,
-            require_dict_match   # sin diccionario configurado no se consulta la tabla
-        )
-    except Exception as e:
-        logger.warning(f"Excepción capturada en dynamic_webhook: {e}")
-        logger.error(f"Error en DynamicMapper para {provider_name}: {e}")
-        raise HTTPException(status_code=422, detail=f"Fallo al mapear los datos: {e}")
-
-    if require_dict_match and not canonical_events:
-        logger.warning(
-            f"[{provider_name}-{env}] Payload descartado: el identificador no tiene "
-            f"traducción en el diccionario. No se envía a RC."
-        )
-        return {"status": "accepted", "note": "sin traducción en diccionario, descartado"}
-
-    # 3.5 Deduplicación de Estado (Anti-State Flooding) — solo si el toggle está activo
-    # NOTA: schmitz.py NO pasa por aquí (tiene su propio router /Json/Data con dedup interno).
-    if enable_dedup and canonical_events:
-        from app.core.state_dedup import should_emit_event, get_base_code
-        base_code = get_base_code(mapping_schema)
-        original_count = len(canonical_events)
-        canonical_events = [
-            ev for ev in canonical_events
-            if should_emit_event(
-                provider=provider_name,
-                env=env,
-                chassis=ev.chassis_number,
-                code=ev.code,
-                base_code=base_code,
-                mapping_schema=mapping_schema,
-                enabled=True
+    # 2.6 Módulo dedicado. Si el proveedor tiene lógica propia (Tive), el
+    # payload va a su módulo y el endpoint no sabe nada de ese proveedor: solo
+    # pregunta al registro. Lo que sigue —persistir, red de seguridad,
+    # despertar al worker— es común.
+    modulo = registry.modulo_dedicado(provider_name) if auth_config.get("dedicado") else None
+    if modulo is not None:
+        ingest_id = safety_net.nuevo_ingest_id()
+        try:
+            canonical_events = await run_in_threadpool(
+                modulo.procesar, payload, env, auth_config.get("opciones_modulo") or {}, ingest_id
             )
-        ]
-        filtered = original_count - len(canonical_events)
-        if filtered > 0:
-            logger.info(f"[DEDUP] {provider_name}/{env}: {filtered} evento(s) suprimidos (sin transición de estado).")
+        except Exception as e:
+            # Un fallo del módulo (por ejemplo, su base de estado bloqueada)
+            # no puede perder el evento: Tive reintenta dos veces y abandona.
+            # Va a la red de seguridad con este mismo ingest_id y el
+            # reintentador lo vuelve a pasar por el módulo.
+            safety_net.registrar_pendiente(provider_name, env, ingest_id, payload)
+            logger.error(
+                f"[{provider_name.upper()}-{env}] Error en el módulo dedicado: {e} | "
+                f"El payload queda en la red de seguridad para reintento."
+            )
+            return {"status": "accepted", "note": "resguardado para reintento", "events_count": 0}
 
-    if not canonical_events:
-        return {"status": "ok", "message": "Todos los eventos fueron suprimidos por deduplicación de estado.", "events_count": 0}
+        if not canonical_events:
+            # El motivo de cada descarte ya quedó en consola. Se responde éxito:
+            # descartar es deliberado y un error haría reintentar a Tive.
+            return {"status": "ok", "note": "sin eventos para enviar", "events_count": 0}
+    else:
+        # 2.6 Filtro de admisión. Va DESPUÉS de la auditoría a propósito: un
+        # evento descartado igual queda en el respaldo crudo, y si mañana cambia
+        # el filtro se puede reprocesar. Se responde éxito porque el descarte es
+        # deliberado: un error haría que el proveedor reintente algo que no
+        # queremos, y sumaría ruido a sus métricas de entrega.
+        motivo_descarte = admision.evaluar(payload, mapping_schema)
+        if motivo_descarte:
+            admision.registrar_descarte(
+                provider_name, env, motivo_descarte,
+                admision.identidad(payload, mapping_schema),
+            )
+            return {
+                "status": "ok",
+                "note": "descartado por el filtro de admisión",
+                "motivo": motivo_descarte,
+                "events_count": 0,
+            }
+
+        # 3. Transformación Dinámica al Modelo Canónico (RC)
+        try:
+            canonical_events = await run_in_threadpool(
+                DynamicMapper.map_payload_multi,
+                payload, mapping_schema, provider_name, env, require_dict_match,
+                require_dict_match   # sin diccionario configurado no se consulta la tabla
+            )
+        except Exception as e:
+            logger.warning(f"Excepción capturada en dynamic_webhook: {e}")
+            logger.error(f"Error en DynamicMapper para {provider_name}: {e}")
+            raise HTTPException(status_code=422, detail=f"Fallo al mapear los datos: {e}")
+
+        if require_dict_match and not canonical_events:
+            logger.warning(
+                f"[{provider_name}-{env}] Payload descartado: el identificador no tiene "
+                f"traducción en el diccionario, o al evento le falta un dato obligatorio "
+                f"(el motivo exacto está en la línea anterior). No se envía a RC."
+            )
+            return {"status": "accepted", "note": "sin traducción en diccionario, descartado"}
+
+        if not canonical_events:
+            # El mapeador no dejó ningún evento válido: le faltaba patente,
+            # fecha o coordenadas. El aviso con el detalle ya está en consola.
+            return {"status": "ok", "note": "sin eventos válidos para enviar", "events_count": 0}
+
+        # 3.5 Deduplicación de Estado (Anti-State Flooding) — solo si el toggle está activo
+        # NOTA: schmitz.py NO pasa por aquí (tiene su propio router /Json/Data con dedup interno).
+        if enable_dedup and canonical_events:
+            from app.core.state_dedup import should_emit_event, get_base_code
+            base_code = get_base_code(mapping_schema)
+            original_count = len(canonical_events)
+            canonical_events = [
+                ev for ev in canonical_events
+                if should_emit_event(
+                    provider=provider_name,
+                    env=env,
+                    chassis=ev.chassis_number,
+                    code=ev.code,
+                    base_code=base_code,
+                    mapping_schema=mapping_schema,
+                    enabled=True
+                )
+            ]
+            filtered = original_count - len(canonical_events)
+            if filtered > 0:
+                logger.info(f"[DEDUP] {provider_name}/{env}: {filtered} evento(s) suprimidos (sin transición de estado).")
+
+        if not canonical_events:
+            return {"status": "ok", "message": "Todos los eventos fueron suprimidos por deduplicación de estado.", "events_count": 0}
+
+        ingest_id = safety_net.nuevo_ingest_id()
 
     # 4. Guardar en Base de Datos Específica / Cola usando ThreadPool para no bloquear
-    ingest_id = safety_net.nuevo_ingest_id()
     try:
         await run_in_threadpool(
             _save_dynamic_events, provider_name, env, canonical_events, payload, ingest_id
@@ -332,19 +376,28 @@ async def persistir_desde_red_de_seguridad(provider: str, env: str,
         ).first()
         mapping_schema = (config.mapping_schema if config else None) or {}
         dict_enabled = bool(((config.enrichment_config if config else None) or {}).get("enabled"))
+        opciones_modulo = (getattr(config, "module_options", None) if config else None) or {}
     finally:
         db_global.close()
 
-    if not mapping_schema:
+    # Un proveedor con módulo dedicado se reprocesa con su módulo, igual que
+    # en la recepción. Con el MISMO ingest_id: así su deduplicación reconoce
+    # que es la misma recepción y no la descarta como duplicado de sí misma.
+    modulo = registry.modulo_dedicado(provider)
+
+    if not mapping_schema and modulo is None:
         # Sin esquema no hay forma de reconstruir los eventos. No es un lock:
         # es configuración, y el reintentador lo manda a cuarentena con motivo.
         raise ValueError(f"{provider}/{env} ya no tiene esquema de mapeo configurado")
 
     filas = []
     for payload, iid in lote:
-        eventos = DynamicMapper.map_payload_multi(
-            payload, mapping_schema, provider, env, dict_enabled, dict_enabled
-        )
+        if modulo is not None:
+            eventos = modulo.procesar(payload, env, opciones_modulo, iid)
+        else:
+            eventos = DynamicMapper.map_payload_multi(
+                payload, mapping_schema, provider, env, dict_enabled, dict_enabled
+            )
         for indice, ev in enumerate(eventos):
             filas.append({
                 "provider": provider, "status": "pending",

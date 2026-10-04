@@ -34,13 +34,16 @@ def _db_sin_traduccion():
 
 
 SCHEMA_SIN_DEFAULT = {
-    "base_mapping": {"chassis_number": "imei", "latitude": "lat", "longitude": "lng"},
+    # Con fecha: desde la v1.9.2 un evento sin fecha no entra (contrato.py).
+    "base_mapping": {"chassis_number": "imei", "latitude": "lat", "longitude": "lng",
+                     "date": "gpstime"},
     "trigger_rules": [
         {"enabled": True, "field": "acc", "operator": "eq", "value": "99", "rc_code": "11"}
     ],
     "default_rule": {"enabled": False, "rc_code": "1"},
 }
-PAYLOAD = {"imei": "868307060968914", "lat": 9.98, "lng": -84.73, "acc": "0"}
+PAYLOAD = {"imei": "868307060968914", "lat": 9.98, "lng": -84.73, "acc": "0",
+           "gpstime": 1786102275}
 
 
 def test_el_fallback_conserva_los_datos_del_payload():

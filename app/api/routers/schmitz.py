@@ -157,7 +157,7 @@ def _persist_batch(batch: list):
             for payload, iid_payload in items_for_env:
                 try:
                     # Usamos el mapper con extracción de Tenant (el router no recibe headers en el inner batch, se asume tenant generico o payload-based aqui)
-                    canonical_list = map_schmitz_payload(payload)
+                    canonical_list = map_schmitz_payload(payload, env=current_env)
                     raw_json_str   = json.dumps(payload, ensure_ascii=False)
                     # El ingest_id del payload ya se asignó en la recepción. Un
                     # payload puede generar varios eventos canónicos (motor
@@ -498,7 +498,7 @@ async def persistir_desde_red_de_seguridad(provider: str, env: str,
 
     filas = []
     for payload, iid in lote:
-        canonical_list = map_schmitz_payload(payload)
+        canonical_list = map_schmitz_payload(payload, env=env)
         raw_json_str = json.dumps(payload, ensure_ascii=False)
         for indice, canonical in enumerate(canonical_list):
             filas.append({

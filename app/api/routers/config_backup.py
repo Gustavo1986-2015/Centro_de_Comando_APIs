@@ -240,6 +240,8 @@ def _proveedor_a_dict(conf: ProviderConfig) -> dict:
         # no sale en el respaldo.
         "webhook_autenticacion": getattr(conf, "webhook_auth_config", None),
         "rc_usuario": conf.rc_user,
+        # Interruptores de un módulo dedicado (Tive). No son secretos.
+        "opciones_modulo": getattr(conf, "module_options", None),
     }
     for clave, valor in opcionales.items():
         if valor is None:
@@ -560,6 +562,7 @@ CAMPOS_SIMPLES = {
     "webhook_header": "webhook_auth_header",
     "webhook_autenticacion": "webhook_auth_config",
     "rc_usuario": "rc_user",
+    "opciones_modulo": "module_options",
 }
 
 
@@ -599,7 +602,7 @@ CAMPOS_BOOLEANOS_YAML = ("activo", "modo_simulado", "deduplicacion")
 
 # Bloques que tienen que ser diccionarios. Un string acá rompía analizar_import
 # con un 500 opaco en vez de un 400 que explique qué está mal.
-CAMPOS_DICCIONARIO = ("mapeo", "telemetria", "diccionario")
+CAMPOS_DICCIONARIO = ("mapeo", "telemetria", "diccionario", "opciones_modulo")
 
 
 def _validar_proveedor(prov: dict, posicion: int):
@@ -659,6 +662,15 @@ def _validar_proveedor(prov: dict, posicion: int):
                     f"En {etiqueta}, '{campo}' tiene que ser un bloque de configuración "
                     f"y vino {type(prov[campo]).__name__}."
                 ),
+            )
+
+    opciones = prov.get("opciones_modulo")
+    if isinstance(opciones, dict):
+        no_booleanas = sorted(k for k, v in opciones.items() if not isinstance(v, bool))
+        if no_booleanas:
+            raise HTTPException(
+                status_code=400,
+                detail=f"En {etiqueta}, 'opciones_modulo' {no_booleanas} tienen que ser true o false.",
             )
 
     tipo = prov.get("tipo")

@@ -213,7 +213,12 @@ PAYLOAD_TELEMETRIA = {
 def app_con_tive(tmp_path, monkeypatch):
     """
     Solo el router del webhook dinámico, sobre bases temporales, con una
-    integración 'tive' configurada con firma HMAC.
+    integración del Studio configurada con la firma HMAC de Tive.
+
+    Desde la v1.9.2 la integración llamada 'tive' tiene módulo dedicado; la
+    firma HMAC, la red de seguridad y el reintentador son comunes, así que se
+    prueban con una integración genérica ('studio'). El recorrido de Tive real
+    está en test_v192_tive.py.
 
     Se levanta el router y no la app completa: es el patrón probado de la
     suite, y evita los estáticos y los efectos de arranque. Se aíslan los dos
@@ -247,15 +252,15 @@ def app_con_tive(tmp_path, monkeypatch):
     database.check_and_migrate_provider_db("system_config", "global")
     db = database.get_session("system_config", "global")
     db.add(ProviderConfig(
-        provider_name="tive", env="prod", provider_type="push", is_active=True,
+        provider_name="studio", env="prod", provider_type="push", is_active=True,
         use_mock=True, webhook_auth_secret_enc=encrypt(SECRETO),
         webhook_auth_config={"modo": "hmac", "preset": "tive"},
         mapping_schema=MAPEO_TIVE, rc_user="u", rc_password_enc=encrypt("p"),
     ))
     db.commit()
     db.close()
-    NormalizedRCEvent.metadata.create_all(bind=database.get_engine("tive", "prod"))
-    database.check_and_migrate_provider_db("tive", "prod")
+    NormalizedRCEvent.metadata.create_all(bind=database.get_engine("studio", "prod"))
+    database.check_and_migrate_provider_db("studio", "prod")
 
     app = FastAPI()
     app.include_router(dynamic_webhook.router)
@@ -270,7 +275,7 @@ def app_con_tive(tmp_path, monkeypatch):
     safety_net._cache_estado.clear()
 
 
-def _filas(provider="tive"):
+def _filas(provider="studio"):
     from app.database import get_session
     from app.models.db_models import NormalizedRCEvent
     db = get_session(provider, "prod")
@@ -282,7 +287,7 @@ def _filas(provider="tive"):
 
 def test_el_webhook_acepta_una_peticion_firmada(app_con_tive):
     cuerpo = json.dumps(PAYLOAD_TELEMETRIA).encode()
-    r = app_con_tive.post("/webhook/dynamic/tive?env=prod", content=cuerpo,
+    r = app_con_tive.post("/webhook/dynamic/studio?env=prod", content=cuerpo,
                           headers={"content-type": "application/json", **_firmar_tive(cuerpo)})
     assert r.status_code == 200, r.text
     assert _filas() == 1
@@ -290,7 +295,7 @@ def test_el_webhook_acepta_una_peticion_firmada(app_con_tive):
 
 def test_el_webhook_rechaza_una_firma_invalida_sin_guardar_nada(app_con_tive):
     cuerpo = json.dumps(PAYLOAD_TELEMETRIA).encode()
-    r = app_con_tive.post("/webhook/dynamic/tive?env=prod", content=cuerpo,
+    r = app_con_tive.post("/webhook/dynamic/studio?env=prod", content=cuerpo,
                           headers={"content-type": "application/json",
                                    **_firmar_tive(cuerpo, secreto="falsa")})
     assert r.status_code == 401
@@ -304,7 +309,7 @@ def test_el_webhook_verifica_sobre_los_bytes_recibidos(app_con_tive):
     """
     cuerpo = b'{ "AccountId":123,   "DeviceName": "VD0001", "EntryTimeUtc": "2026-09-30T12:00:00",' \
              b' "Location": {"Latitude": -34.6, "Longitude": -58.4} }'
-    r = app_con_tive.post("/webhook/dynamic/tive?env=prod", content=cuerpo,
+    r = app_con_tive.post("/webhook/dynamic/studio?env=prod", content=cuerpo,
                           headers={"content-type": "application/json", **_firmar_tive(cuerpo)})
     assert r.status_code == 200, r.text
 
@@ -314,7 +319,7 @@ def test_el_webhook_no_acepta_la_api_key_fija_en_modo_hmac(app_con_tive):
     Con firma configurada, mandar el secreto en un header ya no alcanza: el
     secreto no debe viajar nunca en este modo.
     """
-    r = app_con_tive.post("/webhook/dynamic/tive?env=prod", json=PAYLOAD_TELEMETRIA,
+    r = app_con_tive.post("/webhook/dynamic/studio?env=prod", json=PAYLOAD_TELEMETRIA,
                           headers={"x-api-key": SECRETO})
     assert r.status_code == 401
 
@@ -334,7 +339,7 @@ def test_ante_un_fallo_de_base_el_evento_va_a_la_red_de_seguridad(app_con_tive, 
     monkeypatch.setattr(dynamic_webhook, "_save_dynamic_events", _falla)
 
     cuerpo = json.dumps(PAYLOAD_TELEMETRIA).encode()
-    r = app_con_tive.post("/webhook/dynamic/tive?env=prod", content=cuerpo,
+    r = app_con_tive.post("/webhook/dynamic/studio?env=prod", content=cuerpo,
                           headers={"content-type": "application/json", **_firmar_tive(cuerpo)})
 
     assert r.status_code == 200, r.text
@@ -342,7 +347,7 @@ def test_ante_un_fallo_de_base_el_evento_va_a_la_red_de_seguridad(app_con_tive, 
 
     import time as _t
     _t.sleep(0.4)
-    pendientes = safety_net.pendientes_reales("tive", "prod")
+    pendientes = safety_net.pendientes_reales("studio", "prod")
     assert len(pendientes) == 1, "El evento no llegó a la red de seguridad"
     assert pendientes[0]["payload"]["DeviceName"] == "VD0001"
 
@@ -358,15 +363,15 @@ def test_el_reintentador_recupera_un_evento_dinamico(app_con_tive):
     from app.api.routers.schmitz import _persistir_cualquier_integracion
     from app.core import safety_net
 
-    safety_net.registrar_pendiente("tive", "prod", "iid-prueba", PAYLOAD_TELEMETRIA)
+    safety_net.registrar_pendiente("studio", "prod", "iid-prueba", PAYLOAD_TELEMETRIA)
     _t.sleep(0.4)
 
-    asyncio.run(safety_net.reintentar_pendientes("tive", "prod", _persistir_cualquier_integracion))
+    asyncio.run(safety_net.reintentar_pendientes("studio", "prod", _persistir_cualquier_integracion))
 
     assert _filas() == 1
-    assert safety_net.estado("tive", "prod", usar_cache=False)["pendientes"] == 0
+    assert safety_net.estado("studio", "prod", usar_cache=False)["pendientes"] == 0
 
     # Idempotente: reintentar lo mismo no duplica.
     from app.api.routers.dynamic_webhook import persistir_desde_red_de_seguridad
-    asyncio.run(persistir_desde_red_de_seguridad("tive", "prod", [(PAYLOAD_TELEMETRIA, "iid-prueba")]))
+    asyncio.run(persistir_desde_red_de_seguridad("studio", "prod", [(PAYLOAD_TELEMETRIA, "iid-prueba")]))
     assert _filas() == 1, "El reintento duplicó el evento"

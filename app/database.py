@@ -87,6 +87,12 @@ def check_and_migrate_db():
                         )
                         conn.commit()
 
+            # Opciones de un módulo dedicado (los interruptores de Tive). NULL
+            # por defecto: sin valor, el módulo usa los suyos. Solo agrega.
+            if "module_options" not in columns:
+                cursor.execute("ALTER TABLE provider_config ADD COLUMN module_options JSON")
+                conn.commit()
+
             # Techo de peticiones por minuto configurable por proveedor desde el panel
             if "rate_limit_per_min" not in columns:
                 cursor.execute("ALTER TABLE provider_config ADD COLUMN rate_limit_per_min INTEGER")

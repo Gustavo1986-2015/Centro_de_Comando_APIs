@@ -48,7 +48,9 @@ def test_los_enviados_del_dia_salen_del_acumulado_no_de_la_tabla(base_limpia):
     from app.database import get_session
     from app.models.config_models import DailyStat
 
-    hoy = datetime.now(timezone.utc).date()
+    # Fecha LOCAL, como la graba processor.py y la lee la tarjeta. Con la
+    # fecha UTC el test fallaba entre las 21:00 y las 24:00 de Argentina.
+    hoy = datetime.now().date()
     db = get_session("system_config", "global")
     db.add(DailyStat(date=hoy, provider="protrack", env="prod",
                      sent_count=24915, failed_count=0))
@@ -68,7 +70,9 @@ def test_no_mezcla_los_dias(base_limpia):
     from app.database import get_session
     from app.models.config_models import DailyStat
 
-    hoy = datetime.now(timezone.utc).date()
+    # Fecha LOCAL, como la graba processor.py y la lee la tarjeta. Con la
+    # fecha UTC el test fallaba entre las 21:00 y las 24:00 de Argentina.
+    hoy = datetime.now().date()
     db = get_session("system_config", "global")
     db.add(DailyStat(date=hoy, provider="protrack", env="prod", sent_count=100))
     db.add(DailyStat(date=hoy - timedelta(days=1), provider="protrack", env="prod",
@@ -93,7 +97,9 @@ def test_coincide_con_lo_que_muestra_el_historial(base_limpia):
     from app.database import get_session
     from app.models.config_models import DailyStat
 
-    hoy = datetime.now(timezone.utc).date()
+    # Fecha LOCAL, como la graba processor.py y la lee la tarjeta. Con la
+    # fecha UTC el test fallaba entre las 21:00 y las 24:00 de Argentina.
+    hoy = datetime.now().date()
     db = get_session("system_config", "global")
     for prov, n in (("protrack", 24915), ("schmitz", 332)):
         db.add(DailyStat(date=hoy, provider=prov, env="prod", sent_count=n))

@@ -956,7 +956,10 @@ async def process_and_enqueue(
                 # lo de siempre; Protrack no define ninguna.
                 motivo_descarte = admision.evaluar(item, mapping_schema)
                 if motivo_descarte:
-                    admision.registrar_descarte(provider_name, env, motivo_descarte)
+                    admision.registrar_descarte(
+                        provider_name, env, motivo_descarte,
+                        admision.identidad(item, mapping_schema),
+                    )
                     descartados += 1
                     continue
                 canonical_list = DynamicMapper.map_payload_multi(
@@ -1016,7 +1019,9 @@ async def process_and_enqueue(
         if descartados:
             logger.warning(
                 f"[{provider_name.upper()}-{env}] {descartados} de {len(items)} registros "
-                f"descartados por falta de traducción en el diccionario."
+                f"descartados (filtro de admisión, sin traducción en el diccionario o "
+                f"sin un dato obligatorio del contrato: el motivo de cada uno está en "
+                f"las líneas anteriores)."
             )
 
         if events_to_add:

@@ -58,6 +58,9 @@ def sample_schmitz_payload():
     """
     return {
         "ChassisNumber": "TEST123456",
+        # Presente en los 6975 crudos reales de Schmitz medidos. Desde la v1.9.2
+        # un evento sin fecha no entra (app/core/contrato.py).
+        "DeviceTime": "2026-06-29T10:00:00Z",
         "Header": {
             "Customer": {"Id": "test_customer", "Name": "Test"},
             "SerialNumber": "TEST123456",

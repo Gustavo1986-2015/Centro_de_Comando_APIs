@@ -86,33 +86,78 @@ def evaluar(payload: dict, mapping_schema: dict | None) -> str | None:
     return None
 
 
-def registrar_descarte(provider: str, env: str, motivo: str) -> None:
-    """Cuenta el descarte y lo registra sin inundar la consola."""
+def identidad(payload: dict, mapping_schema: dict | None) -> str:
+    """
+    Qué equipo era, para el aviso de descarte.
+
+    Se lee con las mismas rutas del mapeo base (patente y número de serie):
+    el filtro corre antes del mapeador, así que no hay evento canónico del
+    que sacarlo. Antes el aviso decía solo el motivo, y no había forma de
+    saber de qué equipo era lo que se había descartado.
+    """
+    from app.core.dynamic_mapper import DynamicMapper
+
+    base = (mapping_schema or {}).get("base_mapping", mapping_schema) or {}
+    partes = []
+    for etiqueta, clave in (("patente", "chassis_number"), ("serie", "serial_number")):
+        ruta = base.get(clave) if isinstance(base, dict) else None
+        if not ruta or not isinstance(payload, dict):
+            continue
+        valor = DynamicMapper._extract_value(payload, ruta)
+        if valor is not None and str(valor).strip():
+            partes.append(f"{etiqueta}={valor}")
+    return " ".join(partes) or "sin identificador en el payload"
+
+
+# Cuántos equipos distintos se nombran en cada resumen por minuto.
+MAX_EQUIPOS_EN_RESUMEN = 10
+
+
+def registrar_descarte(provider: str, env: str, motivo: str, identidad: str | None = None) -> None:
+    """
+    Cuenta el descarte y lo registra sin inundar la consola.
+
+    El primero de cada motivo sale con el equipo. Los siguientes se resumen
+    cada minuto, nombrando los equipos descartados en ese lapso.
+    """
     clave = (provider.lower(), env.lower(), motivo)
     ahora = time.time()
+    resumir = False
+    equipos = []
     with _lock:
         c = _contadores.get(clave)
         if c is None:
             _contadores[clave] = {"total": 1, "pendientes": 0, "ultimo_resumen": ahora,
-                                  "desde": ahora}
+                                  "desde": ahora, "equipos": []}
             primero = True
         else:
             c["total"] += 1
             c["pendientes"] += 1
             primero = False
+            if identidad and identidad not in c["equipos"]:
+                c["equipos"].append(identidad)
             resumir = (ahora - c["ultimo_resumen"]) >= SEGUNDOS_RESUMEN and c["pendientes"]
             if resumir:
                 pendientes, total = c["pendientes"], c["total"]
+                equipos = c["equipos"]
                 c["pendientes"] = 0
                 c["ultimo_resumen"] = ahora
+                c["equipos"] = []
 
     etiqueta = f"[{provider.upper()}-{env}]"
     if primero:
-        logger.info(f"{etiqueta} Evento descartado por el filtro de admisión: {motivo}.")
+        logger.info(
+            f"{etiqueta} Evento descartado por el filtro de admisión: {motivo}."
+            f"{f' Equipo: {identidad}.' if identidad else ''}"
+        )
     elif resumir:
+        nombrados = ", ".join(equipos[:MAX_EQUIPOS_EN_RESUMEN])
+        resto = len(equipos) - MAX_EQUIPOS_EN_RESUMEN
         logger.info(
             f"{etiqueta} {pendientes} evento(s) más descartados por el filtro de "
             f"admisión ({motivo}) en el último minuto. {total} en total."
+            f"{f' Equipos: {nombrados}' if nombrados else ''}"
+            f"{f' y {resto} más' if resto > 0 else ''}{'.' if nombrados else ''}"
         )
 
 

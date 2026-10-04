@@ -104,8 +104,13 @@ def construir_evento_rc(event) -> dict:
     # está apagado: un dato que nadie midió. El contrato pide "en
     # blanco o 0" cuando no hay información, y para un booleano "0" es
     # ambiguo, así que se omite, igual que los demás opcionales.
-    # Los campos OBLIGATORIOS (speed, latitude, longitude) siguen
-    # yendo con "0" cuando faltan: es lo que el contrato indica.
+    #
+    # Obligatorios: desde la v1.9.2 un evento sin patente real, fecha,
+    # latitud o longitud se descarta AL INGRESAR (app/core/contrato.py) y no
+    # llega hasta acá. Los rellenos de arriba (hora actual, "0") quedan solo
+    # como defensa para filas encoladas por una versión anterior y para el
+    # botón "JSON RC" del panel. La velocidad sí va con "0" cuando falta: es
+    # lo que pide el contrato, y no entra en esa validación.
     if event.ignition is not None:
         event_dict['ignition'] = "true" if event.ignition else "false"
     if event.altitude is not None:
@@ -113,7 +118,9 @@ def construir_evento_rc(event) -> dict:
     if event.battery is not None:
         event_dict['battery'] = int(event.battery)
     if event.humidity is not None:
-        event_dict['humidity'] = int(event.humidity)
+        # Doble precisión, como pide el contrato. Antes int() truncaba: 55.2
+        # llegaba como 55. El esquema de RC lo declara xs:string.
+        event_dict['humidity'] = float(event.humidity)
     if event.odometer is not None:
         event_dict['odometer'] = int(event.odometer)
     if event.temperature is not None:
@@ -122,6 +129,18 @@ def construir_evento_rc(event) -> dict:
         event_dict['serialNumber'] = str(event.serial_number)
     if event.shipment:
         event_dict['shipment'] = str(event.shipment)
+    # Datos del vehículo: opcionales en el contrato. Se mapeaban y se
+    # guardaban pero no se enviaban. El esquema real de RC los declara
+    # (RCService.svc?xsd=xsd2, tipo Event: vehicleType, vehicleBrand,
+    # vehicleModel, xs:string): verificado el 02/10/2026 y cubierto por un
+    # test que serializa contra una copia de ese esquema
+    # (tests/fixtures/rc_wsdl/).
+    if getattr(event, 'vehicle_type', None):
+        event_dict['vehicleType'] = str(event.vehicle_type)
+    if getattr(event, 'vehicle_brand', None):
+        event_dict['vehicleBrand'] = str(event.vehicle_brand)
+    if getattr(event, 'vehicle_model', None):
+        event_dict['vehicleModel'] = str(event.vehicle_model)
 
     return event_dict
 

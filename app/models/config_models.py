@@ -39,6 +39,11 @@ class ProviderConfig(Base):
     # reciben peticiones entrantes, es el Hub quien sale a consultarlos.
     rate_limit_per_min = Column(Integer, nullable=True)
 
+    # Opciones de un módulo dedicado (app/providers/registry.py), por ejemplo
+    # los interruptores de Tive: qué se envía y qué no. NULL = los valores por
+    # defecto del módulo. Las integraciones del Integration Studio no lo usan.
+    module_options = Column(JSON, nullable=True)
+
 class ProviderDictionary(Base):
     """Almacena pares Key-Value del diccionario de metadatos (Ej. IMEI -> Placa)."""
     __tablename__ = "provider_dictionary"
