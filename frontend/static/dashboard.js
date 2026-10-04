@@ -327,12 +327,17 @@
         let currentStatusFilter = 'all';
         let currentProviderFilter = 'all';
         let currentLatencyFilter = 'all';
+        // Solo alarmas y alertas, sin reportes de posición. Se filtra en el
+        // servidor: sin filtros la grilla trae los últimos 200 eventos, y entre
+        // ellos puede no haber ninguna alarma.
+        let currentSoloEventos = false;
+        let _ultimaRecargaSoloEventos = 0;
         let allRecentEvents = [];
         let expandedRows = new Set();
         
         // Carga eventos filtrados desde el backend cuando hay filtros activos
         async function fetchFilteredEvents() {
-            const hasFilter = currentStatusFilter !== 'all' || currentProviderFilter !== 'all';
+            const hasFilter = currentStatusFilter !== 'all' || currentProviderFilter !== 'all' || currentSoloEventos;
             if (!hasFilter) {
                 // Sin filtros: la grilla se alimenta del SSE normalmente
                 renderRecentTable();
@@ -342,6 +347,7 @@
                 const params = new URLSearchParams();
                 if (currentStatusFilter !== 'all') params.set('status', currentStatusFilter);
                 if (currentProviderFilter !== 'all') params.set('provider', currentProviderFilter);
+                if (currentSoloEventos) params.set('solo_eventos', 'true');
                 const res = await fetch(`/api/stats?${params.toString()}`, { cache: 'no-store' });
                 const data = await res.json();
                 allRecentEvents = data.recent || [];
@@ -361,6 +367,11 @@
             fetchFilteredEvents();
         }
 
+        function setFilterSoloEventos(activo) {
+            currentSoloEventos = !!activo;
+            fetchFilteredEvents();
+        }
+
         function setFilterLatency(latency) {
             currentLatencyFilter = latency;
             renderRecentTable();
@@ -370,6 +381,9 @@
             currentStatusFilter = 'all';
             currentProviderFilter = 'all';
             currentLatencyFilter = 'all';
+            currentSoloEventos = false;
+            const soloEventos = document.getElementById('filter-solo-eventos');
+            if (soloEventos) soloEventos.checked = false;
             const statusDropdown = document.getElementById('filter-status');
             if(statusDropdown) statusDropdown.value = 'all';
             document.getElementById('filter-provider').value = 'all';
@@ -385,6 +399,9 @@
             }
             if (currentProviderFilter !== 'all') {
                 filtered = filtered.filter(ev => ev.provider.toLowerCase() === currentProviderFilter);
+            }
+            if (currentSoloEventos) {
+                filtered = filtered.filter(ev => ev.es_evento);
             }
             if (currentLatencyFilter !== 'all') {
                 filtered = filtered.filter(ev => {
@@ -1217,7 +1234,17 @@
                 updateSparkline('spark-failed',   'val-failed');
                 updateSparkline('spark-retries',  'val-retries');
 
-                allRecentEvents = data.recent;
+                if (currentSoloEventos) {
+                    // El SSE trae los últimos 200 sin filtrar: con "solo
+                    // eventos" se pide al servidor la lista filtrada, sin
+                    // recargarla más de una vez cada 5 segundos.
+                    if (Date.now() - _ultimaRecargaSoloEventos > 5000) {
+                        _ultimaRecargaSoloEventos = Date.now();
+                        fetchFilteredEvents();
+                    }
+                } else {
+                    allRecentEvents = data.recent;
+                }
 
                 // La salud se actualiza temprano: si algo falla más abajo (por ejemplo
                 // un elemento del DOM ausente), la barra igual queda al día.
@@ -1353,6 +1380,9 @@
             if (currentProviderFilter !== 'all') {
                 filtered = filtered.filter(ev => ev.provider.toLowerCase() === currentProviderFilter);
             }
+            if (currentSoloEventos) {
+                filtered = filtered.filter(ev => ev.es_evento);
+            }
             if (currentLatencyFilter !== 'all') {
                 filtered = filtered.filter(ev => {
                     const lat = ev.rc_latency_sec !== null && ev.rc_latency_sec !== undefined ? ev.rc_latency_sec : ev.latency_sec;
@@ -1365,8 +1395,9 @@
             }
             
             let labelText = "";
-            if (currentStatusFilter !== 'all' || currentProviderFilter !== 'all' || currentLatencyFilter !== 'all') {
+            if (currentStatusFilter !== 'all' || currentProviderFilter !== 'all' || currentLatencyFilter !== 'all' || currentSoloEventos) {
                 let filters = [];
+                if (currentSoloEventos) filters.push('SOLO EVENTOS');
                 if (currentStatusFilter !== 'all') filters.push(currentStatusFilter.toUpperCase());
                 if (currentProviderFilter !== 'all') filters.push(currentProviderFilter.toUpperCase());
                 if (currentLatencyFilter !== 'all') filters.push(`LATENCIA: ${currentLatencyFilter.toUpperCase()}`);
@@ -1419,14 +1450,25 @@
                 locHtml += `</div>`;
 
                 let sensorHtml = `<div style="font-size:0.8rem; color:var(--color-gray); line-height: 1.4;">`;
-                sensorHtml += `<div>Velocidad: <span style="color:var(--color-white)">${ev.speed} km/h</span></div>`;
+                // N/A cuando el proveedor no mide velocidad (Tive). A RC le llega
+                // "0", que es lo que pide el contrato; acá no se inventa el dato.
+                const velocidad = (ev.speed === null || ev.speed === undefined)
+                    ? '<span style="color:var(--color-gray-label)" title="El proveedor no informa velocidad">N/A</span>'
+                    : `<span style="color:var(--color-white)">${ev.speed} km/h</span>`;
+                sensorHtml += `<div>Velocidad: ${velocidad}</div>`;
                 // Tres estados. N/A en gris: el proveedor no mide ignición, y
                 // mostrarlo en rojo como "apagado" sería afirmar algo que nadie midió.
                 const estiloIgn = ev.ignition === 'ON' ? 'color:var(--color-green-bright); font-weight:bold;'
                                 : ev.ignition === 'OFF' ? 'color:var(--color-red)'
                                 : 'color:var(--color-gray-label)';
                 sensorHtml += `<div>Ignición: <span style="${estiloIgn}" ${ev.ignition === 'N/A' ? 'title="El proveedor no informa ignición"' : ''}>${ev.ignition}</span></div>`;
-                sensorHtml += `<div>Batería: <span style="color:var(--color-white)">${ev.battery !== null ? ev.battery + '%' : 'N/A'}</span> | Temp: <span style="color:var(--color-white)">${ev.temperature !== null ? ev.temperature + '°' : 'N/A'}</span></div>`;
+                // Temperatura con 2 decimales en pantalla; el valor completo
+                // queda en el título y es el que se envía a RC.
+                const tieneTemp = ev.temperature !== null && ev.temperature !== undefined;
+                const temperatura = tieneTemp ? Number(ev.temperature).toFixed(2) + '°' : 'N/A';
+                const humedad = (ev.humidity !== null && ev.humidity !== undefined) ? ev.humidity + '%' : 'N/A';
+                sensorHtml += `<div>Batería: <span style="color:var(--color-white)">${ev.battery !== null ? ev.battery + '%' : 'N/A'}</span> | Temp: <span style="color:var(--color-white)" title="${tieneTemp ? ev.temperature : ''}">${temperatura}</span></div>`;
+                sensorHtml += `<div>Humedad: <span style="color:var(--color-white)">${humedad}</span></div>`;
                 sensorHtml += `<div>Odom: <span style="color:var(--color-white)">${ev.odometer !== null ? ev.odometer : 'N/A'}</span> | Código EV: <span style="color:var(--color-yellow)">${ev.code}</span></div>`;
                 sensorHtml += `</div>`;
 
@@ -1508,7 +1550,9 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
                 let chassisHtml = `
                     <div style="display: flex; flex-direction: column; align-items: flex-start;">
                         <span style="color:var(--color-yellow); font-weight:bold;">${ev.chassis || 'N/A'}</span>
+                        ${ev.es_evento ? `<span class="etiqueta-evento" title="Alarma o alerta: el código no es el de reporte de posición">⚡ ${_escapeHtml(String(ev.code))}</span>` : ''}
                         ${ev.serial && ev.serial !== ev.chassis ? `<span style="color:var(--color-gray); font-size: 0.8rem;">IMEI: ${ev.serial}</span>` : ''}
+                        ${ev.shipment ? `<span style="color:var(--color-gray); font-size: 0.8rem;" title="Envío">Envío: ${_escapeHtml(String(ev.shipment))}</span>` : ''}
                         <div style="margin-top: 4px; display: flex; gap: 5px;">
                             <button onclick='viewRawJson(${JSON.stringify(ev.raw_data || "{}").replace(/'/g, "&#39;")}, "Payload Original (Crudo del Proveedor)")' style="background: #374151; color: white; border: none; padding: 2px 6px; border-radius: 4px; font-size: 0.7em; cursor: pointer;" title="Ver payload JSON original sin procesar">
                                 📄 JSON Origen
@@ -1550,7 +1594,9 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
                 // Ignore empty state rows
                 if (row.cells.length === 1) return;
                 
-                const chassisCell = row.cells[1]; // Index 1 is "Activo / Patente"
+                // Index 1 is "Activo / Patente". Incluye el envío: buscar por
+                // número de viaje encuentra sus eventos.
+                const chassisCell = row.cells[1];
                 if (!chassisCell) return;
                 
                 const chassisText = chassisCell.textContent.toLowerCase();
@@ -1670,6 +1716,7 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
                                     <option value="redis" ${c.queue_backend === 'redis' ? 'selected' : ''}>Redis</option>
                                 </select>
                             </td>
+                            <td>${_opcionesDeModulo(c)}</td>
 
                         `;
                         tbody.appendChild(tr);
@@ -1678,6 +1725,32 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
             } catch(e) {
                 console.error("Error al cargar config", e);
             }
+        }
+
+        // Interruptores de una integración con módulo dedicado (Tive): qué se
+        // envía a RC y qué no. Se guardan en la configuración de la
+        // integración, sin tocar código.
+        function _opcionesDeModulo(c) {
+            if (!c.modulo_dedicado) {
+                return '<span style="color: var(--color-gray); font-size: 0.75rem;" title="Las integraciones del Integration Studio no tienen interruptores">—</span>';
+            }
+            const etiquetas = c.module_options_labels || {};
+            return '<div class="opciones-modulo">' + Object.keys(c.module_options || {}).map(clave => `
+                <label title="${_escapeHtml(etiquetas[clave] || clave)}">
+                    <input type="checkbox" id="modopt_${c._originalIdx}_${clave}" data-clave="${clave}"
+                           ${c.module_options[clave] ? 'checked' : ''}>
+                    ${_escapeHtml(etiquetas[clave] || clave)}
+                </label>`).join('') + '</div>';
+        }
+
+        function _leerOpcionesDeModulo(c, idx) {
+            if (!c.modulo_dedicado) return null;
+            const opciones = {};
+            Object.keys(c.module_options || {}).forEach(clave => {
+                const el = document.getElementById(`modopt_${idx}_${clave}`);
+                opciones[clave] = el ? el.checked : !!c.module_options[clave];
+            });
+            return opciones;
         }
 
         async function saveConfig() {
@@ -1696,7 +1769,8 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
                     : null,
                 queue_backend: document.getElementById(`queue_${idx}`).value,
                 enable_state_dedup: document.getElementById(`dedup_${idx}`) ? document.getElementById(`dedup_${idx}`).checked : c.enable_state_dedup,
-                webhook_auth_config: _leerAuthWebhook(c, idx)
+                webhook_auth_config: _leerAuthWebhook(c, idx),
+                module_options: _leerOpcionesDeModulo(c, idx)
             }));
 
             // Activar el modo simulado exige revalidar la contraseña de administrador:
@@ -2444,7 +2518,10 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
         async function loadProviders() {
             try {
                 const res = await fetch(API_BASE + '/providers');
-                ipaasProviders = await res.json();
+                // Las integraciones con módulo dedicado (Tive) no se configuran
+                // acá: su lógica vive en app/providers/<proveedor>/ y sus
+                // opciones están en la tabla de configuración.
+                ipaasProviders = (await res.json()).filter(p => !p.modulo_dedicado);
                 const select = document.getElementById('providerSelect');
                 select.innerHTML = '<option value="">-- Selecciona un Proveedor --</option>';
                 ipaasProviders.forEach(p => {
@@ -2734,7 +2811,7 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
                 <div class="rule-row ${r.enabled ? '' : 'disabled'}" id="rulerow-${r.id}">
                     <input type="text"  class="form-control" style="font-size:0.8rem;" value="${r.field   || ''}" placeholder="campo del payload"  onchange="updateRule('${r.id}','field',   this.value)">
                     <select             class="form-control" style="font-size:0.8rem;"                                                              onchange="updateRule('${r.id}','operator',this.value)">${opOptions}</select>
-                    <input type="text"  class="form-control" style="font-size:0.8rem;" value="${r.value   || '1'}" placeholder="valor (ej: 1)"    onchange="updateRule('${r.id}','value',   this.value)">
+                    ${_inputValorRegla(r)}
                     <input type="text"  class="form-control" style="font-size:0.8rem;" value="${r.label   || ''}" placeholder="descripción"        onchange="updateRule('${r.id}','label',   this.value)">
                     <input type="text"  class="form-control" style="font-size:0.8rem;" value="${r.rc_code || ''}" placeholder="código RC o =campo" title="Un código fijo (ej: 10), o =campo para mandar el valor de ese campo tal cual (ej: =AlertType manda TemperatureMax). Acepta rutas y alternativas: =AlertType || Alert.AlertType" onchange="updateRule('${r.id}','rc_code', this.value)">
                     <select title="Estado: filtra repeticiones del mismo código (motor apagado, puerta abierta). Detecta transiciones si usás Dedup Key. Momentáneo: siempre emite (SOS, crash, geofence)." class="form-control" style="font-size:0.8rem;" onchange="updateRule('${r.id}','event_type',this.value)">${evTypeOptions}</select>
@@ -2780,10 +2857,30 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
             renderTriggerRules(_currentRules);
         }
 
+        // Con "existe" y "no existe" el valor no se usa: se muestra vacío y
+        // deshabilitado. Antes mostraba "1", y parecía que la regla comparaba
+        // contra 1.
+        const _OPERADORES_SIN_VALOR = ['exists', 'not_exists'];
+
+        function _inputValorRegla(r) {
+            if (_OPERADORES_SIN_VALOR.includes(r.operator)) {
+                return `<input type="text" class="form-control" style="font-size:0.8rem; opacity:0.5;" value="" placeholder="no aplica" disabled title="Con este operador solo importa si el campo existe: no se compara contra ningún valor">`;
+            }
+            return `<input type="text"  class="form-control" style="font-size:0.8rem;" value="${r.value ?? '1'}" placeholder="valor (ej: 1)"    onchange="updateRule('${r.id}','value',   this.value)">`;
+        }
+
         function updateRule(ruleId, key, value) {
             const rule = _currentRules.find(r => r.id === ruleId);
             if (!rule) return;
             rule[key] = value;
+            if (key === 'operator') {
+                // "existe"/"no existe" no comparan contra nada: el valor se
+                // vacía. Volver a un operador de comparación lo deja vacío
+                // para que se complete a conciencia.
+                rule.value = '';
+                renderTriggerRules(_currentRules);
+                return;
+            }
             const row = document.getElementById(`rulerow-${ruleId}`);
             if (row) row.classList.toggle('disabled', !rule.enabled);
         }
