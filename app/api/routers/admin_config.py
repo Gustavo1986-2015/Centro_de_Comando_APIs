@@ -45,6 +45,9 @@ class ConfigUpdate(BaseModel):
     rate_limit_per_min: int | None = None
     # Interruptores de un módulo dedicado (Tive). None = no tocar lo guardado.
     module_options: dict | None = None
+    # Credenciales de la API del proveedor de un módulo dedicado (Tive):
+    # {"client_id": "...", "client_secret": "..."}. None o vacío = no tocar.
+    module_credentials: dict | None = None
     # Contraseña de administrador, requerida solo al ACTIVAR el modo simulado.
     # No se envía en operaciones que no lo activan.
     admin_password: str | None = None
@@ -240,11 +243,84 @@ def _opciones_de_modulo(c) -> dict:
     if modulo is None:
         return {"modulo_dedicado": False}
     efectivas = modulo.opciones_efectivas(getattr(c, "module_options", None))
-    return {
+    salida = {
         "modulo_dedicado": True,
         "module_options": efectivas,
         "module_options_labels": dict(modulo.DESCRIPCION_INTERRUPTORES),
     }
+    if getattr(modulo, "USA_CREDENCIALES_API", False):
+        # El client_id se muestra (es un nombre, ej. "Envios Assistcargo");
+        # del secreto solo se informa si está cargado. Nunca sale del servidor.
+        datos = _bloque_fetch(c)
+        salida["module_credentials"] = {
+            "client_id": datos.get("auth_user") or None,
+            "secreto_cargado": bool(datos.get("auth_pass")),
+        }
+    return salida
+
+
+def _bloque_fetch(c) -> dict:
+    """La configuración de acceso a la API del proveedor, descifrada."""
+    if getattr(c, "fetch_config_enc", None):
+        try:
+            return json.loads(decrypt(c.fetch_config_enc) or "{}")
+        except (ValueError, TypeError):
+            logger.warning(f"No se pudo leer la configuración de acceso de {c.provider_name}/{c.env}.")
+            return {}
+    return c.fetch_config if isinstance(getattr(c, "fetch_config", None), dict) else {}
+
+
+MAX_LARGO_CLIENT_ID = 200
+MAX_LARGO_SECRETO = 1000
+
+
+def _guardar_credenciales_de_modulo(conf, credenciales: dict) -> None:
+    """
+    Guarda client_id y secreto cifrados, en el mismo bloque que usa el PULL
+    (fetch_config_enc), para que el respaldo YAML los trate igual: el
+    client_id viaja, el secreto nunca.
+
+    El client_id es texto libre: puede tener espacios ("Envios Assistcargo").
+    No se valida como código; solo se recortan los espacios de los extremos.
+    Vacío o ausente = conservar el guardado. Nada de esto se escribe en logs.
+    """
+    from app.providers.tive.resolutor import BASE_URL_POR_DEFECTO, TOKEN_URL_POR_DEFECTO
+
+    modulo = registry.modulo_dedicado(conf.provider_name)
+    if modulo is None or not getattr(modulo, "USA_CREDENCIALES_API", False):
+        raise HTTPException(
+            status_code=400,
+            detail=f"{conf.provider_name}/{conf.env} no usa credenciales de API de módulo.",
+        )
+    client_id = credenciales.get("client_id")
+    secreto = credenciales.get("client_secret")
+    client_id = client_id.strip() if isinstance(client_id, str) else None
+    secreto = secreto if isinstance(secreto, str) and secreto.strip() else None
+    if not client_id and not secreto:
+        return
+    if client_id and len(client_id) > MAX_LARGO_CLIENT_ID:
+        raise HTTPException(status_code=400,
+                            detail=f"{conf.provider_name}/{conf.env}: el client_id es demasiado largo.")
+    if secreto and len(secreto) > MAX_LARGO_SECRETO:
+        raise HTTPException(status_code=400,
+                            detail=f"{conf.provider_name}/{conf.env}: el secreto es demasiado largo.")
+
+    datos = dict(_bloque_fetch(conf))
+    if client_id:
+        datos["auth_user"] = client_id
+    if secreto:
+        datos["auth_pass"] = secreto
+    datos.setdefault("auth_type", "oauth2_client_credentials")
+    datos.setdefault("token_url", TOKEN_URL_POR_DEFECTO)
+    datos.setdefault("token_body_format", "multipart")
+    datos.setdefault("url", BASE_URL_POR_DEFECTO)
+    conf.fetch_config_enc = encrypt(json.dumps(datos))
+    conf.fetch_config = None
+    logger.warning(
+        f"Credenciales de la API de {conf.provider_name}/{conf.env} actualizadas desde el panel"
+        f" ({'client_id' if client_id else ''}{' y ' if client_id and secreto else ''}"
+        f"{'secreto' if secreto else ''})."
+    )
 
 
 def _validar_opciones_de_modulo(conf, opciones: dict) -> dict:
@@ -430,6 +506,9 @@ def update_configs(updates: List[ConfigUpdate], _: None = Depends(verify_dashboa
                         )
                         logger.warning(f"Interruptores de {conf.provider_name}/{conf.env} cambiados: {cambios}.")
                     conf.module_options = nuevas
+
+                if u.module_credentials is not None:
+                    _guardar_credenciales_de_modulo(conf, u.module_credentials)
 
                 conf.use_mock = u.use_mock
                 conf.purge_interval_min = u.purge_interval_min

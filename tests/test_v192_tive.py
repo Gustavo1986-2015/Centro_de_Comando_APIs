@@ -32,6 +32,9 @@ def _crudos():
 
 
 CRUDOS = _crudos()
+# Los crudos que midió el informe de la v1.9.2 (01 y 02/10). El fixture suma
+# después casos de otros días; los conteos de abajo son de este conjunto.
+CRUDOS_V192 = [r for r in CRUDOS if r["origen"][:10] in ("2026-10-01", "2026-10-02")]
 
 
 def _por_origen(origen):
@@ -82,7 +85,7 @@ def test_con_los_valores_por_defecto_no_sale_nada_de_estos_crudos():
     trackers NO. En estos crudos no hay alertas de beacons, y el único tramo de
     contenedor es de un tracker que nunca vino con nombre.
     """
-    salida = [e for i, r in enumerate(CRUDOS) for e in _procesar(r["payload"], ingest_id=f"r{i}")]
+    salida = [e for i, r in enumerate(CRUDOS_V192) for e in _procesar(r["payload"], ingest_id=f"r{i}")]
     assert salida == []
 
 
@@ -91,7 +94,7 @@ def test_con_alertas_de_trackers_salen_las_20_que_mide_el_informe():
     41 alertas reales → 22 únicas (doble clave) → 20 con coordenadas.
     Las dos Connectivity de K1153407 no traen posición (decisión 6).
     """
-    salida = [e for i, r in enumerate(CRUDOS)
+    salida = [e for i, r in enumerate(CRUDOS_V192)
               for e in _procesar(r["payload"], TRACKERS_ON, ingest_id=f"r{i}")]
     assert len(salida) == 20
     codigos = sorted((e.chassis_number, e.code) for e in salida)
@@ -277,8 +280,10 @@ def test_alerta_con_datos_de_sensores():
 # ═══════════════════════════════════════════════════════════════════════════
 
 def test_los_valores_por_defecto():
+    # v1.9.4 suma "resolver_nombres_api", apagado por defecto.
     assert modulo.opciones_efectivas(None) == {
         "posiciones_terceros": True, "alertas_beacons": True, "alertas_trackers": False,
+        "resolver_nombres_api": False,
     }
 
 
@@ -655,7 +660,7 @@ def test_los_interruptores_se_ven_y_se_guardan_desde_el_panel(app_tive):
     tive = next(c for c in configs if c["provider_name"] == "TIVE")
     assert tive["modulo_dedicado"] is True
     assert tive["module_options"] == {"posiciones_terceros": True, "alertas_beacons": True,
-                                      "alertas_trackers": False}
+                                      "alertas_trackers": False, "resolver_nombres_api": False}
     assert set(tive["module_options_labels"]) == set(tive["module_options"])
     protrack = next(c for c in configs if c["provider_name"] == "PROTRACK")
     assert protrack["modulo_dedicado"] is False and "module_options" not in protrack
@@ -670,7 +675,7 @@ def test_los_interruptores_se_ven_y_se_guardan_desde_el_panel(app_tive):
     assert r.status_code == 200, r.text
     tive = next(c for c in app_tive.get("/api/config").json() if c["provider_name"] == "TIVE")
     assert tive["module_options"] == {"posiciones_terceros": True, "alertas_beacons": False,
-                                      "alertas_trackers": True}
+                                      "alertas_trackers": True, "resolver_nombres_api": False}
 
     r = app_tive.post("/api/config", json=[_actualizacion(tive, {"inventado": True})])
     assert r.status_code == 400

@@ -40,6 +40,17 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 
 @pytest.fixture(scope="session", autouse=True)
+def descartes_aislados(tmp_path_factory):
+    """El registro de descartes de la suite va a una carpeta temporal, no a db/."""
+    from app.core import descartes
+    original = descartes.DIRECTORIO
+    descartes.DIRECTORIO = str(tmp_path_factory.mktemp("descartes"))
+    yield
+    descartes.esperar_escritura(2.0)
+    descartes.DIRECTORIO = original
+
+
+@pytest.fixture(scope="session", autouse=True)
 def limpiar_log_de_tests():
     """Arranca cada sesión con el log de tests vacío."""
     destino = Path(os.environ["LOG_FILE_PATH"])

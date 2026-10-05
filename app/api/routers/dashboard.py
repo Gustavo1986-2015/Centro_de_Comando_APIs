@@ -1072,6 +1072,20 @@ async def reiniciar_diagnostico_latencia(_=Depends(verify_dashboard_auth)):
     return {"ok": True, "mensaje": "Muestras de latencia reiniciadas."}
 
 
+@router.get("/api/diagnostico/descartes")
+async def diagnostico_descartes(limite: int = 100, _=Depends(verify_dashboard_auth)):
+    """
+    Lo que no se envió a RC: conteo por integración, origen y motivo, y los
+    últimos descartes con hora, equipo, envío, motivo y AlertId.
+
+    Cubre el filtro de admisión, la validación del contrato y el módulo de
+    Tive. Antes solo quedaban en consola y un reinicio se los llevaba.
+    """
+    from app.core import descartes
+
+    return await asyncio.to_thread(descartes.consultar, limite)
+
+
 @router.get("/api/diagnostico/red-seguridad")
 async def diagnostico_red_seguridad(_=Depends(verify_dashboard_auth)):
     """

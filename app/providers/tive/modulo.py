@@ -60,13 +60,22 @@ INTERRUPTORES = {
     # Apagado: RC ya recibe las alertas de los trackers por su propio webhook.
     # Encenderlo sin pedir antes la baja en RC las duplicaría.
     "alertas_trackers": False,
+    # v1.9.4. Apagado hasta que se carguen las credenciales de la API de Tive.
+    # Encendido, un tramo de contenedor sin par queda retenido y el resolutor
+    # consulta el nombre del tracker (app/providers/tive/resolutor.py).
+    "resolver_nombres_api": False,
 }
 
 DESCRIPCION_INTERRUPTORES = {
     "posiciones_terceros": "Posiciones de contenedores y aéreas",
     "alertas_beacons": "Alertas de beacons",
     "alertas_trackers": "Alertas de trackers (duplica RC si no se pidió la baja)",
+    "resolver_nombres_api": "Resolver nombres con la API de Tive",
 }
+
+# El panel muestra el formulario de credenciales de la API solo para módulos
+# que lo declaren (ver app/api/routers/admin_config.py).
+USA_CREDENCIALES_API = True
 
 # LocationMethod vistos en los crudos del 01 y 02/10. Cualquier otro se avisa:
 # es la forma de detectar el primer tramo aéreo sin inventar su literal.
@@ -159,8 +168,22 @@ def _identidad(payload) -> str:
     return " ".join(partes)
 
 
-def _descartar(env: str, motivo: str, payload, nivel=logging.INFO) -> None:
-    logger.log(nivel, f"[TIVE-{env}] Descartado, NO se envía a RC: {motivo} | {_identidad(payload)}")
+def _descartar(env: str, motivo: str, payload, nivel=logging.INFO, detalle: str | None = None) -> None:
+    """
+    Consola y registro persistente del panel. El motivo es corto y estable
+    (se cuenta agrupando por él); lo variable va en `detalle`.
+    """
+    logger.log(nivel, f"[TIVE-{env}] Descartado, NO se envía a RC: {motivo}"
+                      f"{f' {detalle}' if detalle else ''} | {_identidad(payload)}")
+    from app.core import descartes
+    descartes.registrar(
+        PROVEEDOR, env, "tive", motivo,
+        equipo=_texto(payload.get("DeviceName")) or _texto(_g(payload, "Alert", "DeviceName"))
+        or _id_equipo(payload) or _texto(_g(payload, "Shipment", "DeviceId")),
+        envio=_texto(payload.get("ShipmentId")) or _texto(_g(payload, "Shipment", "Id")),
+        alert_id=_texto(_g(payload, "Alert", "AlertId")),
+        detalle=detalle,
+    )
 
 
 def _envio(env: str, payload) -> str | None:
@@ -182,15 +205,57 @@ def _envio(env: str, payload) -> str | None:
     return publico
 
 
-def estado_alerta(payload) -> str | None:
+# Tipos puntuales medidos en los crudos. La documentación de Tive nombra
+# cuatro categorías puntuales (golpe, luz, llegada, salida), pero solo las dos
+# primeras aparecieron con su literal; los de llegada y salida no se inventan.
+TIPOS_PUNTUALES_MEDIDOS = frozenset({"ShockEvents", "LightChanges"})
+
+
+def _fecha_de_recuperacion(payload) -> str | None:
+    """RecoveredAlertDate con valor real. Tive manda 0001-01-01 cuando no hay."""
+    texto = _texto(payload.get("RecoveredAlertDate"))
+    if not texto or texto.startswith("0001-01-01"):
+        return None
+    return texto
+
+
+def _puntual_o_cierre(payload, env: str | None) -> str:
+    """
+    Desempata la forma [["Created","Closed"]] en un solo elemento.
+
+    Medido el 05/10: con esa forma llegan las puntuales (ShockEvents, sin
+    fecha de recuperación) y TAMBIÉN los cierres de alertas de rango cortas
+    (HumidityMax 2284be50, 7883ad0b, a5e5bcc9, con RecoveredAlertDate). Antes
+    se trataban todas como puntuales: el cierre salía como "HumidityMax" en
+    vez de "HumidityMax-FIN", y en SIMON se veían dos alertas en lugar de una
+    que empezó y terminó.
+    """
+    tipo = _tipo_alerta(payload)
+    if tipo in TIPOS_PUNTUALES_MEDIDOS:
+        return "puntual"
+    if _fecha_de_recuperacion(payload):
+        return "cierre"
+    alert_id = _texto(_g(payload, "Alert", "AlertId"))
+    if env and alert_id and estado.alerta_abierta_registrada(env, alert_id):
+        # Una alerta que ya se registró abierta no puede ser puntual.
+        return "cierre"
+    logger.warning(
+        f"[TIVE-{env or '?'}] Alerta {tipo} con Created y Closed juntos, sin fecha de "
+        f"recuperación ni apertura registrada: se trata como puntual. Verificar el tipo "
+        f"| {_identidad(payload)}"
+    )
+    return "puntual"
+
+
+def estado_alerta(payload, env: str | None = None) -> str | None:
     """
     'apertura', 'actualizacion', 'cierre', 'puntual', o None si la forma de
-    Reasons no es ninguna de las cuatro medidas.
+    Reasons no es ninguna de las medidas.
     """
     detalles = _g(payload, "Alert", "Details") or []
     conjuntos = [set(d.get("Reasons") or []) for d in detalles if isinstance(d, dict)]
     if any({"Created", "Closed"} <= c for c in conjuntos):
-        return "puntual"
+        return _puntual_o_cierre(payload, env)
     if any("Closed" in c for c in conjuntos):
         return "cierre"
     if any({"Created", "Latest"} <= c for c in conjuntos):
@@ -284,11 +349,11 @@ def _candidatos_alerta(env: str, payload, opciones: dict) -> list[tuple]:
         _descartar(env, "alerta sin AlertType", payload, logging.WARNING)
         return []
 
-    forma = estado_alerta(payload)
+    forma = estado_alerta(payload, env)
     if forma is None:
         reasons = [d.get("Reasons") for d in (_g(payload, "Alert", "Details") or []) if isinstance(d, dict)]
-        _descartar(env, f"forma de alerta no reconocida (Reasons={reasons}): no se puede saber "
-                        f"si es apertura, cierre o puntual", payload, logging.WARNING)
+        _descartar(env, "forma de alerta no reconocida: no se puede saber si es apertura, "
+                        "cierre o puntual", payload, logging.WARNING, detalle=f"(Reasons={reasons})")
         return []
 
     cerrada = payload.get("IsClosed")
@@ -346,7 +411,47 @@ def _candidatos_alerta(env: str, payload, opciones: dict) -> list[tuple]:
     return candidatos
 
 
-def _candidatos_posicion(env: str, payload, opciones: dict) -> list[tuple]:
+def _series_sin_par(env: str, payload) -> list[str]:
+    """
+    Números de serie de trackers del envío que todavía no tienen par.
+    Solo los numéricos: un beacon (hexadecimal) no es un tracker y no se consulta.
+    """
+    envio = payload.get("Shipment") if isinstance(payload.get("Shipment"), dict) else {}
+    candidatas = [envio.get("DeviceId")] + list(envio.get("DeviceIds") or [])
+    series = []
+    for serie in candidatas:
+        serie = _texto(serie)
+        if serie and serie.isdigit() and serie not in series and not estado.nombre_de(env, serie):
+            series.append(serie)
+    return series
+
+
+def _retener_si_corresponde(env: str, payload, opciones: dict, ingest_id: str | None) -> bool:
+    """
+    Con el resolutor activo, un tramo sin par no se descarta: queda retenido
+    con su ingest_id y sale cuando el resolutor aprende el nombre (o se
+    descarta con aviso a las 24 h). Así no se pierde la primera posición de
+    cada contenedor en altamar, donde el tracker no reporta.
+    """
+    if not opciones.get("resolver_nombres_api") or not ingest_id:
+        return False
+    series = _series_sin_par(env, payload)
+    if not series:
+        return False
+    cuenta = _texto(payload.get("AccountId"))
+    nuevo = estado.retener_tramo(env, ingest_id, payload, cuenta, series)
+    for serie in series:
+        estado.encolar_consulta(env, serie, cuenta)
+    if nuevo:
+        logger.warning(
+            f"[TIVE-{env}] Tramo retenido, pendiente del nombre del tracker por la API de Tive "
+            f"(series={series}, cuenta={cuenta or '-'}). Sale cuando se resuelva; si no, se "
+            f"descarta a las 24 h | {_identidad(payload)}"
+        )
+    return True
+
+
+def _candidatos_posicion(env: str, payload, opciones: dict, ingest_id: str | None = None) -> list[tuple]:
     if _texto(payload.get("DeviceName")):
         _descartar(env, "posición de tracker, va por RC directo", payload)
         return []
@@ -364,17 +469,19 @@ def _candidatos_posicion(env: str, payload, opciones: dict) -> list[tuple]:
         return []
 
     patentes = resolver_patentes(env, payload)
+    if not patentes and _retener_si_corresponde(env, payload, opciones, ingest_id):
+        return []
     if not patentes:
         envio = payload.get("Shipment") if isinstance(payload.get("Shipment"), dict) else {}
         _descartar(
             env,
-            f"tramo de tercero sin patente resoluble: ningún equipo del envío tiene par "
-            f"aprendido (envío={_texto(payload.get('ShipmentId')) or '-'}, "
-            f"contenedor={_texto(envio.get('ContainerId')) or '-'}, "
-            f"serie={_texto(envio.get('DeviceId')) or '-'}, "
-            f"equipos={envio.get('DeviceIds') or []}, "
-            f"método={_texto(_g(payload, 'Location', 'LocationMethod')) or '-'})",
+            "tramo de tercero sin patente resoluble: ningún equipo del envío tiene par aprendido",
             payload, logging.WARNING,
+            detalle=(f"(envío={_texto(payload.get('ShipmentId')) or '-'}, "
+                     f"contenedor={_texto(envio.get('ContainerId')) or '-'}, "
+                     f"serie={_texto(envio.get('DeviceId')) or '-'}, "
+                     f"equipos={envio.get('DeviceIds') or []}, "
+                     f"método={_texto(_g(payload, 'Location', 'LocationMethod')) or '-'})"),
         )
         return []
 
@@ -417,7 +524,7 @@ def procesar(payload, env: str, module_options, ingest_id: str) -> list[RCCanoni
     if _es_alerta(payload):
         candidatos = _candidatos_alerta(env, payload, opciones)
     else:
-        candidatos = _candidatos_posicion(env, payload, opciones)
+        candidatos = _candidatos_posicion(env, payload, opciones, ingest_id)
     if not candidatos:
         return []
 

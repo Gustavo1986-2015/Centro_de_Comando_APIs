@@ -120,6 +120,11 @@ def registrar_descarte(provider: str, env: str, motivo: str, identidad: str | No
     El primero de cada motivo sale con el equipo. Los siguientes se resumen
     cada minuto, nombrando los equipos descartados en ese lapso.
     """
+    # Cada descarte queda en el registro persistente del panel, uno por uno:
+    # la consola los resume por minuto, la base no.
+    from app.core import descartes
+    descartes.registrar(provider, env, "admision", motivo, equipo=identidad)
+
     clave = (provider.lower(), env.lower(), motivo)
     ahora = time.time()
     resumir = False

@@ -883,6 +883,7 @@
             } else if (view === 'diagnostico') {
                 cargarDiagnosticoLatencia();
                 cargarRedSeguridad();
+                cargarDescartes();
             } else if (view === 'simulator') {
                 loadSimulator();
             } else if (view === 'history') {
@@ -1765,7 +1766,42 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
                     <input type="checkbox" id="modopt_${c._originalIdx}_${clave}" data-clave="${clave}"
                            ${c.module_options[clave] ? 'checked' : ''}>
                     ${_escapeHtml(etiquetas[clave] || clave)}
-                </label>`).join('') + '</div>';
+                </label>`).join('') + _credencialesDeModulo(c) + '</div>';
+        }
+
+        // Credenciales de la API del proveedor (Tive, v1.9.4). El client_id es
+        // texto libre con espacios ("Envios Assistcargo"): no se valida como
+        // código. El secreto nunca vuelve del servidor: solo se informa si está
+        // cargado, y dejarlo vacío conserva el guardado.
+        function _credencialesDeModulo(c) {
+            const cred = c.module_credentials;
+            if (!cred) return '';
+            const idx = c._originalIdx;
+            const estado = cred.secreto_cargado && cred.client_id
+                ? '<span class="clave-estado cargada">credenciales cargadas</span>'
+                : '<span class="clave-estado sin-clave">sin credenciales: el resolutor no consulta</span>';
+            return `<div class="credenciales-modulo">
+                <div style="font-size:0.72rem;font-weight:700;margin-top:6px;">API de Tive</div>
+                <input class="form-control" type="text" id="modcred_${idx}_client_id"
+                       value="${cred.client_id ? _escapeHtml(cred.client_id) : ''}"
+                       placeholder="Client ID (ej: Envios Assistcargo)" autocomplete="off"
+                       title="Client ID de la API de Tive. Texto libre: puede tener espacios.">
+                <input class="form-control" type="password" id="modcred_${idx}_client_secret"
+                       placeholder="${cred.secreto_cargado ? 'Secreto cargado (vacío = mantener)' : 'Client secret'}"
+                       autocomplete="new-password" title="Dejar vacío para mantener el guardado">
+                ${estado}
+            </div>`;
+        }
+
+        function _leerCredencialesDeModulo(c, idx) {
+            if (!c.module_credentials) return null;
+            const id = document.getElementById(`modcred_${idx}_client_id`);
+            const secreto = document.getElementById(`modcred_${idx}_client_secret`);
+            const clientId = id ? id.value : '';
+            const clientSecret = secreto ? secreto.value : '';
+            // Nada que cambiar: no se manda, así no se pisa lo guardado.
+            if (clientId === (c.module_credentials.client_id || '') && !clientSecret) return null;
+            return { client_id: clientId, client_secret: clientSecret || null };
         }
 
         function _leerOpcionesDeModulo(c, idx) {
@@ -1795,7 +1831,8 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
                 queue_backend: document.getElementById(`queue_${idx}`).value,
                 enable_state_dedup: document.getElementById(`dedup_${idx}`) ? document.getElementById(`dedup_${idx}`).checked : c.enable_state_dedup,
                 webhook_auth_config: _leerAuthWebhook(c, idx),
-                module_options: _leerOpcionesDeModulo(c, idx)
+                module_options: _leerOpcionesDeModulo(c, idx),
+                module_credentials: _leerCredencialesDeModulo(c, idx)
             }));
 
             // Activar el modo simulado exige revalidar la contraseña de administrador:
@@ -3616,6 +3653,74 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
         }
 
         // ─── Red de seguridad de ingesta ────────────────────────────────────
+
+        // ─── Descartes ──────────────────────────────────────────────────────
+        // Lo que no se envió a RC y por qué. El render está separado de la
+        // carga para poder ejecutarlo tal cual en los tests.
+        function _horaDescarte(ts) {
+            if (!ts) return '—';
+            const d = new Date(ts * 1000);
+            const dos = n => String(n).padStart(2, '0');
+            return `${dos(d.getDate())}/${dos(d.getMonth() + 1)} ${dos(d.getHours())}:${dos(d.getMinutes())}:${dos(d.getSeconds())}`;
+        }
+
+        function _renderDescartes(d) {
+            const esc = v => (v === null || v === undefined || v === '') ? '—' : _escapeHtml(String(v));
+            if (!d || !d.resumen || !d.resumen.length) {
+                return `<div style="border-left:3px solid #10B981;padding:0.75rem 1rem;
+                    background:rgba(255,255,255,0.03);border-radius:4px;font-size:0.82rem;">
+                    Sin descartes en los últimos ${d && d.retencion_dias ? d.retencion_dias : 7} días.</div>`;
+            }
+            const resumen = d.resumen.map(r => `<tr>
+                    <td><strong>${esc(String(r.proveedor).toUpperCase())}</strong>
+                        <span class="env-badge">${esc(String(r.env).toUpperCase())}</span></td>
+                    <td>${esc(r.origen)}</td>
+                    <td>${esc(r.motivo)}</td>
+                    <td class="num">${Number(r.total).toLocaleString()}</td>
+                    <td class="num">${_horaDescarte(r.ultimo)}</td>
+                </tr>`).join('');
+            const ultimos = (d.ultimos || []).map(u => `<tr>
+                    <td class="num">${_horaDescarte(u.ts)}</td>
+                    <td>${esc(String(u.proveedor).toUpperCase())}</td>
+                    <td><strong>${esc(u.equipo)}</strong></td>
+                    <td>${esc(u.envio)}</td>
+                    <td title="${u.detalle ? _escapeHtml(String(u.detalle)) : ''}">${esc(u.motivo)}</td>
+                    <td style="font-family:monospace;font-size:0.72rem;">${esc(u.alert_id)}</td>
+                </tr>`).join('');
+            const perdidos = d.perdidos ? `<div style="color:var(--color-yellow);font-size:0.78rem;margin-top:0.5rem;">
+                    ${Number(d.perdidos).toLocaleString()} descarte(s) no se pudieron guardar (sí quedaron en consola).</div>` : '';
+            return `
+                <div style="overflow-x:auto;">
+                <table class="inventario-tabla">
+                  <thead><tr><th>Integración</th><th>Origen</th><th>Motivo</th>
+                    <th class="num">Cantidad</th><th class="num">Último</th></tr></thead>
+                  <tbody>${resumen}</tbody>
+                </table></div>
+                <h3 style="font-size:0.9rem;margin:1rem 0 0.5rem;">Últimos descartes</h3>
+                <div style="overflow-x:auto;max-height:420px;overflow-y:auto;">
+                <table class="inventario-tabla">
+                  <thead><tr><th class="num">Hora</th><th>Integración</th><th>Equipo</th>
+                    <th>Envío</th><th>Motivo</th><th>AlertId</th></tr></thead>
+                  <tbody>${ultimos}</tbody>
+                </table></div>${perdidos}
+                <div style="font-size:0.72rem;color:#6b7280;margin-top:0.5rem;">
+                  Se guardan ${d.retencion_dias} días, hasta ${Number(d.max_filas).toLocaleString()} filas.
+                  Pasá el mouse sobre el motivo para ver el detalle.
+                </div>`;
+        }
+
+        async function cargarDescartes() {
+            const cont = document.getElementById('descartes-contenedor');
+            if (!cont) return;
+            try {
+                const res = await fetch('/api/diagnostico/descartes?limite=100');
+                if (!res.ok) throw new Error('respuesta ' + res.status);
+                cont.innerHTML = _renderDescartes(await res.json());
+            } catch (e) {
+                cont.innerHTML = '<div style="color:#a1a1aa;font-size:0.85rem;">No se pudo consultar los descartes.</div>';
+                console.warn('Descartes:', e);
+            }
+        }
 
         async function cargarRedSeguridad() {
             const cont = document.getElementById('red-seguridad-contenedor');

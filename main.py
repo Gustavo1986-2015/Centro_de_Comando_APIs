@@ -44,6 +44,12 @@ async def lifespan(app: FastAPI):
     
     await start_webhook_batch_processor()
 
+    # Resolutor del nombre del tracker por la API de Tive (v1.9.4). Corre
+    # siempre; no consulta nada si el interruptor está apagado o faltan las
+    # credenciales.
+    from app.providers.tive import resolutor as resolutor_tive
+    task_resolutor_tive = asyncio.create_task(resolutor_tive.bucle())
+
     yield
 
     # ----- SHUTDOWN -----
@@ -52,8 +58,9 @@ async def lifespan(app: FastAPI):
     task_broadcast.cancel()
     task_watch_logs.cancel()
     task_telemetry.cancel()
+    task_resolutor_tive.cancel()
     # Esperar cancelación sin bloquear el shutdown
-    for task in (task_worker, task_broadcast, task_watch_logs, task_telemetry):
+    for task in (task_worker, task_broadcast, task_watch_logs, task_telemetry, task_resolutor_tive):
         try:
             await task
         except asyncio.CancelledError:
