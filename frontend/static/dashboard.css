@@ -1893,3 +1893,12 @@ body.compact-mode .mock-banner { padding: 0.5rem 0.9rem; font-size: 0.78rem; }
 .opciones-modulo { display: flex; flex-direction: column; gap: 4px; min-width: 230px; }
 .opciones-modulo label { display: flex; align-items: center; gap: 6px; font-size: 0.78rem; cursor: pointer; }
 .opciones-modulo input { width: 15px; height: 15px; accent-color: var(--color-green-vibrant); cursor: pointer; }
+
+/* Columna PUSH API Key: ancha, y con el inicio de la clave cuando hay una
+   cargada. Antes era angosta y se veía vacía aunque la clave estuviera. */
+.th-clave-webhook, .celda-clave-webhook { min-width: 260px; }
+.clave-webhook { display: flex; flex-direction: column; gap: 3px; }
+.clave-webhook input { min-width: 200px; }
+.clave-estado { font-size: 0.72rem; font-weight: 700; white-space: nowrap; }
+.clave-estado.cargada { color: var(--color-green-vibrant); font-family: monospace; }
+.clave-estado.sin-clave { color: var(--color-yellow); }
