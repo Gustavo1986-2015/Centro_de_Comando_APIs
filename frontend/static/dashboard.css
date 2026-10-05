@@ -1902,3 +1902,7 @@ body.compact-mode .mock-banner { padding: 0.5rem 0.9rem; font-size: 0.78rem; }
 .clave-estado { font-size: 0.72rem; font-weight: 700; white-space: nowrap; }
 .clave-estado.cargada { color: var(--color-green-vibrant); font-family: monospace; }
 .clave-estado.sin-clave { color: var(--color-yellow); }
+
+/* Credenciales de la API de un módulo dedicado (Tive, v1.9.4). */
+.credenciales-modulo { display: flex; flex-direction: column; gap: 4px; margin-top: 4px; }
+.credenciales-modulo input { min-width: 220px; font-size: 0.75rem; }

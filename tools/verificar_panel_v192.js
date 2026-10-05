@@ -61,7 +61,7 @@ const OPERADORES = src.match(/const _OPERADORES_SIN_VALOR = \[[^\]]*\];/);
 if (!OPERADORES) throw new Error('No encontré _OPERADORES_SIN_VALOR');
 eval(OPERADORES[0].replace('const ', 'global.'));
 for (const f of ['_escapeHtml', '_inputValorRegla', 'renderTriggerRules', 'updateRule',
-                 'renderRecentTable', '_opcionesDeModulo', '_leerOpcionesDeModulo']) {
+                 'renderRecentTable', '_opcionesDeModulo', '_credencialesDeModulo', '_leerOpcionesDeModulo']) {
   eval(`global.${f} = ` + extraer(f).replace(`function ${f}`, 'function'));
 }
 

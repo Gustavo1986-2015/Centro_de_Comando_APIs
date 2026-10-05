@@ -89,4 +89,12 @@ def filtrar_validos(eventos, proveedor: str | None, env: str | None) -> list:
             f"falta {', '.join(falta)} | patente={patente or 'sin patente'}"
             f"{f' serie={serie}' if serie else ''} código={getattr(ev, 'code', None)}"
         )
+        # Además de la consola, al registro persistente que muestra el panel.
+        from app.core import descartes
+        descartes.registrar(
+            proveedor, env, "contrato", f"falta {', '.join(falta)}",
+            equipo=patente or (f"serie {serie}" if serie else None),
+            envio=getattr(ev, "shipment", None),
+            detalle=f"código={getattr(ev, 'code', None)}",
+        )
     return validos
