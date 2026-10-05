@@ -270,6 +270,34 @@ def _validar_opciones_de_modulo(conf, opciones: dict) -> dict:
     return modulo.opciones_efectivas(opciones)
 
 
+# Cuántos caracteres de la clave del webhook se muestran en el panel.
+CARACTERES_PISTA_CLAVE = 2
+
+
+def _pista_clave_webhook(c) -> str | None:
+    """
+    Los DOS primeros caracteres de la clave del webhook, para que el panel
+    muestre "d0•••• cargada" y se pueda reconocer cuál es sin revelarla.
+
+    Antes la columna solo decía que había clave, y en una columna angosta
+    parecía vacía. Del servidor sale únicamente este recorte, nunca la clave:
+    verla completa sigue siendo el botón de revelar, que pide contraseña.
+
+    None si no hay clave, si no se puede descifrar, o si es tan corta que dos
+    caracteres serían casi toda la clave.
+    """
+    if not c.webhook_auth_secret_enc:
+        return None
+    try:
+        clave = decrypt(c.webhook_auth_secret_enc)
+    except Exception as e:
+        logger.warning(f"No se pudo leer la clave del webhook de {c.provider_name}/{c.env}: {e}")
+        return None
+    if not clave or len(clave) <= 2 * CARACTERES_PISTA_CLAVE:
+        return None
+    return clave[:CARACTERES_PISTA_CLAVE]
+
+
 @router.get("/api/config")
 def get_all_configs(_: None = Depends(verify_dashboard_auth)):
     db = get_session("system_config", "global")
@@ -291,6 +319,7 @@ def get_all_configs(_: None = Depends(verify_dashboard_auth)):
             "rc_user": c.rc_user,
             "has_rc_password": bool(c.rc_password_enc or c.rc_password),
             "has_webhook_auth": bool(c.webhook_auth_secret_enc),
+            "webhook_auth_hint": _pista_clave_webhook(c),
             "has_fetch_config": bool(c.fetch_config_enc or c.fetch_config),
             "webhook_auth_header": c.webhook_auth_header or "x-api-key",
             "webhook_auth_config": getattr(c, "webhook_auth_config", None) or {"modo": "header"},

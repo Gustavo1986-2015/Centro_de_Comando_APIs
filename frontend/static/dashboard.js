@@ -1407,6 +1407,11 @@
 
             if (filtered.length === 0) {
                 tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; color: var(--color-gray)">No hay eventos con estos filtros.</td></tr>';
+                // La carga terminó y no hay nada que mostrar. Antes se salía
+                // sin tocar el contador, y quedaba en "Cargando..." para
+                // siempre: parecía que el panel seguía esperando datos.
+                const countEl = document.getElementById('event-count');
+                if (countEl) countEl.textContent = '0 eventos';
                 return;
             }
 
@@ -1630,6 +1635,29 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
             return (c.provider_type || 'pull').toLowerCase() === 'pull';
         }
 
+        // Celda "PUSH API Key". Con clave guardada muestra sus dos primeros
+        // caracteres ("d0•••• cargada"): antes solo había un placeholder en un
+        // campo angosto y parecía vacía. El servidor manda únicamente esos dos
+        // caracteres (webhook_auth_hint); la clave completa solo se ve con el
+        // botón de revelar, que pide contraseña.
+        function _celdaClaveWebhook(c) {
+            if (esPull(c)) {
+                return '<input class="form-control" type="text" disabled value="--- N/A (Es PULL) ---" style="color: var(--color-gray); background: var(--level-1); font-style: italic; border: 1px dashed var(--card-border);" title="No aplica para proveedores PULL">';
+            }
+            let estado = '<span class="clave-estado sin-clave" title="Sin clave: el webhook rechaza todo hasta que se cargue">sin clave</span>';
+            if (c.has_webhook_auth) {
+                const inicio = c.webhook_auth_hint ? _escapeHtml(c.webhook_auth_hint) : '';
+                estado = `<span class="clave-estado cargada" title="Clave guardada y cifrada. Para verla completa, usar el ojo.">${inicio}•••• cargada</span>`;
+            }
+            return `<div class="clave-webhook">
+                        <div style="display:flex; gap:4px; align-items:center;">
+                            <input class="form-control" type="password" id="webhook_auth_${c._originalIdx}" placeholder="${c.has_webhook_auth ? 'Cambiar clave…' : 'Cargar clave'}" title="Dejar vacío para mantener el actual">
+                            ${c.has_webhook_auth ? `<button class="btn-ver-clave" title="Ver la clave guardada (pide contraseña)" onclick="verApiKey('${c.provider_name}','${c.env}')">👁</button>` : ''}
+                        </div>
+                        ${estado}
+                    </div>`;
+        }
+
         async function loadConfig() {
             try {
                 const res = await fetch('/api/config');
@@ -1691,10 +1719,7 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
                                 </label>
                             </td>
                             <td>${esPull(c) ? '<input class="form-control" type="text" disabled value="--- N/A ---" style="width: 100px; color: var(--color-gray); background: var(--level-1); text-align: center; border: 1px dashed var(--card-border);" title="No aplica para proveedores PULL">' : `<input class="form-control" type="text" id="webhook_header_${c._originalIdx}" value="${c.webhook_auth_header || 'x-api-key'}" style="width: 150px;">${_selectorAuthWebhook(c)}`}</td>
-                            <td>${esPull(c) ? '<input class="form-control" type="text" disabled value="--- N/A (Es PULL) ---" style="color: var(--color-gray); background: var(--level-1); font-style: italic; border: 1px dashed var(--card-border);" title="No aplica para proveedores PULL">' : `<div style="display:flex; gap:4px; align-items:center;">
-                                    <input class="form-control" type="password" id="webhook_auth_${c._originalIdx}" placeholder="${c.has_webhook_auth ? '•••••••• (Cifrado)' : ''}" title="Dejar vacío para mantener el actual">
-                                    ${c.has_webhook_auth ? `<button class="btn-ver-clave" title="Ver la clave guardada (pide contraseña)" onclick="verApiKey('${c.provider_name}','${c.env}')">👁</button>` : ''}
-                                  </div>`}</td>
+                            <td class="celda-clave-webhook">${_celdaClaveWebhook(c)}</td>
                             <td>
                                 ${esPull(c) ? `<button class="btn-renovar-token" title="Descartar el token guardado del proveedor y pedir uno nuevo en el próximo ciclo" onclick="renovarToken('${c.provider_name}','${c.env}')">↻ token</button>` : ''}
                                 <input class="form-control" type="text" id="user_${c._originalIdx}" value="${c.rc_user || ''}">
