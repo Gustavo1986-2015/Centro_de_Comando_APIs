@@ -280,10 +280,11 @@ def test_alerta_con_datos_de_sensores():
 # ═══════════════════════════════════════════════════════════════════════════
 
 def test_los_valores_por_defecto():
-    # v1.9.4 suma "resolver_nombres_api", apagado por defecto.
+    # v1.9.4 suma "resolver_nombres_api" y v1.9.5 "posiciones_equipos",
+    # los dos apagados por defecto.
     assert modulo.opciones_efectivas(None) == {
         "posiciones_terceros": True, "alertas_beacons": True, "alertas_trackers": False,
-        "resolver_nombres_api": False,
+        "resolver_nombres_api": False, "posiciones_equipos": False,
     }
 
 
@@ -660,7 +661,8 @@ def test_los_interruptores_se_ven_y_se_guardan_desde_el_panel(app_tive):
     tive = next(c for c in configs if c["provider_name"] == "TIVE")
     assert tive["modulo_dedicado"] is True
     assert tive["module_options"] == {"posiciones_terceros": True, "alertas_beacons": True,
-                                      "alertas_trackers": False, "resolver_nombres_api": False}
+                                      "alertas_trackers": False, "resolver_nombres_api": False,
+                                      "posiciones_equipos": False}
     assert set(tive["module_options_labels"]) == set(tive["module_options"])
     protrack = next(c for c in configs if c["provider_name"] == "PROTRACK")
     assert protrack["modulo_dedicado"] is False and "module_options" not in protrack
@@ -675,7 +677,8 @@ def test_los_interruptores_se_ven_y_se_guardan_desde_el_panel(app_tive):
     assert r.status_code == 200, r.text
     tive = next(c for c in app_tive.get("/api/config").json() if c["provider_name"] == "TIVE")
     assert tive["module_options"] == {"posiciones_terceros": True, "alertas_beacons": False,
-                                      "alertas_trackers": True, "resolver_nombres_api": False}
+                                      "alertas_trackers": True, "resolver_nombres_api": False,
+                                      "posiciones_equipos": False}
 
     r = app_tive.post("/api/config", json=[_actualizacion(tive, {"inventado": True})])
     assert r.status_code == 400

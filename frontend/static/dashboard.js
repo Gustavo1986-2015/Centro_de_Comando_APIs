@@ -3404,6 +3404,10 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
             const sel = document.getElementById(`webhook_mode_${idx}`);
             // PULL no tiene selector: null = no tocar lo guardado.
             if (!sel) return null;
+            // Selector sin tocar: tampoco se manda. Rearmarlo desde el selector
+            // escribía {modo: header} donde no había nada y perdía los ajustes
+            // propios de un preset (v1.9.5, guardado idempotente).
+            if (sel.value === _modoAuthWebhook(c)) return null;
             if (sel.value === 'header') return { modo: 'header' };
             if (sel.value === 'hmac:personalizado') return c.webhook_auth_config;
             return { modo: 'hmac', preset: sel.value.split(':')[1] };

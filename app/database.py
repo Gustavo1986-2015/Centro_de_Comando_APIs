@@ -369,7 +369,12 @@ def get_engine(provider: str, env: str = "prod"):
             
         _engines[key] = engine
         _sessions[key] = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-        
+        if provider == "system_config":
+            # Todo cambio de modo simulado queda en la consola, venga de donde
+            # venga (v1.9.5). Ver app/core/modo_simulado.py.
+            from app.core import modo_simulado
+            modo_simulado.instalar(_sessions[key])
+
     return _engines[key]
 
 def get_session(provider: str, env: str = "prod"):

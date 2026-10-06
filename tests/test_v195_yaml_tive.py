@@ -1,8 +1,9 @@
 """
-v1.9.4 · Punto 4 — YAML de Tive para el servidor.
+v1.9.4 · Punto 4 — YAML de Tive para el servidor (v1.9.5: suma el
+interruptor "posiciones_equipos", apagado).
 
 tests/fixtures/tive_prod_servidor.yaml es el mismo archivo que se entrega en
-docs/entrega_v1.9.4/. Se importa por los endpoints reales del respaldo
+docs/entrega_v1.9.5/. Se importa por los endpoints reales del respaldo
 (simular y aplicar) sobre una base temporal con otras integraciones, como el
 servidor.
 """
@@ -90,7 +91,8 @@ def test_la_importacion_real_deja_tive_como_se_pidio(cliente, auth):
     assert tive.webhook_auth_config == {"modo": "hmac", "preset": "tive"}
     assert tive.webhook_auth_header == "x-tive-signature"
     assert tive.module_options == {"posiciones_terceros": True, "alertas_beacons": True,
-                                   "alertas_trackers": False, "resolver_nombres_api": False}
+                                   "alertas_trackers": False, "resolver_nombres_api": False,
+                                   "posiciones_equipos": False}
     assert not tive.mapping_schema, "no tiene que traer mapeo del Studio"
     assert not tive.webhook_auth_secret_enc and not tive.fetch_config_enc, "no trae credenciales"
     despues = {k: (c.is_active, c.use_mock, c.provider_type) for k, c in filas.items() if k != ("tive", "prod")}
@@ -105,7 +107,7 @@ def test_los_interruptores_coinciden_con_los_valores_por_defecto_del_modulo():
 
 def test_es_el_mismo_archivo_que_se_entrega():
     entregado = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                             "docs", "entrega_v1.9.4", "tive_prod_servidor.yaml")
+                             "docs", "entrega_v1.9.5", "tive_prod_servidor.yaml")
     if not os.path.exists(entregado):
         pytest.skip("docs/ no está en este checkout (está en .gitignore)")
     assert open(entregado, encoding="utf-8").read() == YAML

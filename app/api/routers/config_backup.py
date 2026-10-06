@@ -42,7 +42,7 @@ from pydantic import BaseModel
 from app.core import webhook_auth
 from app.core.auditor import log_admin_action
 from app.core.auth import verify_dashboard_auth
-from app.core import config_cache
+from app.core import config_cache, modo_simulado
 from app.core.crypto import decrypt, encrypt
 from app.database import get_session
 from app.models.config_models import ProviderConfig, SystemSettings
@@ -1029,6 +1029,13 @@ def ejecutar_import(
     _auth: HTTPBasicCredentials = Depends(verify_dashboard_auth),
 ):
     """Aplica el respaldo. Exige confirmación escrita y es todo o nada."""
+    # Un modo simulado que cambia por importación también deja su aviso, con
+    # el usuario (app/core/modo_simulado.py).
+    with modo_simulado.usuario(_auth.username, "importación YAML"):
+        return _ejecutar_import(body, request, _auth)
+
+
+def _ejecutar_import(body: ImportEjecutar, request: Request, _auth: HTTPBasicCredentials):
     if body.confirmacion.strip().upper() != CONFIRMACION_REQUERIDA:
         raise HTTPException(
             status_code=400,
