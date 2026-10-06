@@ -180,7 +180,9 @@ class SQLiteQueue(MessageQueueInterface):
                 now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
                 mappings = [{
                     "id": u['event_id'],
-                    "status": "sent",
+                    # 'simulado' cuando la integración está en modo simulado
+                    # (v1.9.7); sin indicación, 'sent' como siempre.
+                    "status": u.get("estado", "sent"),
                     "rc_response": u['rc_response'],
                     "job_id": u['job_id'],
                     "rc_latency_sec": u['elapsed_sec'],

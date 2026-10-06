@@ -192,17 +192,31 @@ def test_invalidate_limit_cache_sin_argumento_limpia_todo():
 
 # ── Mantenimiento de bases de datos ──────────────────────────────────────────
 
-def test_purga_manual_solo_elimina_lo_ya_despachado():
+def test_purga_manual_solo_elimina_lo_ya_despachado(config_aislada):
     """
     El botón de purga usa la misma función que la purga automática: nunca debe
     tocar eventos pendientes ni en proceso, aunque el operador lo dispare a mano.
+
+    v1.9.7: antes buscaba texto en el fuente de la purga; ahora la ejecuta
+    sobre una base con un evento en cada estado (incluido 'simulado').
     """
-    import inspect
+    import asyncio
+    from app.database import get_session
+    from app.models.db_models import NormalizedRCEvent
     from app.worker.processor import purge_provider_events
 
-    fuente = inspect.getsource(purge_provider_events)
-    assert 'status.in_(["sent", "failed"])' in fuente or "'sent', 'failed'" in fuente
-    assert '"pending"' not in fuente.split("delete")[0][-400:] or True
+    db = get_session("schmitz", "prod")
+    for estado in ("pending", "processing", "sent", "failed", "simulado"):
+        db.add(NormalizedRCEvent(provider="schmitz", status=estado, chassis_number=f"P-{estado}", raw_data="{}"))
+    db.commit()
+    db.close()
+    asyncio.run(purge_provider_events("schmitz", "prod", ignorar_retencion=True))
+    db = get_session("schmitz", "prod")
+    try:
+        quedan = sorted(e.status for e in db.query(NormalizedRCEvent).all())
+    finally:
+        db.close()
+    assert quedan == ["pending", "processing"]
 
 
 def test_el_conteo_purgable_excluye_pendientes_y_en_proceso():
