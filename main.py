@@ -94,8 +94,18 @@ async def measure_push_latency(request: Request, call_next):
     path = request.url.path
     if request.method == "POST":
         provider = None
+        entorno = None
         if path == "/Json/Data" or path.startswith("/schmitz/"):
             provider = "schmitz"
+        elif path.startswith("/webhook/dynamic/"):
+            # v1.9.6: el nombre de la integración y no "webhook", y solo si el
+            # webhook la ACEPTÓ. Antes todo el webhook genérico caía bajo
+            # "webhook:<env>", con los rechazos por firma y las URL a
+            # integraciones inexistentes adentro; y una clave por cada nombre
+            # que llegue dejaría a cualquiera crear claves sin límite.
+            aceptada = getattr(request.state, "push_aceptada", None)
+            if aceptada:
+                provider, entorno = aceptada
         elif "/webhook" in path:
             parts = [p for p in path.split("/") if p]
             if len(parts) >= 2 and parts[0] != "api" and parts[0] != "inspector":
@@ -104,7 +114,7 @@ async def measure_push_latency(request: Request, call_next):
         if provider:
             # Separado por entorno: agrupar test y prod bajo la misma clave
             # mezclaba tráfico de prueba con el real.
-            entorno = (request.query_params.get("env") or "prod").lower()
+            entorno = entorno or (request.query_params.get("env") or "prod").lower()
             record_push_latency(f"{provider}:{entorno}", process_time)
             
     return response

@@ -57,6 +57,16 @@ TRAMOS = (
      "Leer el cuerpo de la petición y convertirlo a datos. Es el tramo que más "
      "crece con el caudal, porque depende del tamaño del mensaje y de cuán "
      "ocupado esté el proceso."),
+    # v1.9.6: tramos propios del webhook genérico (/webhook/dynamic/), que
+    # traduce y guarda dentro de la petición en vez de encolar en memoria.
+    # Numerados 3.x para no correr la numeración que ya ve Schmitz.
+    ("procesamiento", "3.1 Traducción del mensaje",
+     "Solo en el webhook genérico: pasar el mensaje por el módulo dedicado del "
+     "proveedor (Tive) o por el esquema del Integration Studio, con su filtro de "
+     "admisión y su deduplicación. Un mensaje descartado termina acá."),
+    ("guardado", "3.2 Guardado en la base",
+     "Solo en el webhook genérico: guardar los eventos para que el worker los "
+     "envíe. A diferencia de Schmitz, la respuesta al proveedor espera este paso."),
     ("encolado", "4. Puesta en cola",
      "Dejar el mensaje en la cola interna para que el worker lo procese. Acá "
      "termina la petición: el proveedor recibe su respuesta en este punto."),
@@ -179,8 +189,11 @@ class Cronometro:
         self._tramos: dict[str, float] = {}
 
     def marca(self, tramo: str):
+        """Suma al tramo si ya tenía tiempo: el webhook genérico vuelve a
+        "auth" (firma HMAC) y a "parseo" (JSON) después de leer el cuerpo.
+        Schmitz marca cada tramo una sola vez, así que no cambia."""
         ahora = time.perf_counter()
-        self._tramos[tramo] = (ahora - self._ultimo) * 1000.0
+        self._tramos[tramo] = self._tramos.get(tramo, 0.0) + (ahora - self._ultimo) * 1000.0
         self._ultimo = ahora
 
     def cerrar(self):
