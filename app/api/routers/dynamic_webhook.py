@@ -8,7 +8,7 @@ import asyncio
 from app.database import get_session
 from app.models.config_models import ProviderConfig
 from app.core.dynamic_mapper import DynamicMapper
-from app.core import provider_health
+from app.core import latencia, provider_health
 from app.core.rate_limit import check_rate_limit
 from app.models.db_models import NormalizedRCEvent
 from app.core.auditor import log_raw_payload
@@ -27,6 +27,10 @@ def _validate_dynamic_auth(
     env: str = Query("prod", description="Entorno de destino: test o prod")
 ):
     """Valida auth del webhook dinámico contra DB cifrada (se ejecuta en ThreadPool)."""
+    # v1.9.6: el cronómetro arranca acá, no en el handler. A diferencia de
+    # Schmitz (clave en caché), validar cuesta una consulta a la base: es el
+    # tramo "auth". Si la petición se rechaza, nunca se cierra ni se registra.
+    crono = latencia.Cronometro(provider_name, env)
     db_global = get_session("system_config", "global")
     try:
         config = db_global.query(ProviderConfig).filter(
@@ -98,6 +102,7 @@ def _validate_dynamic_auth(
         if not mapping_schema and not dedicado:
             raise HTTPException(status_code=400, detail="El proveedor no tiene un esquema visual configurado (mapping_schema).")
         
+        crono.marca("auth")
         # Pasar configuración de dedup junto con mapping_schema
         return {
             "mapping_schema": mapping_schema,
@@ -108,6 +113,7 @@ def _validate_dynamic_auth(
             "secreto_hmac": stored_key if auth_cfg["modo"] == webhook_auth.MODO_HMAC else None,
             "dedicado": dedicado,
             "opciones_modulo": getattr(config, "module_options", None) or {},
+            "crono": crono,
         }
     finally:
         db_global.close()
@@ -175,7 +181,23 @@ async def dynamic_webhook_receive(
     Extrae la data usando su mapping_schema desde la DB, y lo encola.
     Si el proveedor tiene enable_state_dedup=True, filtra eventos de sensor repetidos
     (Anti-State Flooding) antes de persistir.
+
+    v1.9.6: una petición ACEPTADA (clave o firma válida) se mide por tramos y
+    cuenta como tráfico, se guarde o se descarte lo que trae. Una rechazada
+    por autenticación no cuenta para nada.
     """
+    crono = auth_config.get("crono")
+    try:
+        return await _recibir(provider_name, request, env, auth_config, crono)
+    finally:
+        if crono is not None and getattr(request.state, "push_aceptada", None):
+            # Lo que quedó sin marcar va al tramo en curso: así los tramos
+            # suman el total también cuando se sale antes (un descarte, un 429).
+            crono.marca(getattr(request.state, "tramo_crono", "procesamiento"))
+            crono.cerrar()
+
+
+async def _recibir(provider_name: str, request: Request, env: str, auth_config: dict, crono):
     mapping_schema = auth_config["mapping_schema"]
     enable_dedup = auth_config["enable_state_dedup"]
     # Si el proveedor usa diccionario, los IDs sin traducción no se envían a RC
@@ -185,6 +207,8 @@ async def dynamic_webhook_receive(
     # bytes exactos: parsear y reserializar el JSON cambiaría espacios u orden
     # de claves e invalidaría una firma legítima.
     cuerpo_crudo = await request.body()
+    if crono is not None:
+        crono.marca("parseo")
 
     auth_cfg = auth_config.get("auth_cfg") or {"modo": webhook_auth.MODO_HEADER}
     if auth_cfg["modo"] == webhook_auth.MODO_HMAC:
@@ -200,14 +224,29 @@ async def dynamic_webhook_receive(
             )
             raise HTTPException(status_code=401, detail="Firma inválida")
 
+    # Aceptada: cuenta como tráfico aunque después se descarte entera (v1.9.6).
+    # Con Tive casi todo se descarta por diseño y la píldora no lo veía.
+    request.state.push_aceptada = (provider_name.lower(), env.lower())
+    request.state.tramo_crono = "parseo"
+    provider_health.report_push_recibido(provider_name, env, cuenta_como_trafico=True)
+    if crono is not None:
+        crono.marca("auth")
+
     try:
         payload = json.loads(cuerpo_crudo)
     except Exception as e:
         logger.warning(f"Excepción capturada en dynamic_webhook: {e}")
         raise HTTPException(status_code=400, detail="El cuerpo de la petición debe ser un JSON válido.")
 
+    if crono is not None:
+        crono.marca("parseo")
+    request.state.tramo_crono = "rate_limit"
+
     # 2.2 Rate limiting por integración (transversal a todos los proveedores)
     allowed, remaining, retry_after = check_rate_limit(provider_name, env)
+    if crono is not None:
+        crono.marca("rate_limit")
+    request.state.tramo_crono = "procesamiento"
     if not allowed:
         logger.warning(
             f"[{provider_name}-{env}] Rate limit superado ({retry_after}s para reintentar)."
@@ -238,6 +277,9 @@ async def dynamic_webhook_receive(
             # no puede perder el evento: Tive reintenta dos veces y abandona.
             # Va a la red de seguridad con este mismo ingest_id y el
             # reintentador lo vuelve a pasar por el módulo.
+            if crono is not None:
+                crono.marca("procesamiento")
+            request.state.tramo_crono = "respaldo"
             safety_net.registrar_pendiente(provider_name, env, ingest_id, payload)
             logger.error(
                 f"[{provider_name.upper()}-{env}] Error en el módulo dedicado: {e} | "
@@ -320,6 +362,10 @@ async def dynamic_webhook_receive(
 
         ingest_id = safety_net.nuevo_ingest_id()
 
+    if crono is not None:
+        crono.marca("procesamiento")
+    request.state.tramo_crono = "guardado"
+
     # 4. Guardar en Base de Datos Específica / Cola usando ThreadPool para no bloquear
     try:
         await run_in_threadpool(
@@ -330,6 +376,9 @@ async def dynamic_webhook_receive(
         # persiste cuando la base esté disponible. Se responde 202 porque el
         # evento QUEDÓ a salvo: devolver 500 haría que el proveedor reintente
         # pocas veces y abandone, que es exactamente la pérdida que se evita.
+        if crono is not None:
+            crono.marca("guardado")
+        request.state.tramo_crono = "respaldo"
         safety_net.registrar_pendiente(provider_name, env, ingest_id, payload)
         logger.error(
             f"Error guardando eventos de {provider_name}/{env}: {e} | "

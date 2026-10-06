@@ -189,6 +189,10 @@
                 if (h.auth_ok === false && h.auth_error) lines.push(`Auth: ${h.auth_error}`);
                 if (h.mode === 'pull') lines.push(`Ultimo fetch OK: ${_fmtAge(h.fetch_age_sec)}`);
                 if (h.fetch_error) lines.push(`  Error fetch: ${h.fetch_error}`);
+                // v1.9.6: el webhook genérico informa cada petición aceptada.
+                if (h.request_age_sec !== null && h.request_age_sec !== undefined) {
+                    lines.push(`Ultima peticion aceptada: ${_fmtAge(h.request_age_sec)} (${h.peticiones || 0} desde el arranque)`);
+                }
 
                 // Resumen visible: si hay problema manda el detalle;
                 // si esta sano, se muestra throughput y tamano del diccionario.
@@ -199,7 +203,12 @@
                     const parts = [];
                     if (rate > 0) parts.push(`${rate} ev/min`);
                     if (h.dict_enabled && h.dict_count) parts.push(`${h.dict_count} IDs`);
-                    summary = parts.length ? parts.join(' \u00B7 ') : 'sin trafico';
+                    // Sin eventos guardados pero con peticiones aceptadas (Tive
+                    // descarta casi todo por diseño): hay tráfico, no silencio.
+                    const conPeticiones = h.request_age_sec !== null && h.request_age_sec !== undefined;
+                    summary = parts.length ? parts.join(' \u00B7 ')
+                            : conPeticiones ? 'con trafico \u00B7 sin eventos para RC'
+                            : 'sin trafico';
                 }
 
                 // Boton de resincronizacion: solo cuando hay algo que reintentar

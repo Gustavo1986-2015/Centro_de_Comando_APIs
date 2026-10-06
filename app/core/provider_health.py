@@ -77,6 +77,14 @@ def _entry(provider: str, env: str) -> dict:
             # permite que el umbral de silencio se adapte a cada proveedor en
             # vez de aplicar el mismo número a todos.
             "intervalo_tipico_seg": None,
+            # v1.9.6: última petición PUSH ACEPTADA (firma o clave válida), se
+            # guarde o se descarte lo que trae. Solo la informa el webhook
+            # genérico: con Tive casi todo se descarta por diseño y la píldora,
+            # que solo miraba eventos guardados, quedaba en "Esperando datos"
+            # con tráfico real entrando. Schmitz no la usa.
+            "last_request_ts": None,
+            "intervalo_peticiones_seg": None,
+            "peticiones": 0,
         }
     return _HEALTH[k]
 
@@ -101,20 +109,32 @@ SEGUNDOS_SIN_TRAFICO_MAXIMO = 7200     # techo: 2 h sin nada es silencio, seguro
 FACTOR_TOLERANCIA = 6                  # cuántos intervalos típicos se toleran
 
 
-def _umbral_silencio(e: dict) -> float:
-    """
-    Cuánto silencio tolera ESTA integración antes de considerarse inactiva.
-
-    Se deriva del intervalo típico observado entre eventos. Si todavía no hay
-    suficientes observaciones, se usa el piso.
-    """
-    tipico = e.get("intervalo_tipico_seg")
+def _umbral_de(tipico: float | None) -> float:
     if not tipico:
         return SEGUNDOS_SIN_TRAFICO_MINIMO
     return min(
         max(tipico * FACTOR_TOLERANCIA, SEGUNDOS_SIN_TRAFICO_MINIMO),
         SEGUNDOS_SIN_TRAFICO_MAXIMO,
     )
+
+
+def _umbral_silencio(e: dict) -> float:
+    """
+    Cuánto silencio tolera ESTA integración antes de considerarse inactiva.
+
+    Se deriva del intervalo típico observado entre eventos (y, desde la
+    v1.9.6, entre peticiones aceptadas: se toma el más tolerante). Si todavía
+    no hay suficientes observaciones, se usa el piso. Sin peticiones
+    registradas —Schmitz— el resultado es el de siempre.
+    """
+    return max(_umbral_de(e.get("intervalo_tipico_seg")),
+               _umbral_de(e.get("intervalo_peticiones_seg")))
+
+
+def _ultimo_trafico(e: dict) -> float | None:
+    """Lo más reciente entre un evento guardado y una petición aceptada."""
+    marcas = [t for t in (e.get("last_event_ts"), e.get("last_request_ts")) if t]
+    return max(marcas) if marcas else None
 
 
 def _fmt_edad(seg: float) -> str:
@@ -150,6 +170,40 @@ def report_events_in(provider: str, env: str, cantidad: int = 1):
                 intervalo if previo is None else (previo * 0.8 + intervalo * 0.2)
             )
         e["last_event_ts"] = ahora
+
+
+def report_request_in(provider: str, env: str):
+    """
+    Registra una petición PUSH aceptada (v1.9.6). Cuenta como tráfico para la
+    píldora aunque no deje ningún evento guardado. Una petición rechazada por
+    autenticación no debe llegar acá.
+    """
+    ahora = time.time()
+    with _LOCK:
+        e = _entry(provider, env)
+        anterior = e.get("last_request_ts")
+        if anterior:
+            intervalo = ahora - anterior
+            previo = e.get("intervalo_peticiones_seg")
+            e["intervalo_peticiones_seg"] = (
+                intervalo if previo is None else (previo * 0.8 + intervalo * 0.2)
+            )
+        e["last_request_ts"] = ahora
+        e["peticiones"] = e.get("peticiones", 0) + 1
+
+
+def report_push_recibido(provider: str, env: str, cuenta_como_trafico: bool):
+    """
+    Lo común a todo PUSH recibido: modo push y última recepción correcta.
+
+    Schmitz la llama sin contar tráfico (registra exactamente lo mismo que
+    antes: set_mode + report_fetch_ok); el webhook genérico, contando cada
+    petición aceptada (v1.9.6).
+    """
+    set_mode(provider, env, "push")
+    report_fetch_ok(provider, env)
+    if cuenta_como_trafico:
+        report_request_in(provider, env)
 
 
 def forget(provider: str, env: str):
@@ -277,10 +331,11 @@ def _derive_status(e: dict) -> tuple[str, str]:
     #
     # Es un estado propio y no un error: una integración recién dada de alta,
     # o un proveedor que todavía no arrancó, están así legítimamente.
-    if not e.get("last_event_ts"):
+    ultimo = _ultimo_trafico(e)
+    if not ultimo:
         return "idle", "Esperando datos"
 
-    inactividad = time.time() - e["last_event_ts"]
+    inactividad = time.time() - ultimo
     if inactividad > _umbral_silencio(e):
         return "idle", f"Esperando datos · sin tráfico hace {_fmt_edad(inactividad)}"
 
@@ -332,6 +387,10 @@ def get_health_snapshot() -> list[dict]:
                 "event_age_sec": (
                     int(now - e["last_event_ts"]) if e["last_event_ts"] else None
                 ),
+                "request_age_sec": (
+                    int(now - e["last_request_ts"]) if e.get("last_request_ts") else None
+                ),
+                "peticiones": e.get("peticiones", 0),
                 "rate": _rate_usage(e["provider"], e["env"]),
             })
     out.sort(key=lambda x: (x["provider"], x["env"]))

@@ -45,7 +45,24 @@ sys.path.insert(0, str(RAIZ_REPO))
 DIRECTORIO_DE_LA_SUITE = Path(tempfile.mkdtemp(prefix="cca_suite_"))
 shutil.copytree(RAIZ_REPO / "frontend", DIRECTORIO_DE_LA_SUITE / "frontend")
 _CWD_DEL_LANZAMIENTO = os.getcwd()
-os.chdir(DIRECTORIO_DE_LA_SUITE)
+
+
+def pytest_configure(config):
+    """
+    El cambio de carpeta va acá y no al importar este archivo (v1.9.6).
+
+    pytest resuelve `testpaths` dos veces: antes de importar este conftest y
+    después, relativo a la carpeta actual. Con el cambio hecho al importar, la
+    segunda vez no encontraba tests/, avisaba "No files were found in
+    testpaths" y buscaba recursivamente desde la carpeta de lanzamiento, con
+    lo que podía juntar tests de fuera de tests/.
+
+    pytest_configure corre después de esa resolución y antes de que se importe
+    cualquier módulo de test, así que el aislamiento de la v1.9.5 no cambia.
+    Si este conftest se carga tarde (sin testpaths ni argumentos), pytest
+    igual lo llama al registrarlo, antes de importar los tests.
+    """
+    os.chdir(DIRECTORIO_DE_LA_SUITE)
 
 
 def _config_del_lanzamiento():

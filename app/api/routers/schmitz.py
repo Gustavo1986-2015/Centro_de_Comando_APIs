@@ -381,8 +381,9 @@ async def schmitz_webhook(
             )
             return {"status": "accepted", "note": "cola saturada"}
 
-        provider_health.set_mode("schmitz", env, "push")
-        provider_health.report_fetch_ok("schmitz", env)
+        # Lo mismo de siempre (modo push + recepción correcta), por la función
+        # común del webhook genérico. Schmitz no cuenta peticiones como tráfico.
+        provider_health.report_push_recibido("schmitz", env, cuenta_como_trafico=False)
     except Exception as e:
         logger.warning(f"Excepción capturada en schmitz: {e}")
         logger.error(f"Error inesperado en webhook: {e}")
@@ -466,8 +467,7 @@ async def schmitz_json_data(
             )
             return {"status": "accepted", "note": "cola saturada"}
 
-        provider_health.set_mode("schmitz", env, "push")
-        provider_health.report_fetch_ok("schmitz", env)
+        provider_health.report_push_recibido("schmitz", env, cuenta_como_trafico=False)
     except Exception as e:
         logger.warning(f"Excepción capturada en schmitz: {e}")
         logger.error(f"Error inesperado en Json/Data: {e}")
