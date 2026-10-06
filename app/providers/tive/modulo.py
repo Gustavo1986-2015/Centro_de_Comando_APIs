@@ -15,8 +15,10 @@ de los trackers. El hub solo manda lo que RC no tiene:
   - posiciones de tramos de terceros (contenedor; aéreo cuando aparezca)
   - alertas de beacons
   - alertas de trackers, SOLO si se activa su interruptor (hoy duplicaría RC)
+  - posiciones de equipos (trackers y beacons), SOLO si se activa su
+    interruptor (v1.9.5; hoy duplicaría RC)
 
-Las posiciones de los trackers no se envían: van por RC directo.
+Mientras RC directo siga activo, las posiciones de los equipos no se envían.
 
 TODO SE MIDIÓ CONTRA LOS CRUDOS REALES (audit/tive_prod/2026-10/)
 
@@ -25,9 +27,11 @@ TODO SE MIDIÓ CONTRA LOS CRUDOS REALES (audit/tive_prod/2026-10/)
     aceptada: DeviceName nulo + coordenadas en Location. El literal del tramo
     aéreo no se vio: cualquier LocationMethod nuevo se avisa en consola.
   - Tracker vs beacon: los 1235 DeviceId de trackers medidos son IMEI de 15
-    dígitos; el único beacon visto, A2A2A20173D4, no es numérico. Una alerta
-    cuyo DeviceId no es numérico se trata como de beacon. Nunca se vio una
-    alerta de beacon real: queda pendiente de confirmar con un JSON real.
+    dígitos; los beacons vistos, A2A2A20173D4 y F9C1B0DF0E1D (W15481, primer
+    beacon real con nombre, 05/10), no son numéricos. Una alerta cuyo DeviceId
+    no es numérico se trata como de beacon y sale con el nombre del beacon
+    (confirmado por el usuario). Hasta el 05/10 el beacon solo mandó
+    posiciones: una alerta de beacon real todavía no se vio.
   - Apertura, cierre y puntual se leen de Alert.Details[].Reasons:
         [["Created","Latest"]]        apertura de rango
         [["Created"],["Latest"]]      actualización de una alerta abierta
@@ -64,6 +68,9 @@ INTERRUPTORES = {
     # Encendido, un tramo de contenedor sin par queda retenido y el resolutor
     # consulta el nombre del tracker (app/providers/tive/resolutor.py).
     "resolver_nombres_api": False,
+    # v1.9.5. Apagado: las posiciones de trackers y beacons llegan a SIMON por
+    # el webhook directo de RC. Se enciende el día que se dé de baja.
+    "posiciones_equipos": False,
 }
 
 DESCRIPCION_INTERRUPTORES = {
@@ -71,6 +78,7 @@ DESCRIPCION_INTERRUPTORES = {
     "alertas_beacons": "Alertas de beacons",
     "alertas_trackers": "Alertas de trackers (duplica RC si no se pidió la baja)",
     "resolver_nombres_api": "Resolver nombres con la API de Tive",
+    "posiciones_equipos": "Posiciones de equipos (duplica RC si no se pidió la baja)",
 }
 
 # El panel muestra el formulario de credenciales de la API solo para módulos
@@ -121,15 +129,20 @@ def _numero(valor) -> float | None:
         return None
 
 
+def _fecha_iso(texto: str) -> datetime:
+    """ISO 8601 en UTC; sin zona se asume UTC, como manda Tive."""
+    dt = dateutil.parser.isoparse(texto)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
 def _fecha(payload) -> datetime | None:
     """EntryTimeUtc: la lectura que disparó el evento (decisión 3 del informe)."""
     texto = _texto(payload.get("EntryTimeUtc"))
     if texto:
         try:
-            dt = dateutil.parser.isoparse(texto)
-            if dt.tzinfo is None:
-                dt = dt.replace(tzinfo=timezone.utc)
-            return dt.astimezone(timezone.utc)
+            return _fecha_iso(texto)
         except (ValueError, OverflowError):
             logger.warning(f"[TIVE] EntryTimeUtc ilegible: {texto!r}. Se intenta con EntryTimeEpoch.")
     epoch = _numero(payload.get("EntryTimeEpoch"))
@@ -219,6 +232,26 @@ def _fecha_de_recuperacion(payload) -> str | None:
     return texto
 
 
+def _fecha_de_cierre(env: str, payload) -> datetime | None:
+    """
+    Hora del -FIN: RecoveredAlertDate cuando trae fecha real (v1.9.5,
+    aprobado por el usuario). Medido el 05/10: en un cierre corto
+    [["Created","Closed"]] EntryTimeUtc es la hora de la APERTURA (2284be50:
+    13:44:12, recuperada 13:49:12), así que el -FIN salía con la hora de la
+    apertura. En los cierres [["Created"],["Closed"]] también difiere (6aed7e20:
+    12:54:12 contra 12:59:12). Sin fecha real, o ilegible, queda EntryTimeUtc.
+    """
+    texto = _fecha_de_recuperacion(payload)
+    if not texto:
+        return None
+    try:
+        return _fecha_iso(texto)
+    except (ValueError, OverflowError):
+        logger.warning(f"[TIVE-{env}] RecoveredAlertDate ilegible: {texto!r}. El cierre sale con "
+                       f"EntryTimeUtc | {_identidad(payload)}")
+        return None
+
+
 def _puntual_o_cierre(payload, env: str | None) -> str:
     """
     Desempata la forma [["Created","Closed"]] en un solo elemento.
@@ -271,8 +304,11 @@ def resolver_patentes(env: str, payload) -> list[tuple[str, str | None]]:
 
     En orden, gana el primer paso que resuelva:
       1. DeviceName, si viniera.
-      2. Shipment.DeviceId traducido con el par aprendido.
-      3. Cada elemento de Shipment.DeviceIds que SÍ tenga par aprendido.
+      2. El DeviceId del propio evento traducido con el par aprendido (v1.9.5:
+         una alerta de beacon sin nombre sale con el del beacon, no con el del
+         tracker principal del envío).
+      3. Shipment.DeviceId traducido con el par aprendido.
+      4. Cada elemento de Shipment.DeviceIds que SÍ tenga par aprendido.
 
     Un identificador sin par (un beacon, un tracker que nunca reportó con
     nombre) no cuenta. Nunca se usa el número de serie, el contenedor ni un
@@ -281,6 +317,11 @@ def resolver_patentes(env: str, payload) -> list[tuple[str, str | None]]:
     nombre = _texto(payload.get("DeviceName")) or _texto(_g(payload, "Alert", "DeviceName"))
     if nombre:
         return [(nombre, _id_equipo(payload))]
+
+    propio = _id_equipo(payload)
+    par_propio = estado.nombre_de(env, propio) if propio else None
+    if par_propio:
+        return [(par_propio, propio)]
 
     envio = payload.get("Shipment") if isinstance(payload.get("Shipment"), dict) else {}
     principal = _texto(envio.get("DeviceId"))
@@ -298,7 +339,8 @@ def resolver_patentes(env: str, payload) -> list[tuple[str, str | None]]:
     return patentes
 
 
-def _evento(env: str, payload, patente: str, serie: str | None, codigo: str) -> RCCanonicalModel:
+def _evento(env: str, payload, patente: str, serie: str | None, codigo: str,
+            fecha: datetime | None = None) -> RCCanonicalModel:
     return RCCanonicalModel(
         chassis_number=patente,
         latitude=_numero(_g(payload, "Location", "Latitude")),
@@ -307,7 +349,7 @@ def _evento(env: str, payload, patente: str, serie: str | None, codigo: str) -> 
         # "0", como pide el contrato.
         speed=None,
         code=codigo,
-        date=_fecha(payload),
+        date=fecha or _fecha(payload),
         temperature=_numero(_g(payload, "Temperature", "Celsius")),
         humidity=_numero(_g(payload, "Humidity", "Percentage")),
         battery=_numero(_g(payload, "Battery", "Percentage")),
@@ -386,6 +428,7 @@ def _candidatos_alerta(env: str, payload, opciones: dict) -> list[tuple]:
         return []
 
     codigo = f"{tipo}-FIN" if forma == "cierre" else tipo
+    fecha = _fecha_de_cierre(env, payload) if forma == "cierre" else None
     # La actualización de una alerta abierta comparte clave con la apertura:
     # si la apertura ya se envió, es un duplicado; si nunca se registró, esta
     # primera vez se envía como apertura (decisión 2 del informe).
@@ -407,7 +450,7 @@ def _candidatos_alerta(env: str, payload, opciones: dict) -> list[tuple]:
         else:
             motivo_dup = f"duplicado de {codigo} ({forma}) ya recibido"
             nota = None
-        candidatos.append((_evento(env, payload, patente, serie, codigo), claves, motivo_dup, nota))
+        candidatos.append((_evento(env, payload, patente, serie, codigo, fecha), claves, motivo_dup, nota))
     return candidatos
 
 
@@ -451,10 +494,31 @@ def _retener_si_corresponde(env: str, payload, opciones: dict, ingest_id: str | 
     return True
 
 
-def _candidatos_posicion(env: str, payload, opciones: dict, ingest_id: str | None = None) -> list[tuple]:
-    if _texto(payload.get("DeviceName")):
+def _clave_posicion(payload, patente: str) -> list[str]:
+    lectura = _texto(payload.get("EntryTimeEpoch")) or _texto(payload.get("EntryTimeUtc"))
+    envio_id = _texto(payload.get("ShipmentId")) or _texto(_g(payload, "Shipment", "Id")) or "-"
+    return [f"pos|{envio_id}|{patente}|{lectura}"] if lectura else []
+
+
+def _candidatos_posicion_de_equipo(env: str, payload, opciones: dict) -> list[tuple]:
+    """
+    Posición de un tracker o beacon: trae su propio DeviceName.
+
+    Apagado (por defecto): se descarta, va por RC directo. Encendido (v1.9.5,
+    el día que se dé de baja RC directo): sale con la patente de su propio
+    nombre, esté o no en un envío. Sin coordenadas la frena el contrato común.
+    """
+    nombre = _texto(payload.get("DeviceName"))
+    if not opciones["posiciones_equipos"]:
         _descartar(env, "posición de tracker, va por RC directo", payload)
         return []
+    return [(_evento(env, payload, nombre, _id_equipo(payload), CODIGO_POSICION),
+             _clave_posicion(payload, nombre), "posición duplicada (mismo envío, equipo y lectura)", None)]
+
+
+def _candidatos_posicion(env: str, payload, opciones: dict, ingest_id: str | None = None) -> list[tuple]:
+    if _texto(payload.get("DeviceName")):
+        return _candidatos_posicion_de_equipo(env, payload, opciones)
 
     lat = _numero(_g(payload, "Location", "Latitude"))
     lon = _numero(_g(payload, "Location", "Longitude"))
@@ -485,14 +549,11 @@ def _candidatos_posicion(env: str, payload, opciones: dict, ingest_id: str | Non
         )
         return []
 
-    lectura = _texto(payload.get("EntryTimeEpoch")) or _texto(payload.get("EntryTimeUtc"))
-    envio_id = _texto(payload.get("ShipmentId")) or _texto(_g(payload, "Shipment", "Id")) or "-"
     candidatos = []
     for patente, serie in patentes:
-        claves = [f"pos|{envio_id}|{patente}|{lectura}"] if lectura else []
         candidatos.append((
             _evento(env, payload, patente, serie, CODIGO_POSICION),
-            claves, "posición duplicada (mismo envío, equipo y lectura)", None,
+            _clave_posicion(payload, patente), "posición duplicada (mismo envío, equipo y lectura)", None,
         ))
     return candidatos
 

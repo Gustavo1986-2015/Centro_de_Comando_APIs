@@ -15,6 +15,7 @@ from app.models.config_models import ProviderConfig, SystemSettings
 from app.core import config_cache
 from app.core.auditor import log_admin_action
 from app.core import webhook_auth
+from app.core import modo_simulado
 from app.core.crypto import encrypt, decrypt
 from app.providers import registry
 
@@ -413,7 +414,14 @@ def get_all_configs(_: None = Depends(verify_dashboard_auth)):
         db.close()
 
 @router.post("/api/config")
-def update_configs(updates: List[ConfigUpdate], _: None = Depends(verify_dashboard_auth)):
+def update_configs(updates: List[ConfigUpdate], cred: HTTPBasicCredentials = Depends(verify_dashboard_auth)):
+    # El usuario queda en el aviso de cada cambio de modo simulado, que sale
+    # después del commit (app/core/modo_simulado.py).
+    with modo_simulado.usuario(getattr(cred, "username", None), "panel"):
+        return _aplicar_configs(updates)
+
+
+def _aplicar_configs(updates: List[ConfigUpdate]):
     db = get_session("system_config", "global")
     try:
         for u in updates:
@@ -472,15 +480,9 @@ def update_configs(updates: List[ConfigUpdate], _: None = Depends(verify_dashboa
                                 "activo los eventos NO se envían a Recurso Confiable."
                             ),
                         )
-                    logger.warning(
-                        f"MODO SIMULADO ACTIVADO para {conf.provider_name}/{conf.env}. "
-                        f"Los eventos dejarán de enviarse a Recurso Confiable."
-                    )
-                elif conf.use_mock and not u.use_mock:
-                    logger.info(
-                        f"Modo simulado desactivado para {conf.provider_name}/{conf.env}. "
-                        f"Los eventos vuelven a enviarse a Recurso Confiable."
-                    )
+                # El aviso del cambio (en los dos sentidos, con usuario) lo
+                # emite modo_simulado al confirmar: si otra fila hace fallar
+                # este guardado, no queda un aviso de algo que no pasó.
 
                 # Un valor <= 0 se interpreta como "sin límite propio": vuelve al global
                 nuevo_limite = u.rate_limit_per_min if (u.rate_limit_per_min or 0) > 0 else None
@@ -505,7 +507,10 @@ def update_configs(updates: List[ConfigUpdate], _: None = Depends(verify_dashboa
                             for k, v in nuevas.items() if anteriores.get(k) != v
                         )
                         logger.warning(f"Interruptores de {conf.provider_name}/{conf.env} cambiados: {cambios}.")
-                    conf.module_options = nuevas
+                        # Solo si cambió algo: el panel manda siempre los
+                        # efectivos, y escribirlos sin cambios fijaba los
+                        # valores por defecto en la fila (v1.9.5).
+                        conf.module_options = nuevas
 
                 if u.module_credentials is not None:
                     _guardar_credenciales_de_modulo(conf, u.module_credentials)

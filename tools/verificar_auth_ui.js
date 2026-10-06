@@ -19,13 +19,19 @@ const hist = { _originalIdx: 0, webhook_auth_config: null };
 ok(_modoAuthWebhook(hist) === 'header', 'se lee como "Clave fija"');
 ok(_selectorAuthWebhook(hist).includes('value="header" selected'), 'el selector arranca en "Clave fija"');
 dom['webhook_mode_0'] = { value: 'header' };
-ok(JSON.stringify(_leerAuthWebhook(hist, 0)) === '{"modo":"header"}', 'al guardar queda en modo header');
+// v1.9.5: sin tocar el selector no se manda nada y lo guardado queda como
+// está (antes se escribía {modo: header} donde no había nada).
+ok(_leerAuthWebhook(hist, 0) === null, 'sin tocar el selector no se manda (queda como está)');
+dom['webhook_mode_0'] = { value: 'hmac:tive' };
+ok(JSON.stringify(_leerAuthWebhook(hist, 0)) === '{"modo":"hmac","preset":"tive"}', 'cambiado a Firma Tive se manda el preset');
 
 console.log('=== Tive ===');
 const tive = { _originalIdx: 1, webhook_auth_config: { modo: 'hmac', preset: 'tive' } };
 ok(_modoAuthWebhook(tive) === 'hmac:tive', 'se lee como "Firma Tive"');
 dom['webhook_mode_1'] = { value: 'hmac:tive' };
-ok(JSON.stringify(_leerAuthWebhook(tive, 1)) === '{"modo":"hmac","preset":"tive"}', 'al guardar queda el preset de Tive');
+ok(_leerAuthWebhook(tive, 1) === null, 'sin tocar no se manda: conserva el preset y sus ajustes');
+dom['webhook_mode_1'] = { value: 'header' };
+ok(JSON.stringify(_leerAuthWebhook(tive, 1)) === '{"modo":"header"}', 'cambiado a Clave fija se manda header');
 
 console.log('=== Cambiar a Firma Tive completa el header ===');
 dom['webhook_header_2'] = { value: 'x-api-key' };
@@ -38,7 +44,7 @@ console.log('=== Un esquema HMAC armado a mano no se pierde ===');
 const custom = { _originalIdx: 3, webhook_auth_config: { modo: 'hmac', header: 'x-f', patron: 'p', contenido: '{body}', codificacion: 'hex' } };
 ok(_selectorAuthWebhook(custom).includes('personalizada'), 'se ofrece conservarlo');
 dom['webhook_mode_3'] = { value: 'hmac:personalizado' };
-ok(_leerAuthWebhook(custom, 3) === custom.webhook_auth_config, 'al guardar se conserva intacto');
+ok(_leerAuthWebhook(custom, 3) === null, 'al guardar no se manda: se conserva intacto');
 
 console.log('=== PULL no se toca ===');
 ok(_leerAuthWebhook({ _originalIdx: 9 }, 9) === null, 'sin selector -> null (no tocar lo guardado)');

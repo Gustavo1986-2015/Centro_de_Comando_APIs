@@ -1,4 +1,4 @@
-# Integración Tive para el servidor — Hub Telemático Assistcargo v1.9.4
+# Integración Tive para el servidor — Hub Telemático Assistcargo v1.9.5
 #
 # Importar desde el panel: Configuración Global → Respaldo de configuración →
 # "Ver qué haría" (simulación) y, si está bien, aplicar escribiendo IMPORTAR.
@@ -12,7 +12,7 @@
 # NO contiene ninguna contraseña. Después de importar hay que cargar a mano
 # lo que lista 'credenciales_a_cargar'.
 formato: 1
-hub_version: 1.9.4
+hub_version: 1.9.5
 incluye_credenciales: false
 
 proveedores:
@@ -40,6 +40,8 @@ proveedores:
     alertas_beacons: true
     alertas_trackers: false
     resolver_nombres_api: false
+    # v1.9.5: apagado mientras RC directo siga activo (duplicaría RC).
+    posiciones_equipos: false
   credenciales_a_cargar:
   - contraseña de Recurso Confiable (y su usuario)
   - clave secreta de la firma del webhook (la misma configurada en platform.tive.com)
