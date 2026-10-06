@@ -163,19 +163,52 @@ def check_and_migrate_db():
                 from app.core.crypto import encrypt, is_encrypted
                 
                 rows = cursor.execute("""
-                    SELECT id, rc_password, fetch_config, provider_name 
+                    SELECT id, rc_password, rc_password_enc, fetch_config, fetch_config_enc, provider_name, env
                     FROM provider_config
                 """).fetchall()
-                
+
+                # v1.9.7. La columna fetch_config es JSON: al asignarle None,
+                # SQLAlchemy guardaba el TEXTO 'null', no un NULL de SQL (lo
+                # hacía cada guardado del panel y la importación). Esta
+                # migración lo tomaba como credencial en texto plano y lo
+                # cifraba ENCIMA de fetch_config_enc: el siguiente reinicio
+                # dejaba a Protrack sin URL ni credenciales (auditoría, B-2).
+                #   - 'null', 'none', '' y '{}' son vacío: se normalizan a NULL
+                #     sin tocar la credencial cifrada.
+                #   - Lo cifrado nunca se pisa: si ya hay valor en *_enc, el
+                #     texto plano queda donde está y se avisa.
+                def _vacio_legado(texto) -> bool:
+                    return str(texto).strip().lower() in ("", "null", "none", "{}")
+
                 migrated = 0
-                for row_id, rc_pass, fetch_cfg, p_name in rows:
+                cifrados = normalizados = 0
+                for row_id, rc_pass, rc_enc, fetch_cfg, fetch_enc, p_name, p_env in rows:
                     updates = {}
                     if rc_pass and not is_encrypted(rc_pass):
-                        updates["rc_password_enc"] = encrypt(rc_pass)
-                        updates["rc_password"] = None  # borrar plaintext
-                    if fetch_cfg and not is_encrypted(fetch_cfg):
-                        updates["fetch_config_enc"] = encrypt(fetch_cfg)
+                        if rc_enc:
+                            logger.warning(
+                                f"Migración de cifrado: {p_name}/{p_env} tiene contraseña de RC "
+                                f"cifrada y además una en texto plano. No se pisa la cifrada; "
+                                f"revisar la configuración desde el panel."
+                            )
+                        else:
+                            updates["rc_password_enc"] = encrypt(rc_pass)
+                            updates["rc_password"] = None  # borrar plaintext
+                            cifrados += 1
+                    if fetch_cfg is not None and _vacio_legado(fetch_cfg):
                         updates["fetch_config"] = None
+                        normalizados += 1
+                    elif fetch_cfg and not is_encrypted(fetch_cfg):
+                        if fetch_enc:
+                            logger.warning(
+                                f"Migración de cifrado: {p_name}/{p_env} tiene configuración de "
+                                f"extracción cifrada y además una en texto plano. No se pisa la "
+                                f"cifrada; revisar la configuración desde el panel."
+                            )
+                        else:
+                            updates["fetch_config_enc"] = encrypt(fetch_cfg)
+                            updates["fetch_config"] = None
+                            cifrados += 1
                     
                     if updates:
                         set_clauses = ", ".join([f"{k} = ?" for k in updates])
@@ -187,7 +220,10 @@ def check_and_migrate_db():
                         migrated += 1
                 
                 if migrated:
-                    logger.info(f"Migracion cifrado: {migrated} proveedores migrados a ciphertext.")
+                    logger.info(
+                        f"Migración de cifrado: {cifrados} credencial(es) cifrada(s), "
+                        f"{normalizados} configuración(es) vacía(s) normalizada(s) a NULL."
+                    )
                     conn.commit()
                     
                 # Migración legacy Schmitz (.env -> DB)

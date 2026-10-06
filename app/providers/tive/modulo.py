@@ -30,8 +30,10 @@ TODO SE MIDIÓ CONTRA LOS CRUDOS REALES (audit/tive_prod/2026-10/)
     dígitos; los beacons vistos, A2A2A20173D4 y F9C1B0DF0E1D (W15481, primer
     beacon real con nombre, 05/10), no son numéricos. Una alerta cuyo DeviceId
     no es numérico se trata como de beacon y sale con el nombre del beacon
-    (confirmado por el usuario). Hasta el 05/10 el beacon solo mandó
-    posiciones: una alerta de beacon real todavía no se vio.
+    (confirmado por el usuario). La regla quedó confirmada el 06/10 con la
+    primera alerta real de un sello: A2A2A2017BF2, ShipmentStopped. Los
+    sellos (prefijo A2A2A2) tienen como nombre su propio número: es su
+    patente real y RC ya los recibe así por su webhook directo.
   - Apertura, cierre y puntual se leen de Alert.Details[].Reasons:
         [["Created","Latest"]]        apertura de rango
         [["Created"],["Latest"]]      actualización de una alerta abierta
@@ -418,8 +420,8 @@ def _candidatos_alerta(env: str, payload, opciones: dict) -> list[tuple]:
         return []
     if clase == "beacon":
         logger.info(
-            f"[TIVE-{env}] Alerta tratada como de beacon porque su DeviceId no es un IMEI "
-            f"(regla inferida: aún no se vio una alerta de beacon real) | {_identidad(payload)}"
+            f"[TIVE-{env}] Alerta de beacon: su DeviceId no es un IMEI (regla confirmada "
+            f"con la primera alerta real de un sello, A2A2A2017BF2, el 06/10) | {_identidad(payload)}"
         )
 
     patentes = resolver_patentes(env, payload)

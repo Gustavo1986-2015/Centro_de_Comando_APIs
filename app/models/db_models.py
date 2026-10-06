@@ -2,6 +2,21 @@ from sqlalchemy import Column, Integer, String, Float, Boolean, DateTime, Text, 
 from sqlalchemy.sql import func
 from app.database import Base
 
+# Estados de un evento (v1.9.7).
+#   pending / processing  en tránsito
+#   sent                  RC confirmó la recepción (idJob)
+#   failed                RC lo rechazó o se agotaron los reintentos
+#   simulado              la integración está en modo simulado: NO se llamó a
+#                         RC. Antes quedaba como 'sent' y los contadores,
+#                         el historial y las descargas lo sumaban como enviado.
+ESTADO_ENVIADO = "sent"
+ESTADO_SIMULADO = "simulado"
+# Lo que ya terminó su recorrido: es lo que purgan la retención y el respaldo
+# de procesados, y lo que descarga "Enviados". Una sola lista, para que un
+# estado nuevo no quede afuera de alguno de ellos.
+ESTADOS_TERMINADOS = ("sent", "failed", ESTADO_SIMULADO)
+
+
 class NormalizedRCEvent(Base):
     """
     Modelo Central de Eventos Telemáticos (Hub).
@@ -18,7 +33,7 @@ class NormalizedRCEvent(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     provider = Column(String, index=True)  # Ej. 'schmitz'
-    status = Column(String, default="pending", index=True) # pending, sent, failed
+    status = Column(String, default="pending", index=True) # pending, processing, sent, failed, simulado
     raw_data = Column(Text) # JSON crudo almacenado como texto
     rc_response = Column(Text, nullable=True) # Respuesta de Recurso Confiable
     job_id = Column(String, nullable=True, index=True) # ID de acuse de recibo

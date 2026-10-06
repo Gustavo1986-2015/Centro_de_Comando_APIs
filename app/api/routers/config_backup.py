@@ -37,6 +37,7 @@ import yaml
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from fastapi.security import HTTPBasicCredentials
+from sqlalchemy import null as sql_null
 from pydantic import BaseModel
 
 from app.core import webhook_auth
@@ -1011,7 +1012,7 @@ def _aplicar_proveedor(conf: ProviderConfig, deseado: dict) -> list[str]:
         # (admin_config.py:143-144): dos rutas distintas escribiendo el mismo
         # campo de formas distintas sería una fuente de bugs silenciosos.
         conf.fetch_config_enc = encrypt(json.dumps(fusionado))
-        conf.fetch_config = None
+        conf.fetch_config = sql_null()  # NULL de SQL, no el texto 'null' (v1.9.7, B-2)
         tocados.append("telemetria")
 
     if "diccionario" in deseado:

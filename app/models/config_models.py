@@ -15,7 +15,9 @@ class ProviderConfig(Base):
     run_interval_sec = Column(Integer, default=5)
     queue_backend = Column(String, default="sqlite") # sqlite, redis, postgres
     mapping_schema = Column(JSON, default={})
-    fetch_config = Column(JSON, default={})        # Guarda URL, auth_type, user, pass para extraer telemetría
+    # none_as_null (v1.9.7): asignar None guarda NULL de SQL, no el texto 'null'
+    # que la migración de cifrado tomaba por una credencial (auditoría, B-2).
+    fetch_config = Column(JSON(none_as_null=True), default={})  # Guarda URL, auth_type, user, pass para extraer telemetría
     enrichment_config = Column(JSON, default={})   # Guarda URL y reglas para extraer el diccionario (IMEI -> Placa)
     
     # NUEVOS campos cifrados para Envelope Encryption

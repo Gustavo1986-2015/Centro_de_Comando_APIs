@@ -11,7 +11,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 from app.database import get_session
-from app.models.db_models import NormalizedRCEvent
+from app.models.db_models import ESTADOS_TERMINADOS, NormalizedRCEvent
 from app.models.config_models import ProviderConfig, DailyStat
 from app.worker.processor import _rc_circuit_breaker
 from datetime import datetime, timezone, timedelta
@@ -741,7 +741,7 @@ def _db_stats_sync():
             except OSError:
                 pass
 
-        conteos = {"pending": 0, "processing": 0, "sent": 0, "failed": 0}
+        conteos = {"pending": 0, "processing": 0, "sent": 0, "failed": 0, "simulado": 0}
         total = 0
         try:
             db = get_session(provider, env)
@@ -771,7 +771,7 @@ def _db_stats_sync():
                 purgables = (
                     db.query(func.count(NormalizedRCEvent.id))
                     .filter(
-                        NormalizedRCEvent.status.in_(["sent", "failed"]),
+                        NormalizedRCEvent.status.in_(ESTADOS_TERMINADOS),
                         NormalizedRCEvent.updated_at < corte,
                     )
                     .scalar()

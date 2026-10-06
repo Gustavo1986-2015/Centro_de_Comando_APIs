@@ -442,6 +442,7 @@
             filtered.forEach(ev => {
                 let statusText = 'En Cola';
                 if (ev.status === 'sent') statusText = 'Enviado';
+                else if (ev.status === 'simulado') statusText = 'Simulado (no enviado a RC)';
                 else if (ev.status === 'failed') statusText = 'Error';
                 else if (ev.status === 'pending' && ev.retry_count > 0) statusText = `Reintento ${ev.retry_count}/4`;
                 
@@ -1433,11 +1434,14 @@
                 else if (isRetrying)              tr.classList.add('row-retrying');
                 else if (ev.status === 'pending') tr.classList.add('row-pending');
                 else if (ev.status === 'sent')    tr.classList.add('row-sent');
+                else if (ev.status === 'simulado') tr.classList.add('row-simulado');
                 
                 let statusClass = 'pending';
                 let statusText = 'En Cola';
                 let badgeStyle = '';
                 if (ev.status === 'sent') { statusClass = 'sent'; statusText = 'Enviado'; }
+                // v1.9.7: modo simulado, no hubo llamada a RC.
+                else if (ev.status === 'simulado') { statusClass = 'simulado'; statusText = 'Simulado (no enviado a RC)'; }
                 else if (ev.status === 'failed') { statusClass = 'failed'; statusText = 'Error'; }
                 else if (ev.status === 'pending' && ev.retry_count && ev.retry_count > 0) {
                     statusClass = 'pending';

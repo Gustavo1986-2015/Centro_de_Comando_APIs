@@ -7,6 +7,7 @@ from typing import List
 from datetime import datetime, timezone, timedelta
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.security import HTTPBasicCredentials
+from sqlalchemy import null as sql_null
 from pydantic import BaseModel
 
 from app.core.auth import verify_dashboard_auth, get_dashboard_password
@@ -164,7 +165,7 @@ def save_mapping(provider_name: str, env: str, payload: dict, _: None = Depends(
             config.mapping_schema = payload.get('mapping', {})
             if 'fetch' in payload:
                 config.fetch_config_enc = encrypt(json.dumps(payload.get('fetch', {})))
-                config.fetch_config = None
+                config.fetch_config = sql_null()  # NULL de SQL, no el texto 'null' (v1.9.7, B-2)
         else:
             config.mapping_schema = payload
             
@@ -316,7 +317,7 @@ def _guardar_credenciales_de_modulo(conf, credenciales: dict) -> None:
     datos.setdefault("token_body_format", "multipart")
     datos.setdefault("url", BASE_URL_POR_DEFECTO)
     conf.fetch_config_enc = encrypt(json.dumps(datos))
-    conf.fetch_config = None
+    conf.fetch_config = sql_null()  # NULL de SQL, no el texto 'null' (v1.9.7, B-2)
     logger.warning(
         f"Credenciales de la API de {conf.provider_name}/{conf.env} actualizadas desde el panel"
         f" ({'client_id' if client_id else ''}{' y ' if client_id and secreto else ''}"
@@ -458,7 +459,7 @@ def _aplicar_configs(updates: List[ConfigUpdate]):
                     
                 if hasattr(u, 'fetch_config') and u.fetch_config and u.fetch_config != "••••••••" and u.fetch_config.strip() != "":
                     conf.fetch_config_enc = encrypt(u.fetch_config)
-                    conf.fetch_config = None # borrar plaintext
+                    conf.fetch_config = sql_null()  # borrar plaintext: NULL de SQL, no el texto 'null' (v1.9.7, B-2)
                     
                 # ── Modo simulado: activación protegida ──────────────────
                 # Con use_mock=True el sistema NO envía a Recurso Confiable:
