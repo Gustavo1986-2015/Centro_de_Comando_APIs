@@ -189,6 +189,10 @@
                 if (h.auth_ok === false && h.auth_error) lines.push(`Auth: ${h.auth_error}`);
                 if (h.mode === 'pull') lines.push(`Ultimo fetch OK: ${_fmtAge(h.fetch_age_sec)}`);
                 if (h.fetch_error) lines.push(`  Error fetch: ${h.fetch_error}`);
+                // v1.9.6: el webhook genérico informa cada petición aceptada.
+                if (h.request_age_sec !== null && h.request_age_sec !== undefined) {
+                    lines.push(`Ultima peticion aceptada: ${_fmtAge(h.request_age_sec)} (${h.peticiones || 0} desde el arranque)`);
+                }
 
                 // Resumen visible: si hay problema manda el detalle;
                 // si esta sano, se muestra throughput y tamano del diccionario.
@@ -199,7 +203,12 @@
                     const parts = [];
                     if (rate > 0) parts.push(`${rate} ev/min`);
                     if (h.dict_enabled && h.dict_count) parts.push(`${h.dict_count} IDs`);
-                    summary = parts.length ? parts.join(' \u00B7 ') : 'sin trafico';
+                    // Sin eventos guardados pero con peticiones aceptadas (Tive
+                    // descarta casi todo por diseño): hay tráfico, no silencio.
+                    const conPeticiones = h.request_age_sec !== null && h.request_age_sec !== undefined;
+                    summary = parts.length ? parts.join(' \u00B7 ')
+                            : conPeticiones ? 'con trafico \u00B7 sin eventos para RC'
+                            : 'sin trafico';
                 }
 
                 // Boton de resincronizacion: solo cuando hay algo que reintentar
@@ -327,12 +336,17 @@
         let currentStatusFilter = 'all';
         let currentProviderFilter = 'all';
         let currentLatencyFilter = 'all';
+        // Solo alarmas y alertas, sin reportes de posición. Se filtra en el
+        // servidor: sin filtros la grilla trae los últimos 200 eventos, y entre
+        // ellos puede no haber ninguna alarma.
+        let currentSoloEventos = false;
+        let _ultimaRecargaSoloEventos = 0;
         let allRecentEvents = [];
         let expandedRows = new Set();
         
         // Carga eventos filtrados desde el backend cuando hay filtros activos
         async function fetchFilteredEvents() {
-            const hasFilter = currentStatusFilter !== 'all' || currentProviderFilter !== 'all';
+            const hasFilter = currentStatusFilter !== 'all' || currentProviderFilter !== 'all' || currentSoloEventos;
             if (!hasFilter) {
                 // Sin filtros: la grilla se alimenta del SSE normalmente
                 renderRecentTable();
@@ -342,6 +356,7 @@
                 const params = new URLSearchParams();
                 if (currentStatusFilter !== 'all') params.set('status', currentStatusFilter);
                 if (currentProviderFilter !== 'all') params.set('provider', currentProviderFilter);
+                if (currentSoloEventos) params.set('solo_eventos', 'true');
                 const res = await fetch(`/api/stats?${params.toString()}`, { cache: 'no-store' });
                 const data = await res.json();
                 allRecentEvents = data.recent || [];
@@ -361,6 +376,11 @@
             fetchFilteredEvents();
         }
 
+        function setFilterSoloEventos(activo) {
+            currentSoloEventos = !!activo;
+            fetchFilteredEvents();
+        }
+
         function setFilterLatency(latency) {
             currentLatencyFilter = latency;
             renderRecentTable();
@@ -370,6 +390,9 @@
             currentStatusFilter = 'all';
             currentProviderFilter = 'all';
             currentLatencyFilter = 'all';
+            currentSoloEventos = false;
+            const soloEventos = document.getElementById('filter-solo-eventos');
+            if (soloEventos) soloEventos.checked = false;
             const statusDropdown = document.getElementById('filter-status');
             if(statusDropdown) statusDropdown.value = 'all';
             document.getElementById('filter-provider').value = 'all';
@@ -385,6 +408,9 @@
             }
             if (currentProviderFilter !== 'all') {
                 filtered = filtered.filter(ev => ev.provider.toLowerCase() === currentProviderFilter);
+            }
+            if (currentSoloEventos) {
+                filtered = filtered.filter(ev => ev.es_evento);
             }
             if (currentLatencyFilter !== 'all') {
                 filtered = filtered.filter(ev => {
@@ -416,6 +442,7 @@
             filtered.forEach(ev => {
                 let statusText = 'En Cola';
                 if (ev.status === 'sent') statusText = 'Enviado';
+                else if (ev.status === 'simulado') statusText = 'Simulado (no enviado a RC)';
                 else if (ev.status === 'failed') statusText = 'Error';
                 else if (ev.status === 'pending' && ev.retry_count > 0) statusText = `Reintento ${ev.retry_count}/4`;
                 
@@ -866,6 +893,7 @@
             } else if (view === 'diagnostico') {
                 cargarDiagnosticoLatencia();
                 cargarRedSeguridad();
+                cargarDescartes();
             } else if (view === 'simulator') {
                 loadSimulator();
             } else if (view === 'history') {
@@ -1217,7 +1245,17 @@
                 updateSparkline('spark-failed',   'val-failed');
                 updateSparkline('spark-retries',  'val-retries');
 
-                allRecentEvents = data.recent;
+                if (currentSoloEventos) {
+                    // El SSE trae los últimos 200 sin filtrar: con "solo
+                    // eventos" se pide al servidor la lista filtrada, sin
+                    // recargarla más de una vez cada 5 segundos.
+                    if (Date.now() - _ultimaRecargaSoloEventos > 5000) {
+                        _ultimaRecargaSoloEventos = Date.now();
+                        fetchFilteredEvents();
+                    }
+                } else {
+                    allRecentEvents = data.recent;
+                }
 
                 // La salud se actualiza temprano: si algo falla más abajo (por ejemplo
                 // un elemento del DOM ausente), la barra igual queda al día.
@@ -1353,6 +1391,9 @@
             if (currentProviderFilter !== 'all') {
                 filtered = filtered.filter(ev => ev.provider.toLowerCase() === currentProviderFilter);
             }
+            if (currentSoloEventos) {
+                filtered = filtered.filter(ev => ev.es_evento);
+            }
             if (currentLatencyFilter !== 'all') {
                 filtered = filtered.filter(ev => {
                     const lat = ev.rc_latency_sec !== null && ev.rc_latency_sec !== undefined ? ev.rc_latency_sec : ev.latency_sec;
@@ -1365,8 +1406,9 @@
             }
             
             let labelText = "";
-            if (currentStatusFilter !== 'all' || currentProviderFilter !== 'all' || currentLatencyFilter !== 'all') {
+            if (currentStatusFilter !== 'all' || currentProviderFilter !== 'all' || currentLatencyFilter !== 'all' || currentSoloEventos) {
                 let filters = [];
+                if (currentSoloEventos) filters.push('SOLO EVENTOS');
                 if (currentStatusFilter !== 'all') filters.push(currentStatusFilter.toUpperCase());
                 if (currentProviderFilter !== 'all') filters.push(currentProviderFilter.toUpperCase());
                 if (currentLatencyFilter !== 'all') filters.push(`LATENCIA: ${currentLatencyFilter.toUpperCase()}`);
@@ -1376,6 +1418,11 @@
 
             if (filtered.length === 0) {
                 tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; color: var(--color-gray)">No hay eventos con estos filtros.</td></tr>';
+                // La carga terminó y no hay nada que mostrar. Antes se salía
+                // sin tocar el contador, y quedaba en "Cargando..." para
+                // siempre: parecía que el panel seguía esperando datos.
+                const countEl = document.getElementById('event-count');
+                if (countEl) countEl.textContent = '0 eventos';
                 return;
             }
 
@@ -1387,11 +1434,14 @@
                 else if (isRetrying)              tr.classList.add('row-retrying');
                 else if (ev.status === 'pending') tr.classList.add('row-pending');
                 else if (ev.status === 'sent')    tr.classList.add('row-sent');
+                else if (ev.status === 'simulado') tr.classList.add('row-simulado');
                 
                 let statusClass = 'pending';
                 let statusText = 'En Cola';
                 let badgeStyle = '';
                 if (ev.status === 'sent') { statusClass = 'sent'; statusText = 'Enviado'; }
+                // v1.9.7: modo simulado, no hubo llamada a RC.
+                else if (ev.status === 'simulado') { statusClass = 'simulado'; statusText = 'Simulado (no enviado a RC)'; }
                 else if (ev.status === 'failed') { statusClass = 'failed'; statusText = 'Error'; }
                 else if (ev.status === 'pending' && ev.retry_count && ev.retry_count > 0) {
                     statusClass = 'pending';
@@ -1419,9 +1469,25 @@
                 locHtml += `</div>`;
 
                 let sensorHtml = `<div style="font-size:0.8rem; color:var(--color-gray); line-height: 1.4;">`;
-                sensorHtml += `<div>Velocidad: <span style="color:var(--color-white)">${ev.speed} km/h</span></div>`;
-                sensorHtml += `<div>Ignición: <span style="${ev.ignition==='ON'?'color:var(--color-green-bright); font-weight:bold;':'color:var(--color-red)'}">${ev.ignition}</span></div>`;
-                sensorHtml += `<div>Batería: <span style="color:var(--color-white)">${ev.battery !== null ? ev.battery + '%' : 'N/A'}</span> | Temp: <span style="color:var(--color-white)">${ev.temperature !== null ? ev.temperature + '°' : 'N/A'}</span></div>`;
+                // N/A cuando el proveedor no mide velocidad (Tive). A RC le llega
+                // "0", que es lo que pide el contrato; acá no se inventa el dato.
+                const velocidad = (ev.speed === null || ev.speed === undefined)
+                    ? '<span style="color:var(--color-gray-label)" title="El proveedor no informa velocidad">N/A</span>'
+                    : `<span style="color:var(--color-white)">${ev.speed} km/h</span>`;
+                sensorHtml += `<div>Velocidad: ${velocidad}</div>`;
+                // Tres estados. N/A en gris: el proveedor no mide ignición, y
+                // mostrarlo en rojo como "apagado" sería afirmar algo que nadie midió.
+                const estiloIgn = ev.ignition === 'ON' ? 'color:var(--color-green-bright); font-weight:bold;'
+                                : ev.ignition === 'OFF' ? 'color:var(--color-red)'
+                                : 'color:var(--color-gray-label)';
+                sensorHtml += `<div>Ignición: <span style="${estiloIgn}" ${ev.ignition === 'N/A' ? 'title="El proveedor no informa ignición"' : ''}>${ev.ignition}</span></div>`;
+                // Temperatura con 2 decimales en pantalla; el valor completo
+                // queda en el título y es el que se envía a RC.
+                const tieneTemp = ev.temperature !== null && ev.temperature !== undefined;
+                const temperatura = tieneTemp ? Number(ev.temperature).toFixed(2) + '°' : 'N/A';
+                const humedad = (ev.humidity !== null && ev.humidity !== undefined) ? ev.humidity + '%' : 'N/A';
+                sensorHtml += `<div>Batería: <span style="color:var(--color-white)">${ev.battery !== null ? ev.battery + '%' : 'N/A'}</span> | Temp: <span style="color:var(--color-white)" title="${tieneTemp ? ev.temperature : ''}">${temperatura}</span></div>`;
+                sensorHtml += `<div>Humedad: <span style="color:var(--color-white)">${humedad}</span></div>`;
                 sensorHtml += `<div>Odom: <span style="color:var(--color-white)">${ev.odometer !== null ? ev.odometer : 'N/A'}</span> | Código EV: <span style="color:var(--color-yellow)">${ev.code}</span></div>`;
                 sensorHtml += `</div>`;
 
@@ -1503,7 +1569,9 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
                 let chassisHtml = `
                     <div style="display: flex; flex-direction: column; align-items: flex-start;">
                         <span style="color:var(--color-yellow); font-weight:bold;">${ev.chassis || 'N/A'}</span>
+                        ${ev.es_evento ? `<span class="etiqueta-evento" title="Alarma o alerta: el código no es el de reporte de posición">⚡ ${_escapeHtml(String(ev.code))}</span>` : ''}
                         ${ev.serial && ev.serial !== ev.chassis ? `<span style="color:var(--color-gray); font-size: 0.8rem;">IMEI: ${ev.serial}</span>` : ''}
+                        ${ev.shipment ? `<span style="color:var(--color-gray); font-size: 0.8rem;" title="Envío">Envío: ${_escapeHtml(String(ev.shipment))}</span>` : ''}
                         <div style="margin-top: 4px; display: flex; gap: 5px;">
                             <button onclick='viewRawJson(${JSON.stringify(ev.raw_data || "{}").replace(/'/g, "&#39;")}, "Payload Original (Crudo del Proveedor)")' style="background: #374151; color: white; border: none; padding: 2px 6px; border-radius: 4px; font-size: 0.7em; cursor: pointer;" title="Ver payload JSON original sin procesar">
                                 📄 JSON Origen
@@ -1545,7 +1613,9 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
                 // Ignore empty state rows
                 if (row.cells.length === 1) return;
                 
-                const chassisCell = row.cells[1]; // Index 1 is "Activo / Patente"
+                // Index 1 is "Activo / Patente". Incluye el envío: buscar por
+                // número de viaje encuentra sus eventos.
+                const chassisCell = row.cells[1];
                 if (!chassisCell) return;
                 
                 const chassisText = chassisCell.textContent.toLowerCase();
@@ -1577,6 +1647,29 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
         // habría mostrado como si aceptara webhooks.
         function esPull(c) {
             return (c.provider_type || 'pull').toLowerCase() === 'pull';
+        }
+
+        // Celda "PUSH API Key". Con clave guardada muestra sus dos primeros
+        // caracteres ("d0•••• cargada"): antes solo había un placeholder en un
+        // campo angosto y parecía vacía. El servidor manda únicamente esos dos
+        // caracteres (webhook_auth_hint); la clave completa solo se ve con el
+        // botón de revelar, que pide contraseña.
+        function _celdaClaveWebhook(c) {
+            if (esPull(c)) {
+                return '<input class="form-control" type="text" disabled value="--- N/A (Es PULL) ---" style="color: var(--color-gray); background: var(--level-1); font-style: italic; border: 1px dashed var(--card-border);" title="No aplica para proveedores PULL">';
+            }
+            let estado = '<span class="clave-estado sin-clave" title="Sin clave: el webhook rechaza todo hasta que se cargue">sin clave</span>';
+            if (c.has_webhook_auth) {
+                const inicio = c.webhook_auth_hint ? _escapeHtml(c.webhook_auth_hint) : '';
+                estado = `<span class="clave-estado cargada" title="Clave guardada y cifrada. Para verla completa, usar el ojo.">${inicio}•••• cargada</span>`;
+            }
+            return `<div class="clave-webhook">
+                        <div style="display:flex; gap:4px; align-items:center;">
+                            <input class="form-control" type="password" id="webhook_auth_${c._originalIdx}" placeholder="${c.has_webhook_auth ? 'Cambiar clave…' : 'Cargar clave'}" title="Dejar vacío para mantener el actual">
+                            ${c.has_webhook_auth ? `<button class="btn-ver-clave" title="Ver la clave guardada (pide contraseña)" onclick="verApiKey('${c.provider_name}','${c.env}')">👁</button>` : ''}
+                        </div>
+                        ${estado}
+                    </div>`;
         }
 
         async function loadConfig() {
@@ -1639,11 +1732,8 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
                                     <span class="slider"></span>
                                 </label>
                             </td>
-                            <td>${esPull(c) ? '<input class="form-control" type="text" disabled value="--- N/A ---" style="width: 100px; color: var(--color-gray); background: var(--level-1); text-align: center; border: 1px dashed var(--card-border);" title="No aplica para proveedores PULL">' : `<input class="form-control" type="text" id="webhook_header_${c._originalIdx}" value="${c.webhook_auth_header || 'x-api-key'}" style="width: 100px;">`}</td>
-                            <td>${esPull(c) ? '<input class="form-control" type="text" disabled value="--- N/A (Es PULL) ---" style="color: var(--color-gray); background: var(--level-1); font-style: italic; border: 1px dashed var(--card-border);" title="No aplica para proveedores PULL">' : `<div style="display:flex; gap:4px; align-items:center;">
-                                    <input class="form-control" type="password" id="webhook_auth_${c._originalIdx}" placeholder="${c.has_webhook_auth ? '•••••••• (Cifrado)' : ''}" title="Dejar vacío para mantener el actual">
-                                    ${c.has_webhook_auth ? `<button class="btn-ver-clave" title="Ver la clave guardada (pide contraseña)" onclick="verApiKey('${c.provider_name}','${c.env}')">👁</button>` : ''}
-                                  </div>`}</td>
+                            <td>${esPull(c) ? '<input class="form-control" type="text" disabled value="--- N/A ---" style="width: 100px; color: var(--color-gray); background: var(--level-1); text-align: center; border: 1px dashed var(--card-border);" title="No aplica para proveedores PULL">' : `<input class="form-control" type="text" id="webhook_header_${c._originalIdx}" value="${c.webhook_auth_header || 'x-api-key'}" style="width: 150px;">${_selectorAuthWebhook(c)}`}</td>
+                            <td class="celda-clave-webhook">${_celdaClaveWebhook(c)}</td>
                             <td>
                                 ${esPull(c) ? `<button class="btn-renovar-token" title="Descartar el token guardado del proveedor y pedir uno nuevo en el próximo ciclo" onclick="renovarToken('${c.provider_name}','${c.env}')">↻ token</button>` : ''}
                                 <input class="form-control" type="text" id="user_${c._originalIdx}" value="${c.rc_user || ''}">
@@ -1665,6 +1755,7 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
                                     <option value="redis" ${c.queue_backend === 'redis' ? 'selected' : ''}>Redis</option>
                                 </select>
                             </td>
+                            <td>${_opcionesDeModulo(c)}</td>
 
                         `;
                         tbody.appendChild(tr);
@@ -1673,6 +1764,67 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
             } catch(e) {
                 console.error("Error al cargar config", e);
             }
+        }
+
+        // Interruptores de una integración con módulo dedicado (Tive): qué se
+        // envía a RC y qué no. Se guardan en la configuración de la
+        // integración, sin tocar código.
+        function _opcionesDeModulo(c) {
+            if (!c.modulo_dedicado) {
+                return '<span style="color: var(--color-gray); font-size: 0.75rem;" title="Las integraciones del Integration Studio no tienen interruptores">—</span>';
+            }
+            const etiquetas = c.module_options_labels || {};
+            return '<div class="opciones-modulo">' + Object.keys(c.module_options || {}).map(clave => `
+                <label title="${_escapeHtml(etiquetas[clave] || clave)}">
+                    <input type="checkbox" id="modopt_${c._originalIdx}_${clave}" data-clave="${clave}"
+                           ${c.module_options[clave] ? 'checked' : ''}>
+                    ${_escapeHtml(etiquetas[clave] || clave)}
+                </label>`).join('') + _credencialesDeModulo(c) + '</div>';
+        }
+
+        // Credenciales de la API del proveedor (Tive, v1.9.4). El client_id es
+        // texto libre con espacios ("Envios Assistcargo"): no se valida como
+        // código. El secreto nunca vuelve del servidor: solo se informa si está
+        // cargado, y dejarlo vacío conserva el guardado.
+        function _credencialesDeModulo(c) {
+            const cred = c.module_credentials;
+            if (!cred) return '';
+            const idx = c._originalIdx;
+            const estado = cred.secreto_cargado && cred.client_id
+                ? '<span class="clave-estado cargada">credenciales cargadas</span>'
+                : '<span class="clave-estado sin-clave">sin credenciales: el resolutor no consulta</span>';
+            return `<div class="credenciales-modulo">
+                <div style="font-size:0.72rem;font-weight:700;margin-top:6px;">API de Tive</div>
+                <input class="form-control" type="text" id="modcred_${idx}_client_id"
+                       value="${cred.client_id ? _escapeHtml(cred.client_id) : ''}"
+                       placeholder="Client ID (ej: Envios Assistcargo)" autocomplete="off"
+                       title="Client ID de la API de Tive. Texto libre: puede tener espacios.">
+                <input class="form-control" type="password" id="modcred_${idx}_client_secret"
+                       placeholder="${cred.secreto_cargado ? 'Secreto cargado (vacío = mantener)' : 'Client secret'}"
+                       autocomplete="new-password" title="Dejar vacío para mantener el guardado">
+                ${estado}
+            </div>`;
+        }
+
+        function _leerCredencialesDeModulo(c, idx) {
+            if (!c.module_credentials) return null;
+            const id = document.getElementById(`modcred_${idx}_client_id`);
+            const secreto = document.getElementById(`modcred_${idx}_client_secret`);
+            const clientId = id ? id.value : '';
+            const clientSecret = secreto ? secreto.value : '';
+            // Nada que cambiar: no se manda, así no se pisa lo guardado.
+            if (clientId === (c.module_credentials.client_id || '') && !clientSecret) return null;
+            return { client_id: clientId, client_secret: clientSecret || null };
+        }
+
+        function _leerOpcionesDeModulo(c, idx) {
+            if (!c.modulo_dedicado) return null;
+            const opciones = {};
+            Object.keys(c.module_options || {}).forEach(clave => {
+                const el = document.getElementById(`modopt_${idx}_${clave}`);
+                opciones[clave] = el ? el.checked : !!c.module_options[clave];
+            });
+            return opciones;
         }
 
         async function saveConfig() {
@@ -1690,7 +1842,10 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
                     ? (parseInt(document.getElementById(`ratelimit_${idx}`).value) || null)
                     : null,
                 queue_backend: document.getElementById(`queue_${idx}`).value,
-                enable_state_dedup: document.getElementById(`dedup_${idx}`) ? document.getElementById(`dedup_${idx}`).checked : c.enable_state_dedup
+                enable_state_dedup: document.getElementById(`dedup_${idx}`) ? document.getElementById(`dedup_${idx}`).checked : c.enable_state_dedup,
+                webhook_auth_config: _leerAuthWebhook(c, idx),
+                module_options: _leerOpcionesDeModulo(c, idx),
+                module_credentials: _leerCredencialesDeModulo(c, idx)
             }));
 
             // Activar el modo simulado exige revalidar la contraseña de administrador:
@@ -2438,7 +2593,10 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
         async function loadProviders() {
             try {
                 const res = await fetch(API_BASE + '/providers');
-                ipaasProviders = await res.json();
+                // Las integraciones con módulo dedicado (Tive) no se configuran
+                // acá: su lógica vive en app/providers/<proveedor>/ y sus
+                // opciones están en la tabla de configuración.
+                ipaasProviders = (await res.json()).filter(p => !p.modulo_dedicado);
                 const select = document.getElementById('providerSelect');
                 select.innerHTML = '<option value="">-- Selecciona un Proveedor --</option>';
                 ipaasProviders.forEach(p => {
@@ -2467,6 +2625,9 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
         }
 
         async function loadMapping(name, env) {
+            // Se limpia ANTES de pedir el nuevo: si la carga falla, guardar no
+            // puede arrastrar el filtro de admisión de la integración anterior.
+            _esquemaCargado = {};
             try {
                 const res = await fetch(`${API_BASE}/${name}/${env}/mapping`);
                 const data = await res.json();
@@ -2477,12 +2638,15 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
                 
                 if (rawMapping.base_mapping) {
                     baseMapping = rawMapping.base_mapping;
+                    _esquemaCargado = rawMapping;
                     _currentRules = rawMapping.trigger_rules || [];
                     const defaultRule = rawMapping.default_rule || {};
                     const defRc = document.getElementById('default_rc_code');
                     const defLab = document.getElementById('default_rc_label');
                     if(defRc) defRc.value = defaultRule.rc_code || '1';
                     if(defLab) defLab.value = defaultRule.label || 'Reporte GPS';
+                    const defFw = document.getElementById('default_fire_when');
+                    if(defFw) defFw.value = defaultRule.fire_when === 'no_rule_matched' ? 'no_rule_matched' : 'always';
                 } else {
                     _currentRules = [];
                 }
@@ -2502,8 +2666,11 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
                     if(f.method) document.getElementById('pullMethod').value = f.method;
                     if(f.auth_type) {
                         document.getElementById('authType').value = f.auth_type;
-                        document.getElementById('pullAuthFields').style.display = f.auth_type === 'none' ? 'none' : 'block';
+                        _mostrarCamposAuth('pull', f.auth_type);
                     }
+                    if(f.token_url) document.getElementById('pullTokenUrl').value = f.token_url;
+                    if(f.token_body_format) document.getElementById('pullTokenFormat').value = f.token_body_format;
+                    if(f.headers) document.getElementById('pullHeaders').value = f.headers;
                     if(f.auth_user) document.getElementById('pullAuthUser').value = f.auth_user;
                     if(f.auth_pass) document.getElementById('pullAuthPass').value = f.auth_pass;
                     if(f.bearer_token) {
@@ -2530,14 +2697,21 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
             const defaultRcLabel = document.getElementById('default_rc_label')?.value || 'Reporte GPS';
             const baseMapping = getCurrentBaseMapping();
 
+            const defaultFireWhen = document.getElementById('default_fire_when')?.value || 'always';
+
+            // Lo que el editor no maneja se conserva tal cual vino.
+            const { base_mapping: _b, trigger_rules: _t, default_rule: reglaBasePrevia = {}, ...otrasClaves } = _esquemaCargado || {};
+
             const fullSchema = {
+                ...otrasClaves,
                 base_mapping:  baseMapping,
                 trigger_rules: _currentRules,
                 default_rule: {
-                    enabled:   true,
+                    ...reglaBasePrevia,
+                    enabled:   reglaBasePrevia.enabled ?? true,
                     rc_code:   defaultRcCode,
                     label:     defaultRcLabel,
-                    fire_when: 'always'
+                    fire_when: defaultFireWhen
                 }
             };
             
@@ -2557,8 +2731,10 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
                 auth_user: elUser ? elUser.value.trim() : "",
                 auth_pass: elPass ? elPass.value.trim() : "",
                 bearer_token: elBearer ? elBearer.value.trim() : "",
-                headers: elHeaders ? elHeaders.value.trim() : "",
-                body: elBody ? elBody.value.trim() : ""
+                headers: elHeaders ? (elHeaders.value.trim() || "{}") : "{}",
+                body: elBody ? elBody.value.trim() : "",
+                token_url: (document.getElementById('pullTokenUrl') || {}).value?.trim() || "",
+                token_body_format: (document.getElementById('pullTokenFormat') || {}).value || "form"
             };
             
             return {
@@ -2710,9 +2886,9 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
                 <div class="rule-row ${r.enabled ? '' : 'disabled'}" id="rulerow-${r.id}">
                     <input type="text"  class="form-control" style="font-size:0.8rem;" value="${r.field   || ''}" placeholder="campo del payload"  onchange="updateRule('${r.id}','field',   this.value)">
                     <select             class="form-control" style="font-size:0.8rem;"                                                              onchange="updateRule('${r.id}','operator',this.value)">${opOptions}</select>
-                    <input type="text"  class="form-control" style="font-size:0.8rem;" value="${r.value   || '1'}" placeholder="valor (ej: 1)"    onchange="updateRule('${r.id}','value',   this.value)">
+                    ${_inputValorRegla(r)}
                     <input type="text"  class="form-control" style="font-size:0.8rem;" value="${r.label   || ''}" placeholder="descripción"        onchange="updateRule('${r.id}','label',   this.value)">
-                    <input type="text"  class="form-control" style="font-size:0.8rem;" value="${r.rc_code || ''}" placeholder="código RC"          onchange="updateRule('${r.id}','rc_code', this.value)">
+                    <input type="text"  class="form-control" style="font-size:0.8rem;" value="${r.rc_code || ''}" placeholder="código RC o =campo" title="Un código fijo (ej: 10), o =campo para mandar el valor de ese campo tal cual (ej: =AlertType manda TemperatureMax). Acepta rutas y alternativas: =AlertType || Alert.AlertType" onchange="updateRule('${r.id}','rc_code', this.value)">
                     <select title="Estado: filtra repeticiones del mismo código (motor apagado, puerta abierta). Detecta transiciones si usás Dedup Key. Momentáneo: siempre emite (SOS, crash, geofence)." class="form-control" style="font-size:0.8rem;" onchange="updateRule('${r.id}','event_type',this.value)">${evTypeOptions}</select>
                     <input type="text"  class="form-control" style="font-size:0.8rem;" value="${r.dedup_key || ''}" placeholder="ej: doorstatus" title="Clave de agrupación para estados mutuamente excluyentes del mismo sensor. Ej: doorstatus=1 (code 10) y doorstatus=0 (code 34) deben compartir key 'doorstatus' para que el sistema detecte transiciones (abrir→cerrar→abrir). Si lo dejás vacío, cada código se trata independientemente." onchange="updateRule('${r.id}','dedup_key',this.value)">
                     <div style="display:flex;gap:4px;align-items:center;">
@@ -2725,6 +2901,16 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
         }
 
         let _currentRules = [];
+
+        // El esquema tal como vino del servidor. El editor solo maneja el
+        // mapeo base, las reglas y la regla base; todo lo demás —el filtro de
+        // admisión, por ejemplo— se conserva al guardar.
+        //
+        // Antes, guardar armaba el esquema con esas tres claves y nada más: una
+        // configuración importada por YAML con filtro de admisión quedaba sin
+        // filtro la primera vez que alguien tocaba el Integration Studio, sin
+        // ningún aviso.
+        let _esquemaCargado = {};
 
         function addTriggerRule() {
             _currentRules.push({
@@ -2746,10 +2932,30 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
             renderTriggerRules(_currentRules);
         }
 
+        // Con "existe" y "no existe" el valor no se usa: se muestra vacío y
+        // deshabilitado. Antes mostraba "1", y parecía que la regla comparaba
+        // contra 1.
+        const _OPERADORES_SIN_VALOR = ['exists', 'not_exists'];
+
+        function _inputValorRegla(r) {
+            if (_OPERADORES_SIN_VALOR.includes(r.operator)) {
+                return `<input type="text" class="form-control" style="font-size:0.8rem; opacity:0.5;" value="" placeholder="no aplica" disabled title="Con este operador solo importa si el campo existe: no se compara contra ningún valor">`;
+            }
+            return `<input type="text"  class="form-control" style="font-size:0.8rem;" value="${r.value ?? '1'}" placeholder="valor (ej: 1)"    onchange="updateRule('${r.id}','value',   this.value)">`;
+        }
+
         function updateRule(ruleId, key, value) {
             const rule = _currentRules.find(r => r.id === ruleId);
             if (!rule) return;
             rule[key] = value;
+            if (key === 'operator') {
+                // "existe"/"no existe" no comparan contra nada: el valor se
+                // vacía. Volver a un operador de comparación lo deja vacío
+                // para que se complete a conciencia.
+                rule.value = '';
+                renderTriggerRules(_currentRules);
+                return;
+            }
             const row = document.getElementById(`rulerow-${ruleId}`);
             if (row) row.classList.toggle('disabled', !rule.enabled);
         }
@@ -2793,7 +2999,10 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
                     document.getElementById('dictAuthType').value = data.auth_type || "none";
                     document.getElementById('dictAuthUser').value = data.auth_user || "";
                     document.getElementById('dictAuthPass').value = data.auth_pass || "";
-                    document.getElementById('dictAuthFields').style.display = (data.auth_type && data.auth_type !== 'none') ? 'block' : 'none';
+                    _mostrarCamposAuth('dict', data.auth_type || 'none');
+                    document.getElementById('dictTokenUrl').value = data.token_url || "";
+                    document.getElementById('dictTokenFormat').value = data.token_body_format || "form";
+                    document.getElementById('dictHeaders').value = data.headers || "";
                 } else {
                     document.getElementById('enableEnrichment').checked = false;
                     toggleEnrichment();
@@ -2836,7 +3045,10 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
                 value_path: document.getElementById('dictValuePath').value.trim(),
                 auth_type: document.getElementById('dictAuthType').value,
                 auth_user: document.getElementById('dictAuthUser').value.trim(),
-                auth_pass: document.getElementById('dictAuthPass').value.trim()
+                auth_pass: document.getElementById('dictAuthPass').value.trim(),
+                token_url: document.getElementById('dictTokenUrl').value.trim(),
+                token_body_format: document.getElementById('dictTokenFormat').value,
+                headers: document.getElementById('dictHeaders').value.trim()
             };
             
             try {
@@ -3150,6 +3362,70 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
 
 
 
+        // ─── Campos de autenticación de PULL y diccionario ──────────────────
+        // `pref` es "pull" o "dict". Los campos de OAuth2 solo se muestran
+        // cuando corresponden, para no confundir con campos que no aplican.
+        function _mostrarCamposAuth(pref, tipo) {
+            const contenedor = document.getElementById(pref === 'pull' ? 'pullAuthFields' : 'dictAuthFields');
+            if (contenedor) contenedor.style.display = (tipo === 'none') ? 'none' : 'block';
+            const oauth = document.getElementById(`${pref}OAuthFields`);
+            if (oauth) oauth.style.display = (tipo === 'oauth2_client_credentials') ? 'block' : 'none';
+        }
+
+        // ─── Autenticación del webhook entrante (PUSH) ─────────────────────
+        //
+        // Dos formas de autenticar a un proveedor que nos empuja datos:
+        //   · Clave fija: el proveedor manda el mismo secreto en un header.
+        //     Es lo histórico y lo que usan las integraciones existentes.
+        //   · Firma HMAC: el proveedor firma CADA petición con una clave
+        //     compartida. El secreto nunca viaja. Es el caso de Tive.
+        // La clave secreta va en el mismo campo de API key en los dos casos.
+
+        function _modoAuthWebhook(c) {
+            const cfg = c.webhook_auth_config || {};
+            if ((cfg.modo || 'header') !== 'hmac') return 'header';
+            return cfg.preset ? `hmac:${cfg.preset}` : 'hmac:personalizado';
+        }
+
+        function _selectorAuthWebhook(c) {
+            const modo = _modoAuthWebhook(c);
+            const idx = c._originalIdx;
+            // Un esquema HMAC armado a mano no se puede editar desde acá, pero
+            // tampoco se puede perder: se ofrece conservarlo tal cual.
+            const personalizado = modo === 'hmac:personalizado'
+                ? '<option value="hmac:personalizado" selected>Firma HMAC (personalizada)</option>' : '';
+            return `<select class="form-control" id="webhook_mode_${idx}"
+                        style="width:150px;margin-top:0.35rem;font-size:0.7rem;padding:0.25rem;"
+                        title="Cómo se autentica el proveedor. 'Clave fija': manda siempre el mismo secreto. 'Firma Tive': firma cada petición con HMAC y el secreto nunca viaja."
+                        onchange="_alCambiarAuthWebhook(${idx}, this.value)">
+                      <option value="header" ${modo === 'header' ? 'selected' : ''}>Clave fija</option>
+                      <option value="hmac:tive" ${modo === 'hmac:tive' ? 'selected' : ''}>Firma Tive (HMAC)</option>
+                      ${personalizado}
+                    </select>`;
+        }
+
+        function _alCambiarAuthWebhook(idx, modo) {
+            // El header de la firma de Tive es fijo: se completa solo para que
+            // no quede apuntando a x-api-key por descuido.
+            const header = document.getElementById(`webhook_header_${idx}`);
+            if (!header) return;
+            if (modo === 'hmac:tive') header.value = 'x-tive-signature';
+            else if (modo === 'header' && header.value === 'x-tive-signature') header.value = 'x-api-key';
+        }
+
+        function _leerAuthWebhook(c, idx) {
+            const sel = document.getElementById(`webhook_mode_${idx}`);
+            // PULL no tiene selector: null = no tocar lo guardado.
+            if (!sel) return null;
+            // Selector sin tocar: tampoco se manda. Rearmarlo desde el selector
+            // escribía {modo: header} donde no había nada y perdía los ajustes
+            // propios de un preset (v1.9.5, guardado idempotente).
+            if (sel.value === _modoAuthWebhook(c)) return null;
+            if (sel.value === 'header') return { modo: 'header' };
+            if (sel.value === 'hmac:personalizado') return c.webhook_auth_config;
+            return { modo: 'hmac', preset: sel.value.split(':')[1] };
+        }
+
         // ─── Diagnóstico de latencia ────────────────────────────────────────
 
         async function cargarDiagnosticoLatencia() {
@@ -3394,6 +3670,74 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
         }
 
         // ─── Red de seguridad de ingesta ────────────────────────────────────
+
+        // ─── Descartes ──────────────────────────────────────────────────────
+        // Lo que no se envió a RC y por qué. El render está separado de la
+        // carga para poder ejecutarlo tal cual en los tests.
+        function _horaDescarte(ts) {
+            if (!ts) return '—';
+            const d = new Date(ts * 1000);
+            const dos = n => String(n).padStart(2, '0');
+            return `${dos(d.getDate())}/${dos(d.getMonth() + 1)} ${dos(d.getHours())}:${dos(d.getMinutes())}:${dos(d.getSeconds())}`;
+        }
+
+        function _renderDescartes(d) {
+            const esc = v => (v === null || v === undefined || v === '') ? '—' : _escapeHtml(String(v));
+            if (!d || !d.resumen || !d.resumen.length) {
+                return `<div style="border-left:3px solid #10B981;padding:0.75rem 1rem;
+                    background:rgba(255,255,255,0.03);border-radius:4px;font-size:0.82rem;">
+                    Sin descartes en los últimos ${d && d.retencion_dias ? d.retencion_dias : 7} días.</div>`;
+            }
+            const resumen = d.resumen.map(r => `<tr>
+                    <td><strong>${esc(String(r.proveedor).toUpperCase())}</strong>
+                        <span class="env-badge">${esc(String(r.env).toUpperCase())}</span></td>
+                    <td>${esc(r.origen)}</td>
+                    <td>${esc(r.motivo)}</td>
+                    <td class="num">${Number(r.total).toLocaleString()}</td>
+                    <td class="num">${_horaDescarte(r.ultimo)}</td>
+                </tr>`).join('');
+            const ultimos = (d.ultimos || []).map(u => `<tr>
+                    <td class="num">${_horaDescarte(u.ts)}</td>
+                    <td>${esc(String(u.proveedor).toUpperCase())}</td>
+                    <td><strong>${esc(u.equipo)}</strong></td>
+                    <td>${esc(u.envio)}</td>
+                    <td title="${u.detalle ? _escapeHtml(String(u.detalle)) : ''}">${esc(u.motivo)}</td>
+                    <td style="font-family:monospace;font-size:0.72rem;">${esc(u.alert_id)}</td>
+                </tr>`).join('');
+            const perdidos = d.perdidos ? `<div style="color:var(--color-yellow);font-size:0.78rem;margin-top:0.5rem;">
+                    ${Number(d.perdidos).toLocaleString()} descarte(s) no se pudieron guardar (sí quedaron en consola).</div>` : '';
+            return `
+                <div style="overflow-x:auto;">
+                <table class="inventario-tabla">
+                  <thead><tr><th>Integración</th><th>Origen</th><th>Motivo</th>
+                    <th class="num">Cantidad</th><th class="num">Último</th></tr></thead>
+                  <tbody>${resumen}</tbody>
+                </table></div>
+                <h3 style="font-size:0.9rem;margin:1rem 0 0.5rem;">Últimos descartes</h3>
+                <div style="overflow-x:auto;max-height:420px;overflow-y:auto;">
+                <table class="inventario-tabla">
+                  <thead><tr><th class="num">Hora</th><th>Integración</th><th>Equipo</th>
+                    <th>Envío</th><th>Motivo</th><th>AlertId</th></tr></thead>
+                  <tbody>${ultimos}</tbody>
+                </table></div>${perdidos}
+                <div style="font-size:0.72rem;color:#6b7280;margin-top:0.5rem;">
+                  Se guardan ${d.retencion_dias} días, hasta ${Number(d.max_filas).toLocaleString()} filas.
+                  Pasá el mouse sobre el motivo para ver el detalle.
+                </div>`;
+        }
+
+        async function cargarDescartes() {
+            const cont = document.getElementById('descartes-contenedor');
+            if (!cont) return;
+            try {
+                const res = await fetch('/api/diagnostico/descartes?limite=100');
+                if (!res.ok) throw new Error('respuesta ' + res.status);
+                cont.innerHTML = _renderDescartes(await res.json());
+            } catch (e) {
+                cont.innerHTML = '<div style="color:#a1a1aa;font-size:0.85rem;">No se pudo consultar los descartes.</div>';
+                console.warn('Descartes:', e);
+            }
+        }
 
         async function cargarRedSeguridad() {
             const cont = document.getElementById('red-seguridad-contenedor');

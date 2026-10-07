@@ -7,6 +7,7 @@ from typing import List
 from datetime import datetime, timezone, timedelta
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.security import HTTPBasicCredentials
+from sqlalchemy import null as sql_null
 from pydantic import BaseModel
 
 from app.core.auth import verify_dashboard_auth, get_dashboard_password
@@ -14,7 +15,10 @@ from app.database import get_session
 from app.models.config_models import ProviderConfig, SystemSettings
 from app.core import config_cache
 from app.core.auditor import log_admin_action
+from app.core import webhook_auth
+from app.core import modo_simulado
 from app.core.crypto import encrypt, decrypt
+from app.providers import registry
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["Admin Config"])
@@ -33,10 +37,19 @@ class ConfigUpdate(BaseModel):
     queue_backend: str
     webhook_auth_secret: str | None = None
     webhook_auth_header: str | None = None
+    # Esquema de autenticación del webhook entrante (ver app/core/webhook_auth.py).
+    # None = no tocar lo guardado. {} o {"modo": "header"} = secreto fijo, el
+    # comportamiento histórico. {"modo": "hmac", "preset": "tive"} = firma.
+    webhook_auth_config: dict | None = None
     fetch_config: str | None = None
     enable_state_dedup: bool = True
     # Techo de peticiones por minuto del webhook. None = usar el límite global.
     rate_limit_per_min: int | None = None
+    # Interruptores de un módulo dedicado (Tive). None = no tocar lo guardado.
+    module_options: dict | None = None
+    # Credenciales de la API del proveedor de un módulo dedicado (Tive):
+    # {"client_id": "...", "client_secret": "..."}. None o vacío = no tocar.
+    module_credentials: dict | None = None
     # Contraseña de administrador, requerida solo al ACTIVAR el modo simulado.
     # No se envía en operaciones que no lo activan.
     admin_password: str | None = None
@@ -66,7 +79,11 @@ def get_providers(_: None = Depends(verify_dashboard_auth)):
     config_db = get_session("system_config", "global")
     try:
         providers = config_db.query(ProviderConfig).all()
-        return [{"id": p.id, "provider_name": p.provider_name, "env": p.env} for p in providers]
+        # modulo_dedicado: el Integration Studio no los lista. Su lógica vive en
+        # app/providers/<proveedor>/ y un esquema guardado desde el Studio no
+        # tendría ningún efecto, o peor, confundiría a quien lo edita.
+        return [{"id": p.id, "provider_name": p.provider_name, "env": p.env,
+                 "modulo_dedicado": registry.es_dedicado(p.provider_name)} for p in providers]
     finally:
         config_db.close()
 
@@ -135,13 +152,20 @@ def save_mapping(provider_name: str, env: str, payload: dict, _: None = Depends(
         ).first()
         if not config:
             return {"status": "error", "message": "Provider not found"}
+        if registry.es_dedicado(provider_name):
+            return {
+                "status": "error",
+                "message": (f"{provider_name} es una integración dedicada: su lógica no se "
+                            f"configura en el Integration Studio. Sus opciones están en la "
+                            f"tabla de configuración."),
+            }
             
         # Compatibilidad: si el payload tiene la llave 'mapping', extraerla, si no, asumir que todo es mapping
         if 'mapping' in payload:
             config.mapping_schema = payload.get('mapping', {})
             if 'fetch' in payload:
                 config.fetch_config_enc = encrypt(json.dumps(payload.get('fetch', {})))
-                config.fetch_config = None
+                config.fetch_config = sql_null()  # NULL de SQL, no el texto 'null' (v1.9.7, B-2)
         else:
             config.mapping_schema = payload
             
@@ -215,6 +239,143 @@ def get_enrichment(provider_name: str, env: str, _: None = Depends(verify_dashbo
     finally:
         config_db.close()
 
+def _opciones_de_modulo(c) -> dict:
+    """Interruptores de un módulo dedicado, con su descripción para el panel."""
+    modulo = registry.modulo_dedicado(c.provider_name)
+    if modulo is None:
+        return {"modulo_dedicado": False}
+    efectivas = modulo.opciones_efectivas(getattr(c, "module_options", None))
+    salida = {
+        "modulo_dedicado": True,
+        "module_options": efectivas,
+        "module_options_labels": dict(modulo.DESCRIPCION_INTERRUPTORES),
+    }
+    if getattr(modulo, "USA_CREDENCIALES_API", False):
+        # El client_id se muestra (es un nombre, ej. "Envios Assistcargo");
+        # del secreto solo se informa si está cargado. Nunca sale del servidor.
+        datos = _bloque_fetch(c)
+        salida["module_credentials"] = {
+            "client_id": datos.get("auth_user") or None,
+            "secreto_cargado": bool(datos.get("auth_pass")),
+        }
+    return salida
+
+
+def _bloque_fetch(c) -> dict:
+    """La configuración de acceso a la API del proveedor, descifrada."""
+    if getattr(c, "fetch_config_enc", None):
+        try:
+            return json.loads(decrypt(c.fetch_config_enc) or "{}")
+        except (ValueError, TypeError):
+            logger.warning(f"No se pudo leer la configuración de acceso de {c.provider_name}/{c.env}.")
+            return {}
+    return c.fetch_config if isinstance(getattr(c, "fetch_config", None), dict) else {}
+
+
+MAX_LARGO_CLIENT_ID = 200
+MAX_LARGO_SECRETO = 1000
+
+
+def _guardar_credenciales_de_modulo(conf, credenciales: dict) -> None:
+    """
+    Guarda client_id y secreto cifrados, en el mismo bloque que usa el PULL
+    (fetch_config_enc), para que el respaldo YAML los trate igual: el
+    client_id viaja, el secreto nunca.
+
+    El client_id es texto libre: puede tener espacios ("Envios Assistcargo").
+    No se valida como código; solo se recortan los espacios de los extremos.
+    Vacío o ausente = conservar el guardado. Nada de esto se escribe en logs.
+    """
+    from app.providers.tive.resolutor import BASE_URL_POR_DEFECTO, TOKEN_URL_POR_DEFECTO
+
+    modulo = registry.modulo_dedicado(conf.provider_name)
+    if modulo is None or not getattr(modulo, "USA_CREDENCIALES_API", False):
+        raise HTTPException(
+            status_code=400,
+            detail=f"{conf.provider_name}/{conf.env} no usa credenciales de API de módulo.",
+        )
+    client_id = credenciales.get("client_id")
+    secreto = credenciales.get("client_secret")
+    client_id = client_id.strip() if isinstance(client_id, str) else None
+    secreto = secreto if isinstance(secreto, str) and secreto.strip() else None
+    if not client_id and not secreto:
+        return
+    if client_id and len(client_id) > MAX_LARGO_CLIENT_ID:
+        raise HTTPException(status_code=400,
+                            detail=f"{conf.provider_name}/{conf.env}: el client_id es demasiado largo.")
+    if secreto and len(secreto) > MAX_LARGO_SECRETO:
+        raise HTTPException(status_code=400,
+                            detail=f"{conf.provider_name}/{conf.env}: el secreto es demasiado largo.")
+
+    datos = dict(_bloque_fetch(conf))
+    if client_id:
+        datos["auth_user"] = client_id
+    if secreto:
+        datos["auth_pass"] = secreto
+    datos.setdefault("auth_type", "oauth2_client_credentials")
+    datos.setdefault("token_url", TOKEN_URL_POR_DEFECTO)
+    datos.setdefault("token_body_format", "multipart")
+    datos.setdefault("url", BASE_URL_POR_DEFECTO)
+    conf.fetch_config_enc = encrypt(json.dumps(datos))
+    conf.fetch_config = sql_null()  # NULL de SQL, no el texto 'null' (v1.9.7, B-2)
+    logger.warning(
+        f"Credenciales de la API de {conf.provider_name}/{conf.env} actualizadas desde el panel"
+        f" ({'client_id' if client_id else ''}{' y ' if client_id and secreto else ''}"
+        f"{'secreto' if secreto else ''})."
+    )
+
+
+def _validar_opciones_de_modulo(conf, opciones: dict) -> dict:
+    """Solo interruptores conocidos y booleanos: lo demás se rechaza con motivo."""
+    modulo = registry.modulo_dedicado(conf.provider_name)
+    if modulo is None:
+        raise HTTPException(
+            status_code=400,
+            detail=f"{conf.provider_name}/{conf.env} no es una integración dedicada: no tiene interruptores.",
+        )
+    desconocidas = sorted(set(opciones) - set(modulo.INTERRUPTORES))
+    if desconocidas:
+        raise HTTPException(
+            status_code=400,
+            detail=f"{conf.provider_name}/{conf.env}: interruptores desconocidos {desconocidas}.",
+        )
+    no_booleanas = sorted(k for k, v in opciones.items() if not isinstance(v, bool))
+    if no_booleanas:
+        raise HTTPException(
+            status_code=400,
+            detail=f"{conf.provider_name}/{conf.env}: {no_booleanas} tienen que ser true o false.",
+        )
+    return modulo.opciones_efectivas(opciones)
+
+
+# Cuántos caracteres de la clave del webhook se muestran en el panel.
+CARACTERES_PISTA_CLAVE = 2
+
+
+def _pista_clave_webhook(c) -> str | None:
+    """
+    Los DOS primeros caracteres de la clave del webhook, para que el panel
+    muestre "d0•••• cargada" y se pueda reconocer cuál es sin revelarla.
+
+    Antes la columna solo decía que había clave, y en una columna angosta
+    parecía vacía. Del servidor sale únicamente este recorte, nunca la clave:
+    verla completa sigue siendo el botón de revelar, que pide contraseña.
+
+    None si no hay clave, si no se puede descifrar, o si es tan corta que dos
+    caracteres serían casi toda la clave.
+    """
+    if not c.webhook_auth_secret_enc:
+        return None
+    try:
+        clave = decrypt(c.webhook_auth_secret_enc)
+    except Exception as e:
+        logger.warning(f"No se pudo leer la clave del webhook de {c.provider_name}/{c.env}: {e}")
+        return None
+    if not clave or len(clave) <= 2 * CARACTERES_PISTA_CLAVE:
+        return None
+    return clave[:CARACTERES_PISTA_CLAVE]
+
+
 @router.get("/api/config")
 def get_all_configs(_: None = Depends(verify_dashboard_auth)):
     db = get_session("system_config", "global")
@@ -236,8 +397,10 @@ def get_all_configs(_: None = Depends(verify_dashboard_auth)):
             "rc_user": c.rc_user,
             "has_rc_password": bool(c.rc_password_enc or c.rc_password),
             "has_webhook_auth": bool(c.webhook_auth_secret_enc),
+            "webhook_auth_hint": _pista_clave_webhook(c),
             "has_fetch_config": bool(c.fetch_config_enc or c.fetch_config),
             "webhook_auth_header": c.webhook_auth_header or "x-api-key",
+            "webhook_auth_config": getattr(c, "webhook_auth_config", None) or {"modo": "header"},
             "use_mock": c.use_mock,
             "purge_interval_min": c.purge_interval_min,
             "run_interval_sec": c.run_interval_sec,
@@ -245,13 +408,21 @@ def get_all_configs(_: None = Depends(verify_dashboard_auth)):
             "provider_type": getattr(c, 'provider_type', 'pull') or 'pull',
             # NULL = usar el límite global; solo aplica a proveedores PUSH
             "rate_limit_per_min": getattr(c, 'rate_limit_per_min', None),
-            "enable_state_dedup": bool(getattr(c, 'enable_state_dedup', True))
+            "enable_state_dedup": bool(getattr(c, 'enable_state_dedup', True)),
+            **_opciones_de_modulo(c),
         } for c in configs]
     finally:
         db.close()
 
 @router.post("/api/config")
-def update_configs(updates: List[ConfigUpdate], _: None = Depends(verify_dashboard_auth)):
+def update_configs(updates: List[ConfigUpdate], cred: HTTPBasicCredentials = Depends(verify_dashboard_auth)):
+    # El usuario queda en el aviso de cada cambio de modo simulado, que sale
+    # después del commit (app/core/modo_simulado.py).
+    with modo_simulado.usuario(getattr(cred, "username", None), "panel"):
+        return _aplicar_configs(updates)
+
+
+def _aplicar_configs(updates: List[ConfigUpdate]):
     db = get_session("system_config", "global")
     try:
         for u in updates:
@@ -271,10 +442,24 @@ def update_configs(updates: List[ConfigUpdate], _: None = Depends(verify_dashboa
                     
                 if hasattr(u, 'webhook_auth_header') and u.webhook_auth_header:
                     conf.webhook_auth_header = u.webhook_auth_header
+
+                if getattr(u, 'webhook_auth_config', None) is not None:
+                    # Se valida ANTES de guardar: una configuración de firma
+                    # rota dejaría el webhook rechazando todo, o peor, sin
+                    # verificar nada. Mejor fallar acá, con el motivo, que
+                    # descubrirlo cuando el proveedor empiece a recibir 500.
+                    try:
+                        webhook_auth.resolver_config(u.webhook_auth_config)
+                    except ValueError as e:
+                        raise HTTPException(
+                            status_code=400,
+                            detail=f"{u.provider_name}/{u.env}: {e}",
+                        )
+                    conf.webhook_auth_config = u.webhook_auth_config or None
                     
                 if hasattr(u, 'fetch_config') and u.fetch_config and u.fetch_config != "••••••••" and u.fetch_config.strip() != "":
                     conf.fetch_config_enc = encrypt(u.fetch_config)
-                    conf.fetch_config = None # borrar plaintext
+                    conf.fetch_config = sql_null()  # borrar plaintext: NULL de SQL, no el texto 'null' (v1.9.7, B-2)
                     
                 # ── Modo simulado: activación protegida ──────────────────
                 # Con use_mock=True el sistema NO envía a Recurso Confiable:
@@ -296,15 +481,9 @@ def update_configs(updates: List[ConfigUpdate], _: None = Depends(verify_dashboa
                                 "activo los eventos NO se envían a Recurso Confiable."
                             ),
                         )
-                    logger.warning(
-                        f"MODO SIMULADO ACTIVADO para {conf.provider_name}/{conf.env}. "
-                        f"Los eventos dejarán de enviarse a Recurso Confiable."
-                    )
-                elif conf.use_mock and not u.use_mock:
-                    logger.info(
-                        f"Modo simulado desactivado para {conf.provider_name}/{conf.env}. "
-                        f"Los eventos vuelven a enviarse a Recurso Confiable."
-                    )
+                # El aviso del cambio (en los dos sentidos, con usuario) lo
+                # emite modo_simulado al confirmar: si otra fila hace fallar
+                # este guardado, no queda un aviso de algo que no pasó.
 
                 # Un valor <= 0 se interpreta como "sin límite propio": vuelve al global
                 nuevo_limite = u.rate_limit_per_min if (u.rate_limit_per_min or 0) > 0 else None
@@ -317,6 +496,25 @@ def update_configs(updates: List[ConfigUpdate], _: None = Depends(verify_dashboa
                         invalidate_limit_cache(conf.provider_name)
                     except Exception as e:
                         logger.warning(f"No se pudo invalidar la caché del limitador: {e}")
+
+                if u.module_options is not None:
+                    nuevas = _validar_opciones_de_modulo(conf, u.module_options)
+                    anteriores = registry.modulo_dedicado(conf.provider_name).opciones_efectivas(
+                        getattr(conf, "module_options", None)
+                    )
+                    if nuevas != anteriores:
+                        cambios = ", ".join(
+                            f"{k}: {'SÍ' if anteriores[k] else 'NO'} -> {'SÍ' if v else 'NO'}"
+                            for k, v in nuevas.items() if anteriores.get(k) != v
+                        )
+                        logger.warning(f"Interruptores de {conf.provider_name}/{conf.env} cambiados: {cambios}.")
+                        # Solo si cambió algo: el panel manda siempre los
+                        # efectivos, y escribirlos sin cambios fijaba los
+                        # valores por defecto en la fila (v1.9.5).
+                        conf.module_options = nuevas
+
+                if u.module_credentials is not None:
+                    _guardar_credenciales_de_modulo(conf, u.module_credentials)
 
                 conf.use_mock = u.use_mock
                 conf.purge_interval_min = u.purge_interval_min

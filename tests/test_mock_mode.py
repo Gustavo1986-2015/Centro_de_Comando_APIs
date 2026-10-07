@@ -19,10 +19,14 @@ PASSWORD = "clave_admin_de_prueba"
 
 
 @pytest.fixture
-def client(monkeypatch):
+def client(monkeypatch, config_aislada):
     """
     Cliente sin lifespan: estos tests solo consultan endpoints de configuración
     y estadísticas, no necesitan los workers de fondo.
+
+    Base de configuración propia (config_aislada): estos tests alternan el modo
+    simulado de la primera integración y la dejan en REAL. Contra una base
+    compartida eso fue lo que cambió schmitz/prod el 05/10/2026 (v1.9.5).
 
     Levantar el lifespan acá dejaba las colas asyncio de los routers ligadas al
     event loop del test, y el siguiente test que abriera la app con otro loop

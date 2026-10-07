@@ -11,6 +11,7 @@ from jsonpath_ng import parse
 from app.database import get_session
 from app.models.config_models import ProviderConfig, ProviderDictionary
 from app.models.db_models import NormalizedRCEvent
+from app.core import admision
 from app.core.dynamic_mapper import DynamicMapper
 from app.core.crypto import decrypt
 from app.core import provider_health
@@ -19,26 +20,15 @@ from app.core.resync import sleep_or_resync, get_signal
 logger = logging.getLogger(__name__)
 
 # ─────────────────────────────────────────────────────────────────────────────
-# CACHÉ DE TOKENS (P1-4)
-# Evita pedir un token nuevo en cada ciclo de PULL. Sin esto, con un intervalo
-# de 11s se generan ~7.800 llamadas/día a /api/authorization con la misma cuenta,
-# lo que agota el rate limit del proveedor y provoca fallos intermitentes de auth.
+# CACHÉ DE TOKENS (P1-4) y OAuth2: desde la v1.9.4 viven en app/core/oauth2.py.
+# Se reimportan los MISMOS objetos: el caché sigue siendo uno solo, compartido
+# entre el token de Protrack y los de OAuth2, como antes.
 # ─────────────────────────────────────────────────────────────────────────────
-_TOKEN_CACHE: dict[str, dict] = {}   # {cache_key: {"token": str, "expires_at": float}}
-_TOKEN_LOCK = asyncio.Lock()
-
-# Fallback SOLO por si el proveedor no incluye 'expires_in' en la respuesta
-# (no debería pasar, pero mejor no reventar el flujo si ocurre).
-# El TTL real se toma del campo expires_in de cada respuesta de /api/authorization.
-TOKEN_TTL_FALLBACK_SECONDS = 1500
-
-# Margen de seguridad: renovar un poco antes del vencimiento real para evitar
-# que un token expire a mitad de una llamada en curso.
-TOKEN_SAFETY_MARGIN_SECONDS = 120
-
-
-class ProviderAuthError(Exception):
-    """La autenticación con el proveedor falló. Aborta el ciclo, no encola nada."""
+from app.core.oauth2 import (  # noqa: E402
+    _TOKEN_CACHE, _TOKEN_LOCK, TOKEN_TTL_FALLBACK_SECONDS, TOKEN_SAFETY_MARGIN_SECONDS,
+    ProviderAuthError,
+)
+from app.core.oauth2 import get_oauth2_token as _get_oauth2_token  # noqa: E402
 
 
 class ProviderResponseError(Exception):
@@ -380,6 +370,19 @@ async def execute_fetch(fetch_config: dict) -> dict | list:
         # Puede lanzar ProviderAuthError — se propaga y aborta el ciclo
         params["access_token"] = await _get_protrack_token(base_url, user, pwd)
 
+    elif auth_type == "oauth2_client_credentials":
+        # Estándar OAuth2. Los headers adicionales que el proveedor exija —por
+        # ejemplo `x-tive-account-id`— van en el campo `headers` de la
+        # configuración, como con cualquier otro proveedor.
+        token = await _get_oauth2_token(
+            fetch_config.get("token_url", ""),
+            fetch_config.get("auth_user", ""),
+            fetch_config.get("auth_pass", ""),
+            (fetch_config.get("token_body_format") or "form").lower(),
+            fetch_config.get("scope", ""),
+        )
+        headers["Authorization"] = f"Bearer {token}"
+
     # ── Petición ─────────────────────────────────────────────────────────────
     async with httpx.AsyncClient(timeout=30) as client:
         if method == "GET":
@@ -401,6 +404,18 @@ async def execute_fetch(fetch_config: dict) -> dict | list:
                 json_body = {}
             resp = await client.post(url, params=params, headers=headers, json=json_body)
 
+        if resp.status_code == 401 and auth_type == "oauth2_client_credentials":
+            # Token revocado o vencido antes de lo informado: se descarta del
+            # caché para que el próximo ciclo pida uno nuevo, en vez de seguir
+            # usando uno inválido hasta que expire solo.
+            _TOKEN_CACHE.pop(
+                f"oauth2|{fetch_config.get('token_url', '')}|{fetch_config.get('auth_user', '')}",
+                None,
+            )
+            raise ProviderAuthError(
+                "El proveedor rechazó el token OAuth2 (HTTP 401). Se descartó del "
+                "caché; el próximo ciclo pide uno nuevo."
+            )
         resp.raise_for_status()
         data = resp.json()
 
@@ -488,6 +503,19 @@ async def dictionary_sync_loop(provider_name: str, env: str):
                 "auth_pass": enrich.get("auth_pass") or fetch_c.get("auth_pass", ""),
                 "bearer_token": enrich.get("bearer_token") or fetch_c.get("bearer_token", ""),
             }
+
+            # Campos de OAuth2 y headers adicionales, con la misma herencia:
+            # los del diccionario si están cargados, si no los del PULL.
+            #
+            # Antes esta función copiaba SOLO las seis claves de arriba. Con
+            # OAuth2 eso significaba perder token_url en el camino —el token
+            # nunca se pedía— y perder los headers, así que un proveedor que
+            # exige un header de cuenta (Tive: x-tive-account-id) recibía la
+            # consulta sin él. La lógica de OAuth estaba bien; el cableado no.
+            for clave in ("token_url", "token_body_format", "scope", "headers"):
+                valor = enrich.get(clave) or fetch_c.get(clave)
+                if valor:
+                    fetch_cfg[clave] = valor
 
             data = await execute_fetch(fetch_cfg)
 
@@ -823,6 +851,17 @@ async def process_and_enqueue(
         descartados = 0
         for item in items:
             try:
+                # Filtro de admisión, igual que en el webhook: transversal a
+                # PUSH y PULL. Sin condiciones configuradas entra todo, que es
+                # lo de siempre; Protrack no define ninguna.
+                motivo_descarte = admision.evaluar(item, mapping_schema)
+                if motivo_descarte:
+                    admision.registrar_descarte(
+                        provider_name, env, motivo_descarte,
+                        admision.identidad(item, mapping_schema),
+                    )
+                    descartados += 1
+                    continue
                 canonical_list = DynamicMapper.map_payload_multi(
                     item, mapping_schema, provider_name, env, require_dict_match,
                     require_dict_match   # sin diccionario configurado no se consulta la tabla
@@ -880,7 +919,9 @@ async def process_and_enqueue(
         if descartados:
             logger.warning(
                 f"[{provider_name.upper()}-{env}] {descartados} de {len(items)} registros "
-                f"descartados por falta de traducción en el diccionario."
+                f"descartados (filtro de admisión, sin traducción en el diccionario o "
+                f"sin un dato obligatorio del contrato: el motivo de cada uno está en "
+                f"las líneas anteriores)."
             )
 
         if events_to_add:

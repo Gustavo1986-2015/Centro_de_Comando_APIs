@@ -44,6 +44,12 @@ async def lifespan(app: FastAPI):
     
     await start_webhook_batch_processor()
 
+    # Resolutor del nombre del tracker por la API de Tive (v1.9.4). Corre
+    # siempre; no consulta nada si el interruptor está apagado o faltan las
+    # credenciales.
+    from app.providers.tive import resolutor as resolutor_tive
+    task_resolutor_tive = asyncio.create_task(resolutor_tive.bucle())
+
     yield
 
     # ----- SHUTDOWN -----
@@ -52,8 +58,9 @@ async def lifespan(app: FastAPI):
     task_broadcast.cancel()
     task_watch_logs.cancel()
     task_telemetry.cancel()
+    task_resolutor_tive.cancel()
     # Esperar cancelación sin bloquear el shutdown
-    for task in (task_worker, task_broadcast, task_watch_logs, task_telemetry):
+    for task in (task_worker, task_broadcast, task_watch_logs, task_telemetry, task_resolutor_tive):
         try:
             await task
         except asyncio.CancelledError:
@@ -87,8 +94,18 @@ async def measure_push_latency(request: Request, call_next):
     path = request.url.path
     if request.method == "POST":
         provider = None
+        entorno = None
         if path == "/Json/Data" or path.startswith("/schmitz/"):
             provider = "schmitz"
+        elif path.startswith("/webhook/dynamic/"):
+            # v1.9.6: el nombre de la integración y no "webhook", y solo si el
+            # webhook la ACEPTÓ. Antes todo el webhook genérico caía bajo
+            # "webhook:<env>", con los rechazos por firma y las URL a
+            # integraciones inexistentes adentro; y una clave por cada nombre
+            # que llegue dejaría a cualquiera crear claves sin límite.
+            aceptada = getattr(request.state, "push_aceptada", None)
+            if aceptada:
+                provider, entorno = aceptada
         elif "/webhook" in path:
             parts = [p for p in path.split("/") if p]
             if len(parts) >= 2 and parts[0] != "api" and parts[0] != "inspector":
@@ -97,7 +114,7 @@ async def measure_push_latency(request: Request, call_next):
         if provider:
             # Separado por entorno: agrupar test y prod bajo la misma clave
             # mezclaba tráfico de prueba con el real.
-            entorno = (request.query_params.get("env") or "prod").lower()
+            entorno = entorno or (request.query_params.get("env") or "prod").lower()
             record_push_latency(f"{provider}:{entorno}", process_time)
             
     return response

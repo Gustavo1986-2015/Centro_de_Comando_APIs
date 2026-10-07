@@ -37,11 +37,13 @@ import yaml
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from fastapi.security import HTTPBasicCredentials
+from sqlalchemy import null as sql_null
 from pydantic import BaseModel
 
+from app.core import webhook_auth
 from app.core.auditor import log_admin_action
 from app.core.auth import verify_dashboard_auth
-from app.core import config_cache
+from app.core import config_cache, modo_simulado
 from app.core.crypto import decrypt, encrypt
 from app.database import get_session
 from app.models.config_models import ProviderConfig, SystemSettings
@@ -90,6 +92,10 @@ CLAVES_SECRETAS = frozenset({
 CLAVES_ESTRUCTURALES = frozenset({
     "url", "method", "auth_type", "auth_user",
     "enabled", "frequency", "key_path", "value_path", "timezone_offset",
+    # OAuth2 client_credentials: dónde pedir el token y en qué formato. No son
+    # secretos; el client_secret sigue viajando solo en auth_pass, que queda
+    # afuera del respaldo como cualquier otra credencial.
+    "token_url", "token_body_format", "scope",
 })
 
 # Qué decirle al operador sobre lo que quedó fuera, para que sepa qué recargar.
@@ -231,7 +237,12 @@ def _proveedor_a_dict(conf: ProviderConfig) -> dict:
         "intervalo_purga_min": conf.purge_interval_min,
         "motor_cola": conf.queue_backend,
         "webhook_header": conf.webhook_auth_header,
+        # El esquema de firma no es secreto: la clave vive aparte, cifrada, y
+        # no sale en el respaldo.
+        "webhook_autenticacion": getattr(conf, "webhook_auth_config", None),
         "rc_usuario": conf.rc_user,
+        # Interruptores de un módulo dedicado (Tive). No son secretos.
+        "opciones_modulo": getattr(conf, "module_options", None),
     }
     for clave, valor in opcionales.items():
         if valor is None:
@@ -550,7 +561,9 @@ CAMPOS_SIMPLES = {
     "motor_cola": "queue_backend",
     "limite_push_por_min": "rate_limit_per_min",
     "webhook_header": "webhook_auth_header",
+    "webhook_autenticacion": "webhook_auth_config",
     "rc_usuario": "rc_user",
+    "opciones_modulo": "module_options",
 }
 
 
@@ -590,7 +603,7 @@ CAMPOS_BOOLEANOS_YAML = ("activo", "modo_simulado", "deduplicacion")
 
 # Bloques que tienen que ser diccionarios. Un string acá rompía analizar_import
 # con un 500 opaco en vez de un 400 que explique qué está mal.
-CAMPOS_DICCIONARIO = ("mapeo", "telemetria", "diccionario")
+CAMPOS_DICCIONARIO = ("mapeo", "telemetria", "diccionario", "opciones_modulo")
 
 
 def _validar_proveedor(prov: dict, posicion: int):
@@ -628,6 +641,20 @@ def _validar_proveedor(prov: dict, posicion: int):
                 ),
             )
 
+    auth = prov.get("webhook_autenticacion")
+    if auth is not None:
+        if not isinstance(auth, dict):
+            raise HTTPException(
+                status_code=400,
+                detail=f"En {etiqueta}, 'webhook_autenticacion' tiene que ser un bloque de configuración.",
+            )
+        # La misma validación que aplica el webhook: si no la pasa acá, la
+        # integración quedaría rechazando todo después de importar.
+        try:
+            webhook_auth.resolver_config(auth)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=f"En {etiqueta}: {e}")
+
     for campo in CAMPOS_DICCIONARIO:
         if campo in prov and prov[campo] is not None and not isinstance(prov[campo], dict):
             raise HTTPException(
@@ -636,6 +663,15 @@ def _validar_proveedor(prov: dict, posicion: int):
                     f"En {etiqueta}, '{campo}' tiene que ser un bloque de configuración "
                     f"y vino {type(prov[campo]).__name__}."
                 ),
+            )
+
+    opciones = prov.get("opciones_modulo")
+    if isinstance(opciones, dict):
+        no_booleanas = sorted(k for k, v in opciones.items() if not isinstance(v, bool))
+        if no_booleanas:
+            raise HTTPException(
+                status_code=400,
+                detail=f"En {etiqueta}, 'opciones_modulo' {no_booleanas} tienen que ser true o false.",
             )
 
     tipo = prov.get("tipo")
@@ -976,7 +1012,7 @@ def _aplicar_proveedor(conf: ProviderConfig, deseado: dict) -> list[str]:
         # (admin_config.py:143-144): dos rutas distintas escribiendo el mismo
         # campo de formas distintas sería una fuente de bugs silenciosos.
         conf.fetch_config_enc = encrypt(json.dumps(fusionado))
-        conf.fetch_config = None
+        conf.fetch_config = sql_null()  # NULL de SQL, no el texto 'null' (v1.9.7, B-2)
         tocados.append("telemetria")
 
     if "diccionario" in deseado:
@@ -994,6 +1030,13 @@ def ejecutar_import(
     _auth: HTTPBasicCredentials = Depends(verify_dashboard_auth),
 ):
     """Aplica el respaldo. Exige confirmación escrita y es todo o nada."""
+    # Un modo simulado que cambia por importación también deja su aviso, con
+    # el usuario (app/core/modo_simulado.py).
+    with modo_simulado.usuario(_auth.username, "importación YAML"):
+        return _ejecutar_import(body, request, _auth)
+
+
+def _ejecutar_import(body: ImportEjecutar, request: Request, _auth: HTTPBasicCredentials):
     if body.confirmacion.strip().upper() != CONFIRMACION_REQUERIDA:
         raise HTTPException(
             status_code=400,

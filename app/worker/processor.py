@@ -7,7 +7,7 @@ from datetime import datetime, timezone, timedelta
 
 from app.core import provider_health
 from app.database import get_session
-from app.models.db_models import NormalizedRCEvent
+from app.models.db_models import ESTADO_SIMULADO, ESTADOS_TERMINADOS, NormalizedRCEvent
 from app.schemas.canonical import RCCanonicalModel
 import threading as _threading
 from collections import deque, defaultdict
@@ -479,7 +479,19 @@ async def process_provider_events(provider: str, env: str):
                             # lo recibió: se reintenta en lugar de descartarlo.
                             categoria = RCResponseCategory.TRANSPORT
                         
-                        if success:
+                        if success and categoria == RCResponseCategory.SIMULADO:
+                            # Modo simulado (v1.9.7): no hubo llamada a RC. Queda
+                            # con estado propio y no cuenta como enviado, ni en
+                            # el contador diario ni en la latencia de RC.
+                            updates_to_sent.append({
+                                "event_id": db_event.id,
+                                "elapsed_sec": elapsed_sec,
+                                "rc_response": rc_response,
+                                "job_id": job_id,
+                                "estado": ESTADO_SIMULADO,
+                            })
+                            conteo_categorias[categoria.value] += 1
+                        elif success:
                             updates_to_sent.append({
                                 "event_id": db_event.id,
                                 "elapsed_sec": elapsed_sec,
@@ -576,7 +588,8 @@ async def process_provider_events(provider: str, env: str):
                         
             metrics["retry"] = len(updates_to_retry)
             metrics["failed"] = len(updates_to_fail)
-            metrics["sent"] = len(updates_to_sent)
+            metrics["simulado"] = sum(1 for u in updates_to_sent if u.get("estado") == ESTADO_SIMULADO)
+            metrics["sent"] = len(updates_to_sent) - metrics["simulado"]
             metrics["categorias"] = dict(conteo_categorias)
 
             # Alimenta la ventana usada por las estadísticas, que así no
@@ -601,6 +614,7 @@ async def process_provider_events(provider: str, env: str):
         total_sent = 0
         total_failed = 0
         total_retry = 0
+        total_simulado = 0
         soap_ms_total = 0
         
         all_updates_to_retry = []
@@ -614,6 +628,7 @@ async def process_provider_events(provider: str, env: str):
             metrics, retry_list, fail_list, sent_list = m
             total_sent += metrics["sent"]
             total_failed += metrics["failed"]
+            total_simulado += metrics.get("simulado", 0)
             total_retry += metrics["retry"]
             soap_ms_total += metrics["soap_ms"]
             
@@ -653,7 +668,7 @@ async def process_provider_events(provider: str, env: str):
         logger.info(
             f"batch_processed provider={provider} env={env} "
             f"batch_size={len(pendings)} soap_avg_ms={soap_avg_ms:.0f} "
-            f"sent={total_sent} failed={total_failed} retry={total_retry} "
+            f"sent={total_sent} failed={total_failed} retry={total_retry} simulado={total_simulado} "
             f"| RC: {detalle_rc}"
         )
 
@@ -976,7 +991,7 @@ async def purge_provider_events(provider: str, env: str, ignorar_retencion: bool
 
         # Los registros a eliminar, en streaming para no cargar todo en memoria
         query = db.query(NormalizedRCEvent).filter(
-            NormalizedRCEvent.status.in_(["sent", "failed"]),
+            NormalizedRCEvent.status.in_(ESTADOS_TERMINADOS),
             NormalizedRCEvent.created_at < corte
         )
         
@@ -1184,7 +1199,7 @@ def _delete_purged_sync(db_session, corte):
             fila[0]
             for fila in db_session.query(NormalizedRCEvent.id)
             .filter(
-                NormalizedRCEvent.status.in_(["sent", "failed"]),
+                NormalizedRCEvent.status.in_(ESTADOS_TERMINADOS),
                 NormalizedRCEvent.created_at < corte,
             )
             .limit(_PURGE_CHUNK_SIZE)

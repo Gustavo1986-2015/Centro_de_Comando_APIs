@@ -157,7 +157,7 @@ def _persist_batch(batch: list):
             for payload, iid_payload in items_for_env:
                 try:
                     # Usamos el mapper con extracción de Tenant (el router no recibe headers en el inner batch, se asume tenant generico o payload-based aqui)
-                    canonical_list = map_schmitz_payload(payload)
+                    canonical_list = map_schmitz_payload(payload, env=current_env)
                     raw_json_str   = json.dumps(payload, ensure_ascii=False)
                     # El ingest_id del payload ya se asignó en la recepción. Un
                     # payload puede generar varios eventos canónicos (motor
@@ -297,6 +297,23 @@ async def _batch_processor_loop():
 _retry_task = None
 
 
+async def _persistir_cualquier_integracion(provider: str, env: str, lote) -> int:
+    """
+    Devuelve cada evento de la red de seguridad a quien sabe persistirlo.
+
+    El reintentador es uno solo para todo el hub. Schmitz tiene su mapeo
+    propio; el resto de los PUSH pasa por el mapeador dinámico. Cualquier
+    integración nueva que entre por el Integration Studio queda cubierta sin
+    tocar este código.
+    """
+    if provider.lower() == "schmitz":
+        return await persistir_desde_red_de_seguridad(provider, env, lote)
+    from app.api.routers.dynamic_webhook import (
+        persistir_desde_red_de_seguridad as persistir_dinamico,
+    )
+    return await persistir_dinamico(provider, env, lote)
+
+
 async def start_webhook_batch_processor():
     """Inicia el loop de procesamiento por lotes. Llamar desde el startup de la app principal."""
     global _batch_task, _retry_task
@@ -306,7 +323,7 @@ async def start_webhook_batch_processor():
     # lo que haya quedado sin persistir de una ejecución anterior: ese es el
     # punto de que la red de seguridad viva en disco y no en memoria.
     _retry_task = asyncio.create_task(
-        safety_net.bucle_reintentador(persistir_desde_red_de_seguridad)
+        safety_net.bucle_reintentador(_persistir_cualquier_integracion)
     )
 
     # Sonda del bucle de eventos: mide si el proceso está trabado. Es lo que
@@ -364,8 +381,9 @@ async def schmitz_webhook(
             )
             return {"status": "accepted", "note": "cola saturada"}
 
-        provider_health.set_mode("schmitz", env, "push")
-        provider_health.report_fetch_ok("schmitz", env)
+        # Lo mismo de siempre (modo push + recepción correcta), por la función
+        # común del webhook genérico. Schmitz no cuenta peticiones como tráfico.
+        provider_health.report_push_recibido("schmitz", env, cuenta_como_trafico=False)
     except Exception as e:
         logger.warning(f"Excepción capturada en schmitz: {e}")
         logger.error(f"Error inesperado en webhook: {e}")
@@ -449,8 +467,7 @@ async def schmitz_json_data(
             )
             return {"status": "accepted", "note": "cola saturada"}
 
-        provider_health.set_mode("schmitz", env, "push")
-        provider_health.report_fetch_ok("schmitz", env)
+        provider_health.report_push_recibido("schmitz", env, cuenta_como_trafico=False)
     except Exception as e:
         logger.warning(f"Excepción capturada en schmitz: {e}")
         logger.error(f"Error inesperado en Json/Data: {e}")
@@ -481,7 +498,7 @@ async def persistir_desde_red_de_seguridad(provider: str, env: str,
 
     filas = []
     for payload, iid in lote:
-        canonical_list = map_schmitz_payload(payload)
+        canonical_list = map_schmitz_payload(payload, env=env)
         raw_json_str = json.dumps(payload, ensure_ascii=False)
         for indice, canonical in enumerate(canonical_list):
             filas.append({

@@ -15,7 +15,9 @@ class ProviderConfig(Base):
     run_interval_sec = Column(Integer, default=5)
     queue_backend = Column(String, default="sqlite") # sqlite, redis, postgres
     mapping_schema = Column(JSON, default={})
-    fetch_config = Column(JSON, default={})        # Guarda URL, auth_type, user, pass para extraer telemetría
+    # none_as_null (v1.9.7): asignar None guarda NULL de SQL, no el texto 'null'
+    # que la migración de cifrado tomaba por una credencial (auditoría, B-2).
+    fetch_config = Column(JSON(none_as_null=True), default={})  # Guarda URL, auth_type, user, pass para extraer telemetría
     enrichment_config = Column(JSON, default={})   # Guarda URL y reglas para extraer el diccionario (IMEI -> Placa)
     
     # NUEVOS campos cifrados para Envelope Encryption
@@ -23,6 +25,12 @@ class ProviderConfig(Base):
     fetch_config_enc = Column(String, nullable=True) # Text en el spec, pero String funciona igual o TEXT
     webhook_auth_secret_enc = Column(String, nullable=True)
     webhook_auth_header = Column(String, default="x-api-key")
+    # Cómo se autentica el webhook entrante. NULL = modo "header" (secreto fijo
+    # en un header), que es el comportamiento histórico: las integraciones que
+    # no lo configuran siguen funcionando exactamente igual.
+    # Para proveedores que FIRMAN cada petición con HMAC (Tive, y muchos otros)
+    # se describe el esquema acá. Ver app/core/webhook_auth.py.
+    webhook_auth_config = Column(JSON, nullable=True)
 
     # Tipo de ingesta y deduplicación de estado
     provider_type = Column(String, default="pull")       # "push" | "pull"
@@ -32,6 +40,11 @@ class ProviderConfig(Base):
     # NULL = usar el límite global. Solo aplica a proveedores PUSH: los PULL no
     # reciben peticiones entrantes, es el Hub quien sale a consultarlos.
     rate_limit_per_min = Column(Integer, nullable=True)
+
+    # Opciones de un módulo dedicado (app/providers/registry.py), por ejemplo
+    # los interruptores de Tive: qué se envía y qué no. NULL = los valores por
+    # defecto del módulo. Las integraciones del Integration Studio no lo usan.
+    module_options = Column(JSON, nullable=True)
 
 class ProviderDictionary(Base):
     """Almacena pares Key-Value del diccionario de metadatos (Ej. IMEI -> Placa)."""

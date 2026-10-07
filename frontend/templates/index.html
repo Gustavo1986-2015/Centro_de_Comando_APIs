@@ -152,7 +152,7 @@
                 <div style="display: flex; align-items: center; gap: 1rem;">
                     <h2 style="margin: 0;">Última Actividad Global <span id="current-filter-label" style="font-size: 0.9rem; font-weight: normal; color: var(--color-yellow); margin-left: 10px;"></span></h2>
                     <span id="event-count" style="color: #94a3b8; font-size: 0.85rem;">Cargando...</span>
-                    <input type="text" id="search-chassis" placeholder="🔍 Buscar por placa o IMEI..." 
+                    <input type="text" id="search-chassis" placeholder="🔍 Buscar por placa, IMEI o envío..."
                            style="background: #1e293b; border: 1px solid #334155; color: #e2e8f0; 
                                   padding: 6px 12px; border-radius: 6px; font-size: 0.85rem; width: 250px;">
                 </div>
@@ -167,6 +167,10 @@
                         <option value="medium" style="color: black; background: white;">Media (3-9s)</option>
                         <option value="high" style="color: black; background: white;">Alta (≥ 10s)</option>
                     </select>
+                    <label title="Solo alarmas y alertas: oculta los reportes de posición" style="display:flex; align-items:center; gap:6px; color: var(--color-gray); font-size: 0.9rem; cursor:pointer;">
+                        <input type="checkbox" id="filter-solo-eventos" onchange="setFilterSoloEventos(this.checked)" style="width:15px; height:15px; cursor:pointer;">
+                        Solo eventos
+                    </label>
                     <button class="btn-save" onclick="resetFilters()" style="background: var(--level-2); color: var(--color-text); border: 1px solid var(--card-border); padding: 4px 8px;">Quitar Filtros</button>
                     <button class="btn-save" onclick="downloadExcel()" style="background: #10B981; color: white; padding: 4px 8px;" title="Descargar registros filtrados en formato Excel (CSV)">📥 Descargar Excel</button>
                 </div>
@@ -212,13 +216,14 @@
                             <th title="Si está en SIMULANDO, los datos se procesan pero NO se envían a Recurso Confiable. Útil para pruebas.">Envío Simulado a RC</th>
                             <th title="Filtra eventos de sensor repetidos (estado continuo). Momentáneos como SOS siempre emiten. Aplica a PULL. En PUSH activar solo si el proveedor envía estado continuo.">Deduplicación</th>
                             <th title="Nombre de la cabecera HTTP (header) donde el proveedor enviará el PUSH API Key.">PUSH Header</th>
-                            <th title="Llave de seguridad que un proveedor PUSH (ej: Schmitz) te enviará para autorizarse. (Cifrado en BD)">PUSH API Key</th>
+                            <th class="th-clave-webhook" title="Llave de seguridad que un proveedor PUSH (ej: Schmitz) te enviará para autorizarse. (Cifrado en BD)">PUSH API Key</th>
                             <th title="Usuario de autenticación para la API de Recurso Confiable.">RC Usuario</th>
                             <th title="Contraseña para RC. Dejar en blanco para no modificar. (Cifrado en BD)">RC Password</th>
                             <th title="Frecuencia en minutos para purgar datos viejos de la base de datos interna.">Purga (min)</th>
                             <th title="Frecuencia en segundos en que el worker escanea y procesa datos nuevos.">Ejecución (seg)</th>
                             <th title="Peticiones por minuto que acepta el webhook de este proveedor. Vacío = usar el límite global del sistema. No aplica a proveedores PULL.">Límite Push (req/min)</th>
                             <th title="Motor de base de datos usado para la cola interna de procesamiento.">Motor Cola</th>
+                            <th title="Qué envía una integración con módulo dedicado (Tive). No aplica a las integraciones del Integration Studio.">Opciones del Módulo</th>
 
                         </tr>
                     </thead>
@@ -1010,6 +1015,22 @@
             </div>
         </div>
 
+        <div class="recent-section" style="margin-top: 2rem;">
+            <h2>Descartes</h2>
+            <div class="donde-intro">
+                Lo que llegó y NO se envió a Recurso Confiable, con su motivo: filtro de
+                admisión, datos obligatorios del contrato y módulo de Tive. Sobrevive a un
+                reinicio; se guardan los últimos días con un tope de filas.
+            </div>
+            <div style="margin-top:0.5rem;">
+                <button class="btn-save" onclick="cargarDescartes()"
+                        style="background:var(--color-gray); color:white;">Actualizar</button>
+            </div>
+            <div id="descartes-contenedor" style="margin-top:1rem;">
+                <div style="color:#a1a1aa; font-size:0.85rem;">Consultando…</div>
+            </div>
+        </div>
+
     </main>
 
     <main id="view-monitor" style="display: none;">
@@ -1280,21 +1301,37 @@
                         <div>
                             <div class="form-group">
                                 <label class="form-label">Tipo de Autenticación</label>
-                                <select id="authType" class="form-control" onchange="document.getElementById('pullAuthFields').style.display = this.value === 'none' ? 'none' : 'block';">
+                                <select id="authType" class="form-control" onchange="_mostrarCamposAuth('pull', this.value)">
                                     <option value="none">Sin Autenticación</option>
                                     <option value="protrack">Doble Paso MD5 → Token</option>
                                     <option value="md5_dynamic">Firma MD5 Dinámica</option>
                                     <option value="bearer">Bearer Token Fijo</option>
+                                    <option value="oauth2_client_credentials">OAuth2 (client_credentials)</option>
                                 </select>
                             </div>
                             <div id="pullAuthFields" style="display:none; background: var(--level-2); padding: 0.75rem; border-radius: 8px; border: 1px dashed var(--card-border);">
                                 <input type="text"     id="pullAuthUser"     class="form-control" placeholder="Usuario / Cuenta" style="margin-bottom:0.5rem;">
                                 <input type="password" id="pullAuthPass"     class="form-control" placeholder="Contraseña" style="margin-bottom:0.5rem;">
                                 <input type="text"     id="bearerTokenValue" class="form-control" placeholder="Bearer Token (si aplica)">
+                                <div id="pullOAuthFields" style="display:none; margin-top:0.5rem;">
+                                    <input type="text" id="pullTokenUrl" class="form-control" style="margin-bottom:0.5rem;"
+                                           placeholder="URL del token (ej: https://api.proveedor.com/oauth/token)"
+                                           title="Dónde se pide el token. Se usa el usuario como client_id y la contraseña como client_secret.">
+                                    <select id="pullTokenFormat" class="form-control"
+                                            title="Cómo se manda el pedido de token. El estándar OAuth2 es 'formulario'. Tive exige 'multipart'.">
+                                        <option value="form">Pedido de token: formulario (estándar OAuth2)</option>
+                                        <option value="multipart">Pedido de token: multipart (Tive y similares)</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div class="form-group" style="margin-top:0.75rem;">
+                                <label class="form-label" title="Headers que el proveedor exige en cada consulta, en formato JSON. Ej: la cuenta en Tive.">
+                                    Headers adicionales (JSON)</label>
+                                <input type="text" id="pullHeaders" class="form-control" value="{}"
+                                       placeholder='Ej: {"x-tive-account-id": "2847"}'>
                             </div>
                             <div style="display:none;">
-                                <input type="hidden" id="pullHeaders" value="{}">
-                                <input type="hidden" id="pullBody"    value="{}">
+                                <input type="hidden" id="pullBody" value="{}">
                             </div>
                         </div>
                     </div>
@@ -1318,12 +1355,18 @@
 
                 <!-- Regla Base (siempre activa) -->
                 <div style="background: rgba(16,185,129,0.07); border: 1px solid rgba(16,185,129,0.25); border-radius: 8px; padding: 1rem; margin-bottom: 1.5rem;">
-                    <span class="rule-label-pill">Regla Base (siempre)</span>
+                    <span class="rule-label-pill">Regla Base</span>
                     <div style="display: flex; align-items: center; gap: 1rem; flex-wrap: wrap;">
                         <span style="color: var(--color-gray-label); font-size: 0.85rem;">Código RC para el reporte de posición GPS:</span>
                         <input type="text" id="default_rc_code" value="1" class="form-control" style="width: 120px;" placeholder="Ej: 1">
                         <span style="color: var(--color-gray-label); font-size: 0.82rem;">Descripción:</span>
                         <input type="text" id="default_rc_label" value="Reporte GPS" class="form-control" style="width: 180px;" placeholder="Ej: Reporte GPS">
+                        <span style="color: var(--color-gray-label); font-size: 0.82rem;">Se emite:</span>
+                        <select id="default_fire_when" class="form-control" style="width: 290px;"
+                                title="Siempre: cada pulso emite la posición, y además un evento por cada regla que coincida. Solo si ninguna regla coincide: cada pulso emite UN evento, el de la regla o la posición. Es como trabaja Schmitz: una alarma sale con su código, sin una posición repetida al lado.">
+                            <option value="always">Siempre, además de las reglas</option>
+                            <option value="no_rule_matched">Solo si ninguna regla coincide</option>
+                        </select>
                     </div>
                 </div>
 
@@ -1481,15 +1524,32 @@
                             <div class="form-group"><label class="form-label">Método HTTP</label><select id="dictMethod" class="form-control"><option value="GET">GET</option><option value="POST">POST</option></select></div>
                             <div class="form-group">
                                 <label class="form-label">Autenticación</label>
-                                <select id="dictAuthType" class="form-control" onchange="document.getElementById('dictAuthFields').style.display = this.value === 'none' ? 'none' : 'block';">
-                                    <option value="none">Sin Autenticación</option>
+                                <select id="dictAuthType" class="form-control" onchange="_mostrarCamposAuth('dict', this.value)">
+                                    <option value="none">Sin Autenticación (hereda la del PULL)</option>
                                     <option value="protrack">Doble Paso MD5 → Token</option>
                                     <option value="md5_dynamic">Firma MD5 Dinámica</option>
+                                    <option value="oauth2_client_credentials">OAuth2 (client_credentials)</option>
                                 </select>
                             </div>
                             <div id="dictAuthFields" style="display:none; background: var(--level-2); padding: 0.75rem; border-radius: 8px; border: 1px dashed var(--card-border);">
                                 <input type="text"     id="dictAuthUser" class="form-control" placeholder="Usuario" style="margin-bottom:0.5rem;">
                                 <input type="password" id="dictAuthPass" class="form-control" placeholder="Contraseña">
+                                <div id="dictOAuthFields" style="display:none; margin-top:0.5rem;">
+                                    <input type="text" id="dictTokenUrl" class="form-control" style="margin-bottom:0.5rem;"
+                                           placeholder="URL del token (ej: https://api.proveedor.com/oauth/token)"
+                                           title="Dónde se pide el token. Se usa el usuario como client_id y la contraseña como client_secret.">
+                                    <select id="dictTokenFormat" class="form-control"
+                                            title="Cómo se manda el pedido de token. El estándar OAuth2 es 'formulario'. Tive exige 'multipart'.">
+                                        <option value="form">Pedido de token: formulario (estándar OAuth2)</option>
+                                        <option value="multipart">Pedido de token: multipart (Tive y similares)</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div class="form-group" style="margin-top:0.75rem;">
+                                <label class="form-label" title="Headers que exige la consulta del diccionario. Vacío = usa los del PULL.">
+                                    Headers adicionales (JSON)</label>
+                                <input type="text" id="dictHeaders" class="form-control" value=""
+                                       placeholder='Vacío = usa los del PULL'>
                             </div>
                         </div>
                         <div>

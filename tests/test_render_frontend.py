@@ -102,3 +102,34 @@ def test_el_render_soporta_una_respuesta_vacia(tmp_path):
     assert "ReferenceError" not in resultado.stderr, (
         f"El render rompe con una respuesta vacía:\n{resultado.stderr}"
     )
+
+
+@pytest.mark.skipif(not _hay_node(), reason="Node no está disponible en este entorno")
+def test_el_selector_de_autenticacion_del_panel_ejecuta_bien():
+    """
+    Ejecuta el JavaScript real del selector de autenticación de webhooks y de
+    los campos de OAuth2. Verifica, entre otras cosas, que un proveedor
+    histórico siga en "Clave fija" y que un esquema HMAC armado a mano no se
+    pierda al guardar la tabla de proveedores.
+    """
+    resultado = subprocess.run(
+        ["node", os.path.join(RAIZ, "tools", "verificar_auth_ui.js")],
+        cwd=RAIZ, capture_output=True, text=True, timeout=60,
+    )
+    assert resultado.returncode == 0, f"{resultado.stdout}\n{resultado.stderr}"
+    assert "Todo OK" in resultado.stdout
+
+
+@pytest.mark.skipif(not _hay_node(), reason="Node no está disponible en este entorno")
+def test_guardar_el_integration_studio_no_borra_el_filtro_de_admision():
+    """
+    Bug real: guardar armaba el esquema con tres claves y nada más. Un filtro
+    de admisión importado por YAML desaparecía la primera vez que alguien
+    tocaba el Integration Studio, sin aviso. Ejecuta el guardado real.
+    """
+    resultado = subprocess.run(
+        ["node", os.path.join(RAIZ, "tools", "verificar_esquema_ui.js")],
+        cwd=RAIZ, capture_output=True, text=True, timeout=60,
+    )
+    assert resultado.returncode == 0, f"{resultado.stdout}\n{resultado.stderr}"
+    assert "Todo OK" in resultado.stdout

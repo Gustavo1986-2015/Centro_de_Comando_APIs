@@ -1,0 +1,48 @@
+# Integración Tive para el servidor — Hub Telemático Assistcargo v1.9.5
+#
+# Importar desde el panel: Configuración Global → Respaldo de configuración →
+# "Ver qué haría" (simulación) y, si está bien, aplicar escribiendo IMPORTAR.
+#
+# Contiene SOLO la integración tive/prod. No toca la configuración general ni
+# ninguna otra integración del servidor.
+#
+# Queda en MODO SIMULADO: recibe y procesa, pero NO envía a Recurso Confiable
+# hasta que se lo pase a REAL desde el panel.
+#
+# NO contiene ninguna contraseña. Después de importar hay que cargar a mano
+# lo que lista 'credenciales_a_cargar'.
+formato: 1
+hub_version: 1.9.5
+incluye_credenciales: false
+
+proveedores:
+- nombre: tive
+  entorno: prod
+  tipo: push
+  activo: true
+  modo_simulado: true
+  # Tive no manda estado continuo: la deduplicación de estado no aplica. Los
+  # duplicados de Tive los resuelve su módulo (doble clave por AlertId).
+  deduplicacion: false
+  intervalo_ejecucion_seg: 5
+  intervalo_purga_min: 15
+  motor_cola: sqlite
+  # Firma HMAC de Tive: el secreto nunca viaja; cada petición se firma.
+  webhook_header: x-tive-signature
+  webhook_autenticacion:
+    modo: hmac
+    preset: tive
+  limite_push_por_min: null
+  # Interruptores del módulo dedicado, con sus valores por defecto. Sin mapeo
+  # del Integration Studio: la lógica de Tive vive en app/providers/tive/.
+  opciones_modulo:
+    posiciones_terceros: true
+    alertas_beacons: true
+    alertas_trackers: false
+    resolver_nombres_api: false
+    # v1.9.5: apagado mientras RC directo siga activo (duplicaría RC).
+    posiciones_equipos: false
+  credenciales_a_cargar:
+  - contraseña de Recurso Confiable (y su usuario)
+  - clave secreta de la firma del webhook (la misma configurada en platform.tive.com)
+  - client_id y client_secret de la API de Tive (solo si se activa "Resolver nombres con la API de Tive")
