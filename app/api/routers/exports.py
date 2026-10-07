@@ -45,7 +45,7 @@ from app.core import config_cache
 from app.core.auditor import log_admin_action
 from app.core.auth import verify_dashboard_auth
 from app.database import get_session
-from app.models.db_models import NormalizedRCEvent
+from app.models.db_models import ESTADOS_TERMINADOS, NormalizedRCEvent
 from app.worker.processor import evento_a_registro_respaldo
 
 logger = logging.getLogger(__name__)
@@ -338,7 +338,10 @@ def exportar_enviados(
                     consulta = (
                         db.query(NormalizedRCEvent)
                         .filter(
-                            NormalizedRCEvent.status.in_(["sent", "failed"]),
+                            # Incluye lo simulado, con su estado: la descarga
+                            # dice qué pasó con cada evento, sin contarlo como
+                            # enviado a RC (v1.9.7).
+                            NormalizedRCEvent.status.in_(ESTADOS_TERMINADOS),
                             NormalizedRCEvent.created_at >= datetime.combine(
                                 d_desde, datetime.min.time()
                             ),

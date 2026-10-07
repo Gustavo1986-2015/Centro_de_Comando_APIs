@@ -44,3 +44,30 @@ PLAYBOOK_NEW_API.md
 .pytest_cache/
 .agents/
 tests/
+
+# ─── Datos de clientes, respaldos y credenciales (v1.9.7) ───────────────────
+# La imagen se publica en Docker Hub y se construye en la máquina de
+# desarrollo, donde la carpeta del proyecto tiene respaldos de bases (con
+# credenciales cifradas) y crudos de clientes. Nada de eso puede viajar en la
+# imagen (auditoría, B-11). Los patrones con **/ cubren cualquier nivel.
+**/db/
+**/db_backup*
+**/*respaldo*
+**/tive_crudos*
+**/audit/
+**/logs/
+**/*.jsonl
+**/*.db
+**/*.db-wal
+**/*.db-shm
+**/*.sqlite
+**/*.sqlite3
+**/rc_token_cache*
+**/*.pem
+**/*.key
+**/.env
+**/.env.*
+!.env.example
+**/__pycache__/
+pytest.ini
+.claude/

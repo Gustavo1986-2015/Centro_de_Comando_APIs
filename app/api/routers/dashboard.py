@@ -11,7 +11,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 from app.database import get_session
-from app.models.db_models import NormalizedRCEvent
+from app.models.db_models import ESTADOS_TERMINADOS, NormalizedRCEvent
 from app.models.config_models import ProviderConfig, DailyStat
 from app.worker.processor import _rc_circuit_breaker
 from datetime import datetime, timezone, timedelta
@@ -177,6 +177,21 @@ templates = Jinja2Templates(directory="frontend/templates")
 
 
 
+def _formato_rc(ev) -> dict:
+    """
+    Evento en el formato de Recurso Confiable, idéntico al que se envía.
+
+    Delega en rc_soap.construir_evento_rc, la única fuente de verdad. Si la
+    construcción fallara para una fila puntual, se informa el error en vez de
+    inventar un payload que no es el real.
+    """
+    from app.services.rc_soap import construir_evento_rc
+    try:
+        return construir_evento_rc(ev)
+    except Exception as e:
+        return {"_error": f"No se pudo armar el evento RC: {e}"}
+
+
 @router.get("/dashboard", response_class=HTMLResponse)
 async def get_dashboard(request: Request, _: None = Depends(verify_dashboard_auth)):
     """Renderiza el Centro de Comando en Vivo."""
@@ -253,8 +268,36 @@ def _totales_del_dia_sync() -> dict:
         db.close()
 
 
-def _fetch_events_for_provider_sync(provider_name, provider_env, status_filter, today_start, thirty_secs_ago):
+# Código de posición de Schmitz, medido en sus crudos: "Standard" en 3684 de
+# 6975 payloads; el resto son alarmas (DoorAlarm, IgnitionAlarm, ...).
+_CODIGO_POSICION_SCHMITZ = "Standard"
+
+
+def codigos_de_posicion(p) -> set[str]:
+    """
+    Los códigos que significan "reporte de posición" para una integración.
+
+    Todo lo demás es un evento (alarma, alerta, cambio de estado), y el panel
+    lo etiqueta y lo puede filtrar. Cada camino tiene el suyo: Schmitz manda
+    "Standard"; un módulo dedicado declara el suyo; una integración del
+    Studio usa el código de su regla base.
+    """
+    from app.core.state_dedup import get_base_code
+    from app.providers import registry
+
+    if (p.provider_name or "").lower() == "schmitz":
+        return {_CODIGO_POSICION_SCHMITZ}
+    modulo = registry.modulo_dedicado(p.provider_name)
+    if modulo is not None:
+        return {str(getattr(modulo, "CODIGO_POSICION", "1"))}
+    esquema = p.mapping_schema if isinstance(p.mapping_schema, dict) else {}
+    return {get_base_code(esquema)}
+
+
+def _fetch_events_for_provider_sync(provider_name, provider_env, status_filter, today_start,
+                                    thirty_secs_ago, solo_eventos=False, codigos_posicion=None):
     """Queries SQLite de un proveedor específico. Sync, para ejecutar en ThreadPool."""
+    codigos_posicion = codigos_posicion or {"1"}
     db = get_session(provider_name, provider_env)
     try:
         stats = db.query(
@@ -276,10 +319,18 @@ def _fetch_events_for_provider_sync(provider_name, provider_env, status_filter, 
         query = db.query(NormalizedRCEvent)
         if status_filter and status_filter != 'all':
             query = query.filter(NormalizedRCEvent.status == status_filter)
+        if solo_eventos:
+            # En la base y no en el navegador: sin filtros la grilla trae los
+            # últimos 200, y entre ellos puede no haber ningún evento.
+            query = query.filter(
+                NormalizedRCEvent.code.isnot(None),
+                NormalizedRCEvent.code.notin_(sorted(codigos_posicion)),
+            )
         recent = query.order_by(NormalizedRCEvent.id.desc()).limit(200).all()
         for r in recent:
             r.provider_name = provider_name
             r.env = provider_env
+            r.es_evento = r.code is not None and r.code not in codigos_posicion
         return stats, recent
     finally:
         db.close()
@@ -308,7 +359,8 @@ def _get_mock_providers() -> list[str]:
 
 async def get_stats_data(
     status_filter: str = None,
-    provider_filter: str = None
+    provider_filter: str = None,
+    solo_eventos: bool = False,
 ):
     """
     Retorna las estadísticas en tiempo real sumando los datos de
@@ -351,7 +403,8 @@ async def get_stats_data(
         # Query por proveedor en ThreadPool (operación bloqueante)
         stats, recent = await asyncio.to_thread(
             _fetch_events_for_provider_sync,
-            provider_name, provider_env, status_filter, today_start, thirty_secs_ago
+            provider_name, provider_env, status_filter, today_start, thirty_secs_ago,
+            solo_eventos, codigos_de_posicion(p),
         )
 
         total_pending += int(stats.pending or 0)
@@ -440,10 +493,19 @@ async def get_stats_data(
             "provider": getattr(ev, 'provider_name', "N/A").upper(),
             "env": getattr(ev, 'env', "N/A").upper(),
             "device_date": device_date_local.strftime("%Y-%m-%d %H:%M:%S") + (" (Local)" if tz_offset != 0 else " (UTC)") if device_date_local else "N/A",
-            "speed": getattr(ev, 'speed', 0),
-            "coords": f"{ev.latitude}, {ev.longitude}" if getattr(ev, 'latitude') and ev.latitude else "Sin GPS",
-            "ignition": "ON" if getattr(ev, 'ignition') else "OFF",
+            # None = el proveedor no mide velocidad: el panel muestra N/A. A RC
+            # le llega "0", que es lo que pide el contrato.
+            "speed": getattr(ev, 'speed', None),
+            # "is not None": una latitud 0 es un dato real, no "Sin GPS".
+            "coords": (f"{ev.latitude}, {ev.longitude}"
+                       if getattr(ev, 'latitude', None) is not None and getattr(ev, 'longitude', None) is not None
+                       else "Sin GPS"),
+            # Tres estados: un dato que el proveedor no mide no es "apagado".
+            "ignition": ("N/A" if getattr(ev, 'ignition', None) is None
+                         else "ON" if ev.ignition else "OFF"),
             "code": getattr(ev, 'code', "N/A"),
+            # Alarma, alerta o cambio de estado: el panel lo etiqueta.
+            "es_evento": bool(getattr(ev, 'es_evento', False)),
             "course": getattr(ev, 'course', None),
             "altitude": getattr(ev, 'altitude', None),
             "temperature": getattr(ev, 'temperature', None),
@@ -456,28 +518,10 @@ async def get_stats_data(
             "retry_count": retry_count,
             "next_retry_in_sec": next_retry_in_sec,
             
-            # Exportación estructurada idéntica a Recurso Confiable
-            "rc_format": {
-                "asset": ev.chassis_number,
-                "altitude": getattr(ev, 'altitude', 0) or 0,
-                "battery": getattr(ev, 'battery', 0) or 0,
-                "code": getattr(ev, 'code', "1") or "1",
-                "customer": {"id": "", "name": ""},
-                "date": ev.date.strftime("%Y-%m-%dT%H:%M:%SZ") if getattr(ev, 'date') and ev.date else "",
-                "direction": getattr(ev, 'course', 0) or 0,
-                "humidity": getattr(ev, 'humidity', 0) or 0,
-                "ignition": "true" if getattr(ev, 'ignition') else "false",
-                "latitude": getattr(ev, 'latitude', 0) or 0,
-                "longitude": getattr(ev, 'longitude', 0) or 0,
-                "odometer": getattr(ev, 'odometer', 0) or 0,
-                "serialNumber": getattr(ev, 'serial_number', "") or "",
-                "shipment": getattr(ev, 'shipment', "") or "",
-                "speed": getattr(ev, 'speed', 0) or 0,
-                "temperature": getattr(ev, 'temperature', 0) or 0,
-                "vehicleType": getattr(ev, 'vehicle_type', "") or "",
-                "vehicleBrand": getattr(ev, 'vehicle_brand', "") or "",
-                "vehicleModel": getattr(ev, 'vehicle_model', "") or ""
-            },
+            # Lo que se manda a RC, armado por la MISMA función que el envío
+            # real. Antes este bloque tenía su propia versión y mostraba datos
+            # que RC nunca recibía. Ver rc_soap.construir_evento_rc.
+            "rc_format": _formato_rc(ev),
             "raw_data": ev.raw_data
         })
 
@@ -519,9 +563,10 @@ async def get_stats_data(
 async def get_stats(
     status_filter: str = Query(None, alias="status"),
     provider_filter: str = Query(None, alias="provider"),
+    solo_eventos: bool = Query(False, description="Solo alarmas y alertas, sin reportes de posición"),
     _: None = Depends(verify_dashboard_auth)
 ):
-    return await get_stats_data(status_filter, provider_filter)
+    return await get_stats_data(status_filter, provider_filter, solo_eventos)
 
 _sse_clients: list[asyncio.Queue] = []
 
@@ -696,7 +741,7 @@ def _db_stats_sync():
             except OSError:
                 pass
 
-        conteos = {"pending": 0, "processing": 0, "sent": 0, "failed": 0}
+        conteos = {"pending": 0, "processing": 0, "sent": 0, "failed": 0, "simulado": 0}
         total = 0
         try:
             db = get_session(provider, env)
@@ -726,7 +771,7 @@ def _db_stats_sync():
                 purgables = (
                     db.query(func.count(NormalizedRCEvent.id))
                     .filter(
-                        NormalizedRCEvent.status.in_(["sent", "failed"]),
+                        NormalizedRCEvent.status.in_(ESTADOS_TERMINADOS),
                         NormalizedRCEvent.updated_at < corte,
                     )
                     .scalar()
@@ -1025,6 +1070,20 @@ async def reiniciar_diagnostico_latencia(_=Depends(verify_dashboard_auth)):
 
     latencia.limpiar()
     return {"ok": True, "mensaje": "Muestras de latencia reiniciadas."}
+
+
+@router.get("/api/diagnostico/descartes")
+async def diagnostico_descartes(limite: int = 100, _=Depends(verify_dashboard_auth)):
+    """
+    Lo que no se envió a RC: conteo por integración, origen y motivo, y los
+    últimos descartes con hora, equipo, envío, motivo y AlertId.
+
+    Cubre el filtro de admisión, la validación del contrato y el módulo de
+    Tive. Antes solo quedaban en consola y un reinicio se los llevaba.
+    """
+    from app.core import descartes
+
+    return await asyncio.to_thread(descartes.consultar, limite)
 
 
 @router.get("/api/diagnostico/red-seguridad")

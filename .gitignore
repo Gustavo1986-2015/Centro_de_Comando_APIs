@@ -99,3 +99,9 @@ GUIA_INTEGRACION.md
 
 # Testing (config local)
 pytest.ini
+db_backup*/
+rc_token_cache*.json
+
+
+# Excepción a *.jsonl: crudos reales de prueba, recortados de direcciones (v1.9.2).
+!tests/fixtures/*.jsonl

@@ -10,7 +10,10 @@ class RCCanonicalModel(BaseModel):
     """
     model_config = ConfigDict(extra='ignore', from_attributes=True)
     
-    chassis_number: str = Field(..., description="ChassisNumber o Plate")
+    # Opcional en el modelo para poder representar un evento SIN patente y
+    # descartarlo con aviso (app/core/contrato.py). Antes era obligatorio y el
+    # mapeador dinámico lo rellenaba con "UNKNOWN", que viajaba a RC.
+    chassis_number: Optional[str] = Field(None, description="ChassisNumber o Plate")
 
     @field_validator('chassis_number', mode='before')
     @classmethod
