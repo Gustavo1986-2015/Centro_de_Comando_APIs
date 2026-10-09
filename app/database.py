@@ -441,6 +441,41 @@ def session_context(provider: str, env: str = "prod"):
     finally:
         db.close()
 
+# Tablas propias de una base de cola. SQLite agrega las suyas (sqlite_*).
+TABLAS_DE_COLA = frozenset({"normalized_rc_events"})
+
+
+def es_base_de_cola(ruta: str) -> bool:
+    """
+    True si el archivo es una cola de eventos hacia RC (v1.9.8).
+
+    Una cola tiene normalized_rc_events y ninguna otra tabla propia. Mirar solo
+    que exista normalized_rc_events no alcanza: hasta v1.9.7 el listado de
+    almacenamiento abría toda base de db/*/ con get_session(), que crea esa
+    tabla, y así la base de estado de Tive (prod_estado.db) recibió una vacía
+    sin dejar de ser una base de estado.
+
+    Se abre en solo lectura: mirar nunca crea ni modifica nada. Un archivo que
+    no existe o no se puede leer no es una cola.
+    """
+    import sqlite3
+    if not os.path.isfile(ruta):
+        return False
+    try:
+        from pathlib import Path
+        con = sqlite3.connect(Path(os.path.abspath(ruta)).as_uri() + "?mode=ro", uri=True, timeout=5)
+        try:
+            tablas = {
+                nombre for (nombre,) in con.execute("SELECT name FROM sqlite_master WHERE type='table'")
+                if not nombre.startswith("sqlite_")
+            }
+        finally:
+            con.close()
+    except sqlite3.Error:
+        return False
+    return tablas == TABLAS_DE_COLA
+
+
 def get_db_provider(provider: str):
     """
     Fábrica de dependencias para FastAPI.

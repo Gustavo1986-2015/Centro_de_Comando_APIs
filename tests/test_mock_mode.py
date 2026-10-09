@@ -196,3 +196,60 @@ def test_static_version_con_archivo_inexistente():
     """No debe romper el render del dashboard si falta un estático."""
     from app.version import static_version
     assert static_version("no-existe-este-archivo.js")
+
+
+# ─── v1.9.8 (auditoría B-6): el worker respeta el modo simulado, EJECUTADO ──
+#
+# En la suite RC_USE_MOCK=True para toda la sesión, así que "el worker ignora
+# el modo simulado de la integración" pasaba inadvertido: el cliente simulaba
+# igual por la variable global. Acá la variable se apaga y se instrumenta la
+# llamada SOAP real (_send_batch_sync): con la integración en simulado, el
+# worker no puede llegar a ella.
+
+def _un_ciclo_del_worker(monkeypatch, use_mock: bool):
+    import asyncio
+    from app.api.routers import schmitz
+    from app.core.crypto import encrypt
+    from app.database import get_session
+    from app.models.config_models import ProviderConfig
+    from app.models.db_models import NormalizedRCEvent
+    from app.services import rc_soap
+    from app.worker import processor
+
+    db = get_session("system_config", "global")
+    db.add(ProviderConfig(provider_name="schmitz", env="prod", provider_type="push", is_active=True,
+                          use_mock=use_mock, rc_user="AC_avl_SchmitzCargoBull", rc_password_enc=encrypt("x")))
+    db.commit()
+    db.close()
+    schmitz._persist_batch([({"ChassisNumber": "R5868BDP", "DeviceTime": "2026-10-04T22:23:36Z",
+                              "StatusData": [{"Position": {"Latitude": 42.44, "Longitude": -3.49}}]},
+                             "prod", "b6")])
+    llamadas_soap = []
+
+    def _soap_real(self, eventos):
+        llamadas_soap.append(len(eventos))
+        raise ConnectionError("RC no disponible en el test")
+
+    monkeypatch.setattr(rc_soap, "RC_USE_MOCK", False)
+    monkeypatch.setattr(rc_soap.RCSOAPClient, "_send_batch_sync", _soap_real)
+    monkeypatch.setattr(processor, "trigger_worker", lambda *a, **k: None)
+    asyncio.run(processor.process_provider_events("schmitz", "prod"))
+    db = get_session("schmitz", "prod")
+    try:
+        estados = [e.status for e in db.query(NormalizedRCEvent).all()]
+    finally:
+        db.close()
+    return llamadas_soap, estados
+
+
+def test_el_worker_no_llama_a_rc_si_la_integracion_esta_en_simulado(config_aislada, monkeypatch):
+    llamadas, estados = _un_ciclo_del_worker(monkeypatch, use_mock=True)
+    assert llamadas == [], "con la integración en simulado el worker llamó a RC"
+    assert estados == ["simulado"]
+
+
+def test_control_en_modo_real_el_worker_si_llama_a_rc(config_aislada, monkeypatch):
+    """El control del anterior: confirma que la instrumentación ve la llamada real."""
+    llamadas, estados = _un_ciclo_del_worker(monkeypatch, use_mock=False)
+    assert llamadas == [1]
+    assert estados == ["pending"], "un fallo de transporte se reintenta"

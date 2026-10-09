@@ -109,11 +109,29 @@ def identidad(payload: dict, mapping_schema: dict | None) -> str:
     return " ".join(partes) or "sin identificador en el payload"
 
 
+def coordenadas(payload: dict, mapping_schema: dict | None) -> tuple:
+    """
+    (latitud, longitud) del payload con las rutas del mapeo base, o (None, None).
+    Igual que identidad(): el filtro corre antes del mapeador (v1.9.8).
+    """
+    from app.core.dynamic_mapper import DynamicMapper
+
+    base = (mapping_schema or {}).get("base_mapping", mapping_schema) or {}
+    if not isinstance(base, dict) or not isinstance(payload, dict):
+        return None, None
+    valores = []
+    for clave in ("latitude", "longitude"):
+        ruta = base.get(clave)
+        valores.append(DynamicMapper._extract_value(payload, ruta) if ruta else None)
+    return tuple(valores)
+
+
 # Cuántos equipos distintos se nombran en cada resumen por minuto.
 MAX_EQUIPOS_EN_RESUMEN = 10
 
 
-def registrar_descarte(provider: str, env: str, motivo: str, identidad: str | None = None) -> None:
+def registrar_descarte(provider: str, env: str, motivo: str, identidad: str | None = None,
+                       coordenadas_evento: tuple | None = None) -> None:
     """
     Cuenta el descarte y lo registra sin inundar la consola.
 
@@ -123,7 +141,9 @@ def registrar_descarte(provider: str, env: str, motivo: str, identidad: str | No
     # Cada descarte queda en el registro persistente del panel, uno por uno:
     # la consola los resume por minuto, la base no.
     from app.core import descartes
-    descartes.registrar(provider, env, "admision", motivo, equipo=identidad)
+    latitud, longitud = coordenadas_evento or (None, None)
+    descartes.registrar(provider, env, "admision", motivo, equipo=identidad,
+                        latitud=latitud, longitud=longitud)
 
     clave = (provider.lower(), env.lower(), motivo)
     ahora = time.time()
@@ -154,6 +174,7 @@ def registrar_descarte(provider: str, env: str, motivo: str, identidad: str | No
         logger.info(
             f"{etiqueta} Evento descartado por el filtro de admisión: {motivo}."
             f"{f' Equipo: {identidad}.' if identidad else ''}"
+            f"{descartes.texto_coordenadas(latitud, longitud)}"
         )
     elif resumir:
         nombrados = ", ".join(equipos[:MAX_EQUIPOS_EN_RESUMEN])
