@@ -1245,10 +1245,15 @@
                 updateSparkline('spark-failed',   'val-failed');
                 updateSparkline('spark-retries',  'val-retries');
 
-                if (currentSoloEventos) {
-                    // El SSE trae los últimos 200 sin filtrar: con "solo
-                    // eventos" se pide al servidor la lista filtrada, sin
-                    // recargarla más de una vez cada 5 segundos.
+                // El SSE trae los últimos 200 de TODO el hub, sin filtrar. Con
+                // cualquier filtro activo (proveedor, estado o "solo eventos")
+                // no se pisa la lista: se pide al servidor la filtrada, sin
+                // recargarla más de una vez cada 5 segundos. Antes solo "solo
+                // eventos" lo hacía: con un filtro de proveedor, Tive
+                // desaparecía de la grilla porque no entraba en esos 200 (v1.9.8).
+                const hayFiltroDeServidor = currentStatusFilter !== 'all'
+                    || currentProviderFilter !== 'all' || currentSoloEventos;
+                if (hayFiltroDeServidor) {
                     if (Date.now() - _ultimaRecargaSoloEventos > 5000) {
                         _ultimaRecargaSoloEventos = Date.now();
                         fetchFilteredEvents();
@@ -1736,7 +1741,9 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
                             <td class="celda-clave-webhook">${_celdaClaveWebhook(c)}</td>
                             <td>
                                 ${esPull(c) ? `<button class="btn-renovar-token" title="Descartar el token guardado del proveedor y pedir uno nuevo en el próximo ciclo" onclick="renovarToken('${c.provider_name}','${c.env}')">↻ token</button>` : ''}
-                                <input class="form-control" type="text" id="user_${c._originalIdx}" value="${c.rc_user || ''}">
+                                <input class="form-control input-rc-usuario" type="text" id="user_${c._originalIdx}" value="${_escAttr(c.rc_user || '')}"
+                                       title="${_escAttr(c.rc_user || '')}" style="width: ${_anchoUsuarioRc(c.rc_user)}ch;"
+                                       oninput="this.style.width = _anchoUsuarioRc(this.value) + 'ch'; this.title = this.value;">
                             </td>
                             <td><input class="form-control" type="password" id="pass_${c._originalIdx}" placeholder="${c.has_rc_password ? '•••••••• (Cifrado)' : ''}" title="Dejar vacío para mantener el actual"></td>
                             <td><input class="form-control" type="number" id="purge_${c._originalIdx}" value="${c.purge_interval_min}" style="width: 80px;"></td>
@@ -1764,6 +1771,13 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
             } catch(e) {
                 console.error("Error al cargar config", e);
             }
+        }
+
+        // Ancho del campo "RC Usuario" (v1.9.8): el usuario entero a la vista
+        // (ej. AC_avl_SchmitzCargoBull). Con width:100% la celda lo achicaba y
+        // se leían pocas letras. Margen de 3ch para el relleno del campo.
+        function _anchoUsuarioRc(usuario) {
+            return Math.min(Math.max(String(usuario || '').length + 3, 22), 48);
         }
 
         // Interruptores de una integración con módulo dedicado (Tive): qué se
@@ -2158,6 +2172,14 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
             return d.innerHTML;
         }
 
+        // Para valores dentro de un atributo (v1.9.8). _escapeHtml usa el DOM,
+        // que no escapa comillas: un " cortaría el atributo.
+        function _escAttr(v) {
+            return String(v === null || v === undefined ? '' : v)
+                .replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/'/g, '&#39;')
+                .replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        }
+
         function clearConsole() {
             _consoleLines = [];
             renderConsole();
@@ -2317,7 +2339,8 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
 
                 // Agrupar por proveedor y separar las residuales: aparecían
                 // mezcladas con las reales y no había forma de distinguirlas.
-                const activas   = dbs.filter(d => !d.orphan);
+                const activas   = dbs.filter(d => !d.orphan && !d.estado);
+                const deEstado  = dbs.filter(d => !d.orphan && d.estado);
                 const residuales = dbs.filter(d => d.orphan);
 
                 const etiqueta = (db) => {
@@ -2329,6 +2352,19 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
                     const g = document.createElement('optgroup');
                     g.label = 'Bases activas';
                     activas.forEach(db => {
+                        const o = document.createElement('option');
+                        o.value = db.name;
+                        o.textContent = etiqueta(db);
+                        g.appendChild(o);
+                    });
+                    select.appendChild(g);
+                }
+
+                // Bases de estado de Tive (v1.9.8): la memoria del módulo, en solo lectura.
+                if (deEstado.length) {
+                    const g = document.createElement('optgroup');
+                    g.label = 'Estado de Tive (solo lectura)';
+                    deEstado.forEach(db => {
                         const o = document.createElement('option');
                         o.value = db.name;
                         o.textContent = etiqueta(db);
@@ -2406,102 +2442,293 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
         // Estado global del editor de BD
         let _dbEditorState = { db: null, table: null, editable: false, pendingEdit: null };
 
+        // ── Visor de BD (v1.9.8) ────────────────────────────────────────────
+        // Dos orígenes: la base (tránsito) y el respaldo de procesados (JSONL).
+        // Lo más reciente primero, filtros, celda completa con Copiar, fila
+        // completa y descarga CSV de la vista. Las columnas *_enc llegan del
+        // servidor como "(cifrado)": el contenido nunca sale de ahí.
+        let _dbVista = null;              // { columns, rows, rowids, editable, cifradas }
+        let _dbSeleccion = null;          // { fila, col }
+        let _dbUltimaConsulta = null;     // parámetros de lo que se está viendo
+        let _dbRespaldosCargados = false;
+
+        function _origenBd() {
+            const sel = document.getElementById('db-origen');
+            return sel && sel.value === 'respaldo' ? 'respaldo' : 'base';
+        }
+
+        async function cambiarOrigenBd() {
+            const respaldo = _origenBd() === 'respaldo';
+            document.getElementById('db-origen-base').style.display = respaldo ? 'none' : 'flex';
+            document.getElementById('db-origen-respaldo').style.display = respaldo ? 'flex' : 'none';
+            const busqueda = document.getElementById('db-search-container');
+            if (busqueda) busqueda.style.display = respaldo ? 'none' : '';
+            _dbPage.offset = 0;
+            if (respaldo && !_dbRespaldosCargados) await cargarRespaldosBd();
+        }
+
+        async function cargarRespaldosBd() {
+            const sel = document.getElementById('db-respaldo-integracion');
+            const nota = document.getElementById('db-respaldo-nota');
+            sel.innerHTML = '<option value="">Cargando...</option>';
+            try {
+                const res = await fetch('/api/db-viewer/respaldos');
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.detail || 'Error');
+                sel.innerHTML = data.integraciones.length
+                    ? data.integraciones.map(i => `<option value="${_escAttr(i.integracion)}" data-ultimo="${_escAttr(i.ultimo_dia || '')}">${_escapeHtml(i.integracion)}${i.ultimo_dia ? ` — hasta ${_escapeHtml(i.ultimo_dia)}` : ' — sin archivos'}</option>`).join('')
+                    : '<option value="">No hay respaldos de procesados</option>';
+                if (nota) nota.textContent = `Rango obligatorio, de hasta ${data.max_dias} días (el tope de las descargas).`;
+                _dbRespaldosCargados = true;
+                _fechasPorDefectoRespaldoBd();
+            } catch (e) {
+                sel.innerHTML = '<option value="">Error cargando respaldos</option>';
+            }
+        }
+
+        // Sin fechas elegidas, el último día con respaldo de esa integración.
+        function _fechasPorDefectoRespaldoBd() {
+            const sel = document.getElementById('db-respaldo-integracion');
+            const opcion = sel && sel.options ? sel.options[sel.selectedIndex] : null;
+            const ultimo = opcion && opcion.dataset ? opcion.dataset.ultimo : '';
+            const desde = document.getElementById('db-f-desde');
+            const hasta = document.getElementById('db-f-hasta');
+            if (ultimo && !desde.value && !hasta.value) { desde.value = ultimo; hasta.value = ultimo; }
+        }
+
+        // Los parámetros de la consulta, según el origen y los filtros.
+        function _parametrosVisorBd() {
+            const p = new URLSearchParams();
+            const origen = _origenBd();
+            if (origen === 'respaldo') {
+                p.set('integracion', document.getElementById('db-respaldo-integracion').value);
+            } else {
+                p.set('db_name', document.getElementById('db-select').value);
+                p.set('table', document.getElementById('table-select').value);
+                const busqueda = document.getElementById('db-search-input');
+                if (busqueda && busqueda.value.trim()) p.set('search', busqueda.value.trim());
+            }
+            const filtros = { estado: 'db-f-estado', patente: 'db-f-patente', envio: 'db-f-envio',
+                              desde: 'db-f-desde', hasta: 'db-f-hasta' };
+            for (const [clave, id] of Object.entries(filtros)) {
+                const el = document.getElementById(id);
+                const valor = el && el.value ? String(el.value).trim() : '';
+                if (valor) p.set(clave, valor);
+            }
+            return { origen, params: p };
+        }
+
         async function loadQueryData() {
-            const dbName = document.getElementById('db-select').value;
-            const tableName = document.getElementById('table-select').value;
-            if(!dbName || !tableName) {
+            const { origen, params } = _parametrosVisorBd();
+            if (origen === 'base' && (!params.get('db_name') || !params.get('table'))) {
                 alert("Debe seleccionar una base de datos y una tabla.");
                 return;
             }
-            
+            if (origen === 'respaldo' && (!params.get('integracion') || !params.get('desde') || !params.get('hasta'))) {
+                alert("Elegí la integración y el rango de fechas (desde y hasta) del respaldo.");
+                return;
+            }
+
             const thead = document.getElementById('db-viewer-thead');
             const tbody = document.getElementById('db-viewer-tbody');
             const info = document.getElementById('db-viewer-info');
             const badge = document.getElementById('db-edit-badge');
-            
+
             thead.innerHTML = '<tr><th>Cargando datos...</th></tr>';
             tbody.innerHTML = '';
             info.textContent = 'Mostrando 0 registros.';
             badge.style.display = 'none';
-            
-            const searchContainer = document.getElementById('db-search-container');
-            if (tableName) {
-                if (!document.getElementById('db-search-input')) {
-                    searchContainer.innerHTML = `<input type="text" id="db-search-input" placeholder="🔍 Buscar en cualquier columna..." 
-                       style="background: #1e293b; border: 1px solid #334155; color: #e2e8f0; 
-                              padding: 6px 12px; border-radius: 6px; margin-bottom: 10px; width: 300px;">`;
-                    
-                    document.getElementById('db-search-input').addEventListener('input', function(e) {
-                        clearTimeout(window.searchDbTimeout);
-                        window.searchDbTimeout = setTimeout(() => {
-                            _dbPage.offset = 0;   // nueva búsqueda: volver al inicio
-                            loadQueryData();
-                        }, 500);
-                    });
-                }
-            } else {
-                searchContainer.innerHTML = '';
-            }
+            cerrarDetalleBd();
 
-            const searchInput = document.getElementById('db-search-input');
-            const searchTerm = searchInput ? searchInput.value.trim() : '';
+            if (origen === 'base') _asegurarBuscadorBd();
+
+            // Vista distinta (otra tabla, otro respaldo u otros filtros): volver al inicio.
+            const clave = origen + '|' + params.toString();
+            if (!_dbUltimaConsulta || _dbUltimaConsulta.clave !== clave) _dbPage.offset = 0;
 
             try {
-                const limit  = _dbPage.size;
-                const offset = _dbPage.offset;
-                let url = `/api/db-viewer/query?db_name=${encodeURIComponent(dbName)}&table=${encodeURIComponent(tableName)}&limit=${limit}&offset=${offset}`;
-                if (searchTerm) {
-                    url += `&search=${encodeURIComponent(searchTerm)}`;
-                }
-                const res = await fetch(url);
+                params.set('limit', _dbPage.size);
+                params.set('offset', _dbPage.offset);
+                const ruta = origen === 'respaldo' ? '/api/db-viewer/respaldo' : '/api/db-viewer/query';
+                const res = await fetch(`${ruta}?${params.toString()}`);
                 const data = await res.json();
-                if(data.error) throw new Error(data.error);
+                if (!res.ok || data.error) throw new Error(data.detail || data.error || `HTTP ${res.status}`);
 
-                if (_dbEditorState.table !== tableName || _dbEditorState.db !== dbName) {
-                    _dbPage.offset = 0;   // tabla distinta: volver al inicio
-                }
-                _dbEditorState.db = dbName;
-                _dbEditorState.table = tableName;
-                _dbEditorState.editable = data.editable;
+                params.delete('limit');
+                params.delete('offset');
+                _dbUltimaConsulta = { clave, origen, params: params.toString() };
+                _dbEditorState.db = params.get('db_name');
+                _dbEditorState.table = params.get('table');
+                _dbEditorState.editable = !!data.editable;
 
-                // Badge: editable o solo lectura
-                if (data.editable) {
-                    badge.textContent = '✏️ Edición habilitada — doble clic en celda para editar';
-                    badge.style.cssText = 'display:inline-block; font-size:0.78rem; padding:0.3rem 0.8rem; border-radius:20px; font-weight:700; background:rgba(16,185,129,0.15); color:#10B981; border:1px solid rgba(16,185,129,0.3);';
-                } else {
-                    badge.textContent = '🔒 Solo lectura — tabla operativa protegida';
-                    badge.style.cssText = 'display:inline-block; font-size:0.78rem; padding:0.3rem 0.8rem; border-radius:20px; font-weight:700; background:rgba(248,113,113,0.1); color:#f87171; border:1px solid rgba(248,113,113,0.25);';
-                }
-
-                // Generar Columnas — ocultar columna __rowid__ al usuario
-                const visibleCols = data.columns.filter(c => c !== '__rowid__');
-                thead.innerHTML = '<tr>' + visibleCols.map(c => `<th>${c}</th>`).join('') + '</tr>';
-                
-                // Generar Filas
-                if(data.rows.length === 0) {
-                    tbody.innerHTML = `<tr><td colspan="${visibleCols.length}" style="text-align:center;">No hay datos en esta tabla.</td></tr>`;
-                } else {
-                    tbody.innerHTML = data.rows.map(row => {
-                        const rowid = row[0]; // primer elemento es siempre __rowid__
-                        const cells = row.slice(1); // resto son los datos visibles
-                        return '<tr>' + cells.map((val, colIdx) => {
-                            const colName = visibleCols[colIdx];
-                            const title = String(val).replace(/"/g, '&quot;');
-                            const editAttr = data.editable ? `ondblclick="openEditModal(${rowid}, '${colName}', this)" style="cursor:pointer; white-space:nowrap; max-width:200px; overflow:hidden; text-overflow:ellipsis;"` : `style="white-space:nowrap; max-width:200px; overflow:hidden; text-overflow:ellipsis;"`;
-                            return `<td ${editAttr} title="${title}">${val !== null ? val : '<em>NULL</em>'}</td>`;
-                        }).join('') + '</tr>';
-                    }).join('');
-                }
-                // Actualizar el estado de paginación con lo que respondió el backend
-                _dbPage.total = data.total || 0;
-                const desde = data.rows.length ? _dbPage.offset + 1 : 0;
-                const hasta = _dbPage.offset + data.rows.length;
-                info.textContent = `Mostrando ${desde}-${hasta} de ${data.total} registros en "${tableName}".`;
-                _renderPagination();
+                const etiqueta = origen === 'respaldo'
+                    ? `respaldo ${params.get('integracion')} (${params.get('desde')} a ${params.get('hasta')})`
+                    : `"${params.get('table')}"`;
+                renderVisorBd(data, etiqueta);
             } catch(e) {
+                _dbVista = null;
                 thead.innerHTML = '<tr><th>Error</th></tr>';
-                tbody.innerHTML = `<tr><td style="color:var(--color-red)">${e.message}</td></tr>`;
+                tbody.innerHTML = `<tr><td style="color:var(--color-red)">${_escapeHtml(e.message)}</td></tr>`;
             }
+        }
+
+        function _asegurarBuscadorBd() {
+            if (document.getElementById('db-search-input')) return;
+            const searchContainer = document.getElementById('db-search-container');
+            searchContainer.innerHTML = `<input type="text" id="db-search-input" placeholder="🔍 Buscar en cualquier columna..."
+               style="background: #1e293b; border: 1px solid #334155; color: #e2e8f0;
+                      padding: 6px 12px; border-radius: 6px; margin-bottom: 10px; width: 300px;">`;
+            document.getElementById('db-search-input').addEventListener('input', function() {
+                clearTimeout(window.searchDbTimeout);
+                window.searchDbTimeout = setTimeout(() => {
+                    _dbPage.offset = 0;   // nueva búsqueda: volver al inicio
+                    loadQueryData();
+                }, 500);
+            });
+        }
+
+        // Texto de una celda en la grilla (una línea; la celda completa se ve con clic).
+        function _textoCeldaBd(valor) {
+            if (valor === null || valor === undefined) return null;
+            return typeof valor === 'object' ? JSON.stringify(valor) : String(valor);
+        }
+
+        // Valor completo de una celda: un JSON se muestra con formato.
+        function _textoCompletoBd(valor) {
+            if (valor === null || valor === undefined) return '';
+            if (typeof valor === 'object') return JSON.stringify(valor, null, 2);
+            const texto = String(valor);
+            const t = texto.trim();
+            if ((t.startsWith('{') && t.endsWith('}')) || (t.startsWith('[') && t.endsWith(']'))) {
+                try { return JSON.stringify(JSON.parse(t), null, 2); } catch (_) { /* no es JSON */ }
+            }
+            return texto;
+        }
+
+        function renderVisorBd(data, etiqueta) {
+            const thead = document.getElementById('db-viewer-thead');
+            const tbody = document.getElementById('db-viewer-tbody');
+            const info = document.getElementById('db-viewer-info');
+            const badge = document.getElementById('db-edit-badge');
+
+            const conRowid = data.columns[0] === '__rowid__';
+            const columnas = conRowid ? data.columns.slice(1) : data.columns.slice();
+            const cifradas = new Set(data.cifradas || []);
+            _dbVista = {
+                columns: columnas,
+                rows: data.rows.map(r => conRowid ? r.slice(1) : r),
+                rowids: data.rows.map(r => conRowid ? r[0] : null),
+                editable: !!data.editable,
+                cifradas,
+            };
+
+            if (data.editable) {
+                badge.textContent = '✏️ Edición habilitada — doble clic en celda para editar';
+                badge.style.cssText = 'display:inline-block; font-size:0.78rem; padding:0.3rem 0.8rem; border-radius:20px; font-weight:700; background:rgba(16,185,129,0.15); color:#10B981; border:1px solid rgba(16,185,129,0.3);';
+            } else {
+                badge.textContent = data.origen === 'respaldo'
+                    ? '🔒 Solo lectura — respaldo de procesados'
+                    : '🔒 Solo lectura — tabla operativa protegida';
+                badge.style.cssText = 'display:inline-block; font-size:0.78rem; padding:0.3rem 0.8rem; border-radius:20px; font-weight:700; background:rgba(248,113,113,0.1); color:#f87171; border:1px solid rgba(248,113,113,0.25);';
+            }
+
+            thead.innerHTML = '<tr>' + columnas.map(c => `<th>${_escapeHtml(c)}</th>`).join('') + '</tr>';
+
+            if (_dbVista.rows.length === 0) {
+                tbody.innerHTML = `<tr><td colspan="${Math.max(columnas.length, 1)}" style="text-align:center;">No hay datos con estos filtros.</td></tr>`;
+            } else {
+                tbody.innerHTML = _dbVista.rows.map((fila, f) => '<tr>' + fila.map((valor, c) => {
+                    const col = columnas[c];
+                    const texto = _textoCeldaBd(valor);
+                    const editar = _dbVista.editable && !cifradas.has(col)
+                        ? ` ondblclick="openEditModal(${Number(_dbVista.rowids[f])}, '${_escAttr(col)}', this)"` : '';
+                    const contenido = texto === null ? '<em>NULL</em>'
+                        : (cifradas.has(col) ? `<em>${_escapeHtml(texto)}</em>` : _escapeHtml(texto));
+                    return `<td class="db-celda" data-f="${f}" data-c="${c}" onclick="verCeldaBd(${f}, ${c})"${editar}>${contenido}</td>`;
+                }).join('') + '</tr>').join('');
+            }
+
+            _dbPage.total = data.total || 0;
+            const desde = _dbVista.rows.length ? _dbPage.offset + 1 : 0;
+            const hasta = _dbPage.offset + _dbVista.rows.length;
+            const noAplican = (data.filtros_no_aplicados || []).length
+                ? ` Filtros que esta tabla no tiene: ${data.filtros_no_aplicados.join(', ')}.` : '';
+            info.textContent = `Mostrando ${desde}-${hasta} de ${data.total} registros en ${etiqueta}, lo más reciente primero. Clic en una celda para verla completa.${noAplican}`;
+            _renderPagination();
+        }
+
+        function verCeldaBd(f, c) {
+            if (!_dbVista || !_dbVista.rows[f]) return;
+            _dbSeleccion = { fila: f, col: c };
+            const col = _dbVista.columns[c];
+            const valor = _dbVista.rows[f][c];
+            document.getElementById('db-detalle-titulo').textContent =
+                `${col} — fila ${_dbPage.offset + f + 1}${_dbVista.rowids[f] !== null ? ` (rowid ${_dbVista.rowids[f]})` : ''}`;
+            document.getElementById('db-detalle-valor').textContent =
+                valor === null || valor === undefined ? 'NULL' : _textoCompletoBd(valor);
+            document.getElementById('db-detalle-aviso').textContent = '';
+            document.getElementById('db-detalle').style.display = 'block';
+        }
+
+        function cerrarDetalleBd() {
+            const panel = document.getElementById('db-detalle');
+            if (panel) panel.style.display = 'none';
+            _dbSeleccion = null;
+        }
+
+        // Copiar al portapapeles. navigator.clipboard exige un contexto seguro
+        // (https o localhost): el hub en la red local va por http, así que hay
+        // un camino alternativo con un textarea temporal.
+        async function _copiarTexto(texto) {
+            try {
+                if (navigator.clipboard && window.isSecureContext) {
+                    await navigator.clipboard.writeText(texto);
+                    return true;
+                }
+            } catch (_) { /* se prueba el camino alternativo */ }
+            const area = document.createElement('textarea');
+            area.value = texto;
+            area.setAttribute('readonly', '');
+            area.style.position = 'fixed';
+            area.style.opacity = '0';
+            document.body.appendChild(area);
+            area.select();
+            let ok = false;
+            try { ok = document.execCommand('copy'); } catch (_) { ok = false; }
+            document.body.removeChild(area);
+            return ok;
+        }
+
+        async function copiarCeldaBd() {
+            if (!_dbVista || !_dbSeleccion) return;
+            const valor = _dbVista.rows[_dbSeleccion.fila][_dbSeleccion.col];
+            const ok = await _copiarTexto(_textoCompletoBd(valor));
+            document.getElementById('db-detalle-aviso').textContent = ok ? 'Valor copiado.' : 'No se pudo copiar: seleccioná el texto y copialo a mano.';
+        }
+
+        // La fila entera como JSON {columna: valor}, con los valores tal cual.
+        function _filaComoJsonBd(f) {
+            const objeto = {};
+            _dbVista.columns.forEach((col, c) => { objeto[col] = _dbVista.rows[f][c]; });
+            return JSON.stringify(objeto, null, 2);
+        }
+
+        async function copiarFilaBd() {
+            if (!_dbVista || !_dbSeleccion) return;
+            const ok = await _copiarTexto(_filaComoJsonBd(_dbSeleccion.fila));
+            document.getElementById('db-detalle-aviso').textContent = ok ? 'Fila completa copiada (JSON).' : 'No se pudo copiar.';
+        }
+
+        // CSV de la vista actual: la última consulta mostrada, con sus filtros,
+        // todas las páginas y en el mismo orden.
+        function descargarVistaBd() {
+            if (!_dbUltimaConsulta) {
+                alert('Consultá primero: la descarga es de lo que se está viendo.');
+                return;
+            }
+            const params = new URLSearchParams(_dbUltimaConsulta.params);
+            params.set('origen', _dbUltimaConsulta.origen);
+            window.location.href = `/api/db-viewer/descargar?${params.toString()}`;
         }
 
         function openEditModal(rowid, colName, tdEl) {
@@ -3681,6 +3908,14 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
             return `${dos(d.getDate())}/${dos(d.getMonth() + 1)} ${dos(d.getHours())}:${dos(d.getMinutes())}:${dos(d.getSeconds())}`;
         }
 
+        // Coordenadas del descarte (v1.9.8): "lat, lon" o "—" si no vinieron.
+        function _coordDescarte(lat, lon) {
+            const ok = v => v !== null && v !== undefined && v !== '' && !isNaN(Number(v));
+            if (!ok(lat) && !ok(lon)) return '—';
+            const f = v => ok(v) ? Number(v).toFixed(5) : '—';
+            return `${f(lat)}, ${f(lon)}`;
+        }
+
         function _renderDescartes(d) {
             const esc = v => (v === null || v === undefined || v === '') ? '—' : _escapeHtml(String(v));
             if (!d || !d.resumen || !d.resumen.length) {
@@ -3703,6 +3938,7 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
                     <td>${esc(u.envio)}</td>
                     <td title="${u.detalle ? _escapeHtml(String(u.detalle)) : ''}">${esc(u.motivo)}</td>
                     <td style="font-family:monospace;font-size:0.72rem;">${esc(u.alert_id)}</td>
+                    <td class="num" style="font-family:monospace;font-size:0.72rem;">${_coordDescarte(u.latitud, u.longitud)}</td>
                 </tr>`).join('');
             const perdidos = d.perdidos ? `<div style="color:var(--color-yellow);font-size:0.78rem;margin-top:0.5rem;">
                     ${Number(d.perdidos).toLocaleString()} descarte(s) no se pudieron guardar (sí quedaron en consola).</div>` : '';
@@ -3717,7 +3953,7 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
                 <div style="overflow-x:auto;max-height:420px;overflow-y:auto;">
                 <table class="inventario-tabla">
                   <thead><tr><th class="num">Hora</th><th>Integración</th><th>Equipo</th>
-                    <th>Envío</th><th>Motivo</th><th>AlertId</th></tr></thead>
+                    <th>Envío</th><th>Motivo</th><th>AlertId</th><th class="num">Lat, Lon</th></tr></thead>
                   <tbody>${ultimos}</tbody>
                 </table></div>${perdidos}
                 <div style="font-size:0.72rem;color:#6b7280;margin-top:0.5rem;">

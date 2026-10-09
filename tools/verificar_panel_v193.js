@@ -52,7 +52,7 @@ global.currentLatencyFilter = 'all';
 global.currentSoloEventos = false;
 global.allRecentEvents = [];
 
-for (const f of ['_escapeHtml', 'esPull', '_modoAuthWebhook', '_selectorAuthWebhook', '_opcionesDeModulo', '_credencialesDeModulo',
+for (const f of ['_escapeHtml', '_anchoUsuarioRc', '_escAttr', 'esPull', '_modoAuthWebhook', '_selectorAuthWebhook', '_opcionesDeModulo', '_credencialesDeModulo',
                  '_celdaClaveWebhook', 'loadConfig', 'renderRecentTable']) {
   const codigo = extraer(f);
   const asincrona = codigo.startsWith('async');

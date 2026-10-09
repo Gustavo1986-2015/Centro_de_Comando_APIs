@@ -57,7 +57,7 @@ const DESCARTES = {
 };
 global.fetch = async (url) => { pedidos.push(url); return { ok: true, json: async () => DESCARTES }; };
 
-for (const n of ['_escapeHtml', '_horaDescarte', '_renderDescartes', 'cargarDescartes', '_credencialesDeModulo',
+for (const n of ['_escapeHtml', '_coordDescarte', '_horaDescarte', '_renderDescartes', 'cargarDescartes', '_credencialesDeModulo',
                  '_leerCredencialesDeModulo']) cargar(n);
 
 // switchView real, con el resto de las cargas como funciones vacías: lo que

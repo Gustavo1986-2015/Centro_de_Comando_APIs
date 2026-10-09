@@ -188,9 +188,17 @@ def _descartar(env: str, motivo: str, payload, nivel=logging.INFO, detalle: str 
     Consola y registro persistente del panel. El motivo es corto y estable
     (se cuenta agrupando por él); lo variable va en `detalle`.
     """
-    logger.log(nivel, f"[TIVE-{env}] Descartado, NO se envía a RC: {motivo}"
-                      f"{f' {detalle}' if detalle else ''} | {_identidad(payload)}")
     from app.core import descartes
+    # Dónde estaba el equipo (v1.9.8): la posición del evento, o la de la alerta.
+    ubicacion = payload.get("Location") if isinstance(payload.get("Location"), dict) else {}
+    if not ubicacion or ubicacion.get("Latitude") is None:
+        detalles = _g(payload, "Alert", "Details") or []
+        primero = detalles[0] if detalles and isinstance(detalles[0], dict) else {}
+        ubicacion = primero.get("Location") if isinstance(primero.get("Location"), dict) else {}
+    latitud, longitud = ubicacion.get("Latitude"), ubicacion.get("Longitude")
+    logger.log(nivel, f"[TIVE-{env}] Descartado, NO se envía a RC: {motivo}"
+                      f"{f' {detalle}' if detalle else ''} | {_identidad(payload)}"
+                      f"{descartes.texto_coordenadas(latitud, longitud)}")
     descartes.registrar(
         PROVEEDOR, env, "tive", motivo,
         equipo=_texto(payload.get("DeviceName")) or _texto(_g(payload, "Alert", "DeviceName"))
@@ -198,6 +206,7 @@ def _descartar(env: str, motivo: str, payload, nivel=logging.INFO, detalle: str 
         envio=_texto(payload.get("ShipmentId")) or _texto(_g(payload, "Shipment", "Id")),
         alert_id=_texto(_g(payload, "Alert", "AlertId")),
         detalle=detalle,
+        latitud=latitud, longitud=longitud,
     )
 
 
@@ -224,6 +233,27 @@ def _envio(env: str, payload) -> str | None:
 # cuatro categorías puntuales (golpe, luz, llegada, salida), pero solo las dos
 # primeras aparecieron con su literal; los de llegada y salida no se inventan.
 TIPOS_PUNTUALES_MEDIDOS = frozenset({"ShockEvents", "LightChanges"})
+
+# Llegada y salida (v1.9.8). Tive manda las dos con el mismo AlertType; la
+# diferencia viene en Alert.Trigger.AlertOn. Son puntuales según la
+# documentación de Tive: nunca llevan -FIN. Códigos confirmados por el usuario.
+TIPO_LLEGADA_SALIDA = "ShipmentArriveDepart"
+SUFIJOS_LLEGADA_SALIDA = {"arrival": "Arrival", "departure": "Departure"}
+
+
+def _codigo_llegada_salida(env: str, payload) -> str:
+    """ShipmentArriveDepart-Arrival / -Departure según Alert.Trigger.AlertOn.
+    Sin AlertOn, o con otro valor, el literal sin sufijo, con aviso."""
+    alert_on = _texto(_g(payload, "Alert", "Trigger", "AlertOn"))
+    sufijo = SUFIJOS_LLEGADA_SALIDA.get((alert_on or "").lower())
+    if sufijo:
+        return f"{TIPO_LLEGADA_SALIDA}-{sufijo}"
+    logger.warning(
+        f"[TIVE-{env}] {TIPO_LLEGADA_SALIDA} sin Alert.Trigger.AlertOn reconocible "
+        f"(valor: {alert_on!r}): sale con el literal sin sufijo, sin distinguir llegada de "
+        f"salida | {_identidad(payload)}"
+    )
+    return TIPO_LLEGADA_SALIDA
 
 
 def _fecha_de_recuperacion(payload) -> str | None:
@@ -393,7 +423,10 @@ def _candidatos_alerta(env: str, payload, opciones: dict) -> list[tuple]:
         _descartar(env, "alerta sin AlertType", payload, logging.WARNING)
         return []
 
-    forma = estado_alerta(payload, env)
+    # Llegada y salida son puntuales por definición (documentación de Tive):
+    # no pasan por el desempate de Reasons, que podría tomarlas por un cierre
+    # o avisar "Verificar el tipo".
+    forma = "puntual" if tipo == TIPO_LLEGADA_SALIDA else estado_alerta(payload, env)
     if forma is None:
         reasons = [d.get("Reasons") for d in (_g(payload, "Alert", "Details") or []) if isinstance(d, dict)]
         _descartar(env, "forma de alerta no reconocida: no se puede saber si es apertura, "
@@ -429,7 +462,10 @@ def _candidatos_alerta(env: str, payload, opciones: dict) -> list[tuple]:
         _descartar(env, "alerta sin patente resoluble", payload, logging.WARNING)
         return []
 
-    codigo = f"{tipo}-FIN" if forma == "cierre" else tipo
+    if tipo == TIPO_LLEGADA_SALIDA:
+        codigo = _codigo_llegada_salida(env, payload)
+    else:
+        codigo = f"{tipo}-FIN" if forma == "cierre" else tipo
     fecha = _fecha_de_cierre(env, payload) if forma == "cierre" else None
     # La actualización de una alerta abierta comparte clave con la apertura:
     # si la apertura ya se envió, es un duplicado; si nunca se registró, esta

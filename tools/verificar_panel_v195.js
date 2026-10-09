@@ -120,7 +120,7 @@ global.prompt = () => { pidioContrasena = true; return 'clave-del-test'; };
 global.alert = () => {};
 global.currentConfigs = [];
 
-for (const n of ['_escapeHtml', 'esPull', '_celdaClaveWebhook', '_modoAuthWebhook', '_selectorAuthWebhook',
+for (const n of ['_escapeHtml', '_anchoUsuarioRc', '_escAttr', 'esPull', '_celdaClaveWebhook', '_modoAuthWebhook', '_selectorAuthWebhook',
                  '_leerAuthWebhook', '_opcionesDeModulo', '_credencialesDeModulo', '_leerCredencialesDeModulo',
                  '_leerOpcionesDeModulo', 'loadConfig', 'saveConfig']) {
   cargar(n);

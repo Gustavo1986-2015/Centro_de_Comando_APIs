@@ -748,7 +748,26 @@
                 <h2>Visor de Base de Datos (SQLite Local)</h2>
             </div>
             
-            <div style="display: flex; gap: 1rem; margin-bottom: 1rem; flex-wrap: wrap;">
+            <!-- v1.9.8: dos orígenes. La base es de tránsito (con retención de
+                 1 hora guarda pocas filas); lo despachado queda en el respaldo. -->
+            <div style="display: flex; gap: 1rem; margin-bottom: 0.5rem; flex-wrap: wrap; align-items: flex-end;">
+                <div class="form-group" style="min-width: 200px;">
+                    <label>Origen</label>
+                    <select id="db-origen" class="form-control" style="background-color: var(--color-black); cursor: pointer;" onchange="cambiarOrigenBd()">
+                        <option value="base">Base (tránsito)</option>
+                        <option value="respaldo">Respaldo (procesados)</option>
+                    </select>
+                </div>
+                <div id="db-origen-respaldo" style="display: none; gap: 1rem; flex: 1; flex-wrap: wrap; align-items: flex-end;">
+                    <div class="form-group" style="flex: 1; min-width: 220px;">
+                        <label>Integración</label>
+                        <select id="db-respaldo-integracion" class="form-control" style="background-color: var(--color-black); cursor: pointer;"></select>
+                    </div>
+                    <div id="db-respaldo-nota" style="font-size: 0.75rem; color: var(--color-gray); margin-bottom: 1.2rem;"></div>
+                </div>
+            </div>
+
+            <div id="db-origen-base" style="display: flex; gap: 1rem; margin-bottom: 1rem; flex-wrap: wrap;">
                 <div class="form-group" style="flex: 1; min-width: 200px;">
                     <label>1. Seleccionar Base de Datos</label>
                     <select id="db-select" class="form-control" style="background-color: var(--color-black); cursor: pointer;" onchange="loadTables()">
@@ -761,12 +780,59 @@
                         <option value="">Seleccione una base de datos primero...</option>
                     </select>
                 </div>
-                <div style="display: flex; align-items: flex-end; margin-bottom: 1rem;">
+            </div>
+
+            <!-- Filtros (v1.9.8). Una tabla sin la columna de un filtro lo
+                 ignora y el pie de la grilla lo avisa. -->
+            <div id="db-filtros" style="display: flex; gap: 0.75rem; margin-bottom: 1rem; flex-wrap: wrap; align-items: flex-end;">
+                <div class="form-group" style="min-width: 140px;">
+                    <label>Estado</label>
+                    <select id="db-f-estado" class="form-control" style="background-color: var(--color-black); cursor: pointer;">
+                        <option value="">Todos</option>
+                        <option value="pending">pending</option>
+                        <option value="processing">processing</option>
+                        <option value="sent">sent</option>
+                        <option value="failed">failed</option>
+                        <option value="simulado">simulado</option>
+                    </select>
+                </div>
+                <div class="form-group" style="min-width: 150px;">
+                    <label>Patente</label>
+                    <input id="db-f-patente" class="form-control" type="text" placeholder="contiene...">
+                </div>
+                <div class="form-group" style="min-width: 150px;">
+                    <label>Envío</label>
+                    <input id="db-f-envio" class="form-control" type="text" placeholder="contiene...">
+                </div>
+                <div class="form-group" style="min-width: 150px;">
+                    <label>Desde</label>
+                    <input id="db-f-desde" class="form-control" type="date">
+                </div>
+                <div class="form-group" style="min-width: 150px;">
+                    <label>Hasta</label>
+                    <input id="db-f-hasta" class="form-control" type="date">
+                </div>
+                <div style="display: flex; gap: 0.5rem; align-items: flex-end; margin-bottom: 1rem;">
                     <button class="btn-save" onclick="loadQueryData()" style="height: 42px;">Consultar Datos</button>
+                    <button class="btn-save" onclick="descargarVistaBd()" style="height: 42px;" title="CSV de la vista actual: los mismos filtros, todas las páginas. Las columnas cifradas salen como (cifrado).">⬇ Descargar CSV</button>
                 </div>
             </div>
-            
+
             <div id="db-search-container"></div>
+
+            <!-- Celda completa (v1.9.8): clic en una celda de la grilla. -->
+            <div id="db-detalle" style="display: none; border: 1px solid var(--card-border); border-radius: 8px; padding: 0.75rem 1rem; margin-bottom: 1rem; background: var(--level-1);">
+                <div style="display: flex; justify-content: space-between; align-items: center; gap: 0.5rem; flex-wrap: wrap;">
+                    <strong id="db-detalle-titulo" style="font-size: 0.85rem;"></strong>
+                    <div style="display: flex; gap: 0.5rem; align-items: center;">
+                        <span id="db-detalle-aviso" style="font-size: 0.75rem; color: var(--color-green-vibrant);"></span>
+                        <button class="btn-save" onclick="copiarCeldaBd()" style="padding: 0.3rem 0.8rem;">Copiar</button>
+                        <button class="btn-save" onclick="copiarFilaBd()" style="padding: 0.3rem 0.8rem;" title="Toda la fila como JSON {columna: valor}">Copiar fila completa</button>
+                        <button class="db-page-btn" onclick="cerrarDetalleBd()" title="Cerrar">&times;</button>
+                    </div>
+                </div>
+                <pre id="db-detalle-valor" style="margin: 0.5rem 0 0; max-height: 320px; overflow: auto; white-space: pre-wrap; word-break: break-all; font-size: 0.78rem; user-select: text;"></pre>
+            </div>
 
             <div class="table-container">
                 <table id="db-viewer-table">
@@ -1566,6 +1632,8 @@
 
     <footer style="position: fixed; bottom: 0; width: 100%; background: var(--color-black); text-align: center; padding: 0.6rem; border-top: 1px solid var(--card-border); color: var(--color-gray); font-size: 0.8rem; font-weight: bold; z-index: 1000;">
         Desarrollado por Area de Integraciones GPS Assistcargo | Gustavo Gómez &reg;
+        <!-- v1.9.8: la versión del hub, para saber qué corre sin entrar al servidor. -->
+        | <span id="version-hub" title="Versión del hub en ejecución">v{{ app_version }}</span>
     </footer>
 
     <script src="/static/dashboard.js?v={{ js_v }}"></script>
