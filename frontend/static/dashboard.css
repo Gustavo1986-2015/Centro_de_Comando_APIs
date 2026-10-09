@@ -1160,6 +1160,16 @@ body.compact-mode .health-chip .health-env    { font-size: 0.55rem; padding: 1px
 }
 .db-page-btn:disabled { opacity: 0.3; cursor: default; }
 
+/* Visor de BD (v1.9.8): la celda va en una línea; el clic la muestra completa. */
+.db-celda {
+    white-space: nowrap;
+    max-width: 260px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    cursor: pointer;
+}
+.db-celda:hover { background: rgba(16, 185, 129, 0.08); }
+
 /* ── Consola de logs en vivo ─────────────────────────────────────────────── */
 .console-output {
     background: #0a0d14;

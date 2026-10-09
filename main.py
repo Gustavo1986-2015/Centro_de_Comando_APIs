@@ -26,6 +26,10 @@ async def lifespan(app: FastAPI):
     from app.core.auth import verificar_credenciales_al_arrancar
     verificar_credenciales_al_arrancar()
 
+    # v1.9.8: la versión en ejecución, en la consola, al arrancar.
+    from app.version import __version__ as version_hub
+    logging.getLogger("main").info(f"Hub Telemático Assistcargo v{version_hub}: arrancando.")
+
     import concurrent.futures
     loop = asyncio.get_running_loop()
     thread_pool_size = int(os.getenv("THREAD_POOL_SIZE", "64"))

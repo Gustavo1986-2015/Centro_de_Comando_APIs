@@ -222,3 +222,46 @@ def test_un_fallo_al_leer_la_configuracion_rechaza(monkeypatch):
 
     assert exc.value.status_code == 401
     schmitz.invalidar_cache_auth()
+
+
+# ─── v1.9.8 (auditoría B-5): la verificación de la clave de Schmitz, EJECUTADA ──
+#
+# Los tests de arriba buscan texto en el fuente: con la verificación quitada
+# (`if False:` en lugar del compare_digest) la suite completa seguía en verde.
+# Este manda peticiones reales a los dos endpoints de Schmitz.
+
+@pytest.fixture
+def schmitz_con_clave(config_aislada, monkeypatch):
+    import asyncio
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from app.api.routers import schmitz
+    from app.core.crypto import encrypt
+    from app.database import get_session
+    from app.models.config_models import ProviderConfig
+
+    db = get_session("system_config", "global")
+    db.add(ProviderConfig(provider_name="schmitz", env="prod", provider_type="push", is_active=True,
+                          use_mock=True, webhook_auth_secret_enc=encrypt("clave-buena-de-schmitz")))
+    db.commit()
+    db.close()
+    schmitz.invalidar_cache_auth()
+    monkeypatch.setattr(schmitz, "_webhook_queue", asyncio.Queue(maxsize=10))
+    app = FastAPI()
+    app.include_router(schmitz.router)
+    app.include_router(schmitz.router_spec)
+    yield TestClient(app)
+    schmitz.invalidar_cache_auth()
+
+
+PAYLOAD_MINIMO = {"ChassisNumber": "R5868BDP", "DeviceTime": "2026-10-04T22:23:36Z"}
+
+
+@pytest.mark.parametrize("ruta", ["/Json/Data?env=prod", "/schmitz/webhook?env=prod"])
+def test_schmitz_rechaza_sin_clave_y_con_clave_incorrecta(schmitz_con_clave, ruta):
+    sin_clave = schmitz_con_clave.post(ruta, json=PAYLOAD_MINIMO)
+    incorrecta = schmitz_con_clave.post(ruta, json=PAYLOAD_MINIMO, headers={"x-api-key": "otra-clave"})
+    correcta = schmitz_con_clave.post(ruta, json=PAYLOAD_MINIMO, headers={"x-api-key": "clave-buena-de-schmitz"})
+    assert sin_clave.status_code == 401, "sin clave tiene que rechazar"
+    assert incorrecta.status_code == 401, "con clave incorrecta tiene que rechazar"
+    assert correcta.status_code == 202, "con la clave correcta tiene que aceptar"

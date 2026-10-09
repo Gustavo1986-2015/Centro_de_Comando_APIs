@@ -302,6 +302,7 @@ async def _recibir(provider_name: str, request: Request, env: str, auth_config: 
             admision.registrar_descarte(
                 provider_name, env, motivo_descarte,
                 admision.identidad(payload, mapping_schema),
+                admision.coordenadas(payload, mapping_schema),
             )
             return {
                 "status": "ok",
