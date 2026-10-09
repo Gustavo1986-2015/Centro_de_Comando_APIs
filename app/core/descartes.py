@@ -70,6 +70,13 @@ def _conectar() -> sqlite3.Connection:
         " detalle TEXT, equipo TEXT, envio TEXT, alert_id TEXT)"
     )
     con.execute("CREATE INDEX IF NOT EXISTS idx_descartes_ts ON descartes (ts)")
+    # v1.9.8: dónde estaba el equipo cuando se descartó el evento. Migración
+    # idempotente: una base de antes recibe las dos columnas, vacías.
+    columnas = {fila[1] for fila in con.execute("PRAGMA table_info(descartes)")}
+    for columna in ("latitud", "longitud"):
+        if columna not in columnas:
+            con.execute(f"ALTER TABLE descartes ADD COLUMN {columna} REAL")
+    con.commit()
     return con
 
 
@@ -80,13 +87,32 @@ def _texto(valor, largo: int = 300) -> str | None:
     return texto[:largo] if texto else None
 
 
+def coordenada(valor) -> float | None:
+    """Una coordenada utilizable, o None (vacía, no numérica o NaN)."""
+    try:
+        numero = float(valor)
+    except (TypeError, ValueError):
+        return None
+    return None if numero != numero else numero
+
+
+def texto_coordenadas(latitud, longitud) -> str:
+    """' lat=…, lon=…' para el aviso de consola, o vacío si no vinieron."""
+    lat, lon = coordenada(latitud), coordenada(longitud)
+    if lat is None and lon is None:
+        return ""
+    return f" lat={lat if lat is not None else '—'}, lon={lon if lon is not None else '—'}"
+
+
 def registrar(proveedor: str, env: str | None, origen: str, motivo: str,
-              equipo=None, envio=None, alert_id=None, detalle=None) -> None:
+              equipo=None, envio=None, alert_id=None, detalle=None,
+              latitud=None, longitud=None) -> None:
     """Encola un descarte para guardarlo. Nunca bloquea ni lanza."""
     global _perdidos, _ultimo_aviso_perdidos
     fila = (time.time(), (proveedor or "?").lower(), (env or "?").lower(), origen,
             _texto(motivo, 200) or "sin motivo", _texto(detalle, 500),
-            _texto(equipo), _texto(envio), _texto(alert_id, 80))
+            _texto(equipo), _texto(envio), _texto(alert_id, 80),
+            coordenada(latitud), coordenada(longitud))
     _asegurar_hilo()
     try:
         _cola.put_nowait(fila)
@@ -126,8 +152,8 @@ def _escritor() -> None:
                     con.close()
                 con, ruta_con = _conectar(), _ruta()
             con.executemany(
-                "INSERT INTO descartes (ts, proveedor, env, origen, motivo, detalle, equipo, envio, alert_id)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", lote)
+                "INSERT INTO descartes (ts, proveedor, env, origen, motivo, detalle, equipo, envio, alert_id,"
+                " latitud, longitud) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", lote)
             con.commit()
             _purgar_si_corresponde(con)
         except Exception as e:
@@ -180,7 +206,7 @@ def consultar(limite: int = 100) -> dict:
             " FROM descartes GROUP BY proveedor, env, origen, motivo"
             " ORDER BY total DESC, ultimo DESC")]
         ultimos = [dict(r) for r in con.execute(
-            "SELECT ts, proveedor, env, origen, motivo, detalle, equipo, envio, alert_id"
+            "SELECT ts, proveedor, env, origen, motivo, detalle, equipo, envio, alert_id, latitud, longitud"
             " FROM descartes ORDER BY id DESC LIMIT ?", (limite,))]
     finally:
         con.close()

@@ -428,7 +428,9 @@ def test_el_webhook_registra_al_equipo_descartado(bases_temporales, monkeypatch)
     app = FastAPI()
     app.include_router(dynamic_webhook.router)
     TestClient(app).post("/webhook/dynamic/studio", json=PROTRACK_ITEM, headers={"x-api-key": "CLAVE"})
-    assert vistos == [("studio", "prod", "equipo excluido", "patente=864035052734572")]
+    # v1.9.8: el descarte lleva también las coordenadas del evento (punto 10).
+    assert vistos == [("studio", "prod", "equipo excluido", "patente=864035052734572",
+                       (9.913503, -84.679345))]
 
 
 # ═══════════════════════════════════════════════════════════════════════════

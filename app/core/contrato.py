@@ -70,6 +70,44 @@ def faltantes(evento) -> list[str]:
     return falta
 
 
+# ─── Valores imposibles (v1.9.8, auditoría B-3) ─────────────────────────────
+#
+# Protrack manda battery=-1 y odometer=-1 para decir "sin dato", y llegaban a
+# RC como medición en el 100% de sus eventos. No es exclusivo de Protrack:
+# cualquier proveedor puede usar un centinela así. Una batería fuera de 0-100
+# o un odómetro negativo no son una medición: el campo se omite, como
+# cualquier dato ausente, y el evento sigue su camino.
+#
+# La batería de Schmitz es el voltaje de alimentación externa (12-28 V):
+# también cae en 0-100, así que no cambia.
+
+def _fuera_de_rango(valor, minimo, maximo=None) -> bool:
+    try:
+        numero = float(valor)
+    except (TypeError, ValueError):
+        return True
+    if math.isnan(numero) or numero < minimo:
+        return True
+    return maximo is not None and numero > maximo
+
+
+def sanear_mediciones(evento):
+    """
+    Omite (None) los valores que no pueden ser una medición. Devuelve la lista
+    de campos que se omitieron. Modifica el evento en el lugar.
+    """
+    omitidos = []
+    bateria = getattr(evento, "battery", None)
+    if bateria is not None and _fuera_de_rango(bateria, 0, 100):
+        evento.battery = None
+        omitidos.append("battery")
+    odometro = getattr(evento, "odometer", None)
+    if odometro is not None and _fuera_de_rango(odometro, 0):
+        evento.odometer = None
+        omitidos.append("odometer")
+    return omitidos
+
+
 def filtrar_validos(eventos, proveedor: str | None, env: str | None) -> list:
     """
     Devuelve solo los eventos que cumplen el contrato. Cada descarte queda en
@@ -80,21 +118,28 @@ def filtrar_validos(eventos, proveedor: str | None, env: str | None) -> list:
     for ev in eventos or []:
         falta = faltantes(ev)
         if not falta:
+            # Mismo punto de paso para todos los caminos de ingreso: acá se
+            # omiten también los valores imposibles (B-3). Sin aviso por
+            # evento: con Protrack sería una línea por cada uno.
+            sanear_mediciones(ev)
             validos.append(ev)
             continue
         patente = getattr(ev, "chassis_number", None)
         serie = getattr(ev, "serial_number", None)
+        from app.core import descartes
+        latitud, longitud = getattr(ev, "latitude", None), getattr(ev, "longitude", None)
         logger.warning(
             f"[{(proveedor or '?').upper()}-{env or '?'}] Evento descartado, NO se envía a RC: "
             f"falta {', '.join(falta)} | patente={patente or 'sin patente'}"
             f"{f' serie={serie}' if serie else ''} código={getattr(ev, 'code', None)}"
+            f"{descartes.texto_coordenadas(latitud, longitud)}"
         )
         # Además de la consola, al registro persistente que muestra el panel.
-        from app.core import descartes
         descartes.registrar(
             proveedor, env, "contrato", f"falta {', '.join(falta)}",
             equipo=patente or (f"serie {serie}" if serie else None),
             envio=getattr(ev, "shipment", None),
             detalle=f"código={getattr(ev, 'code', None)}",
+            latitud=latitud, longitud=longitud,
         )
     return validos

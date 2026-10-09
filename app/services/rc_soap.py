@@ -115,13 +115,16 @@ def construir_evento_rc(event) -> dict:
         event_dict['ignition'] = "true" if event.ignition else "false"
     if event.altitude is not None:
         event_dict['altitude'] = int(event.altitude)
-    if event.battery is not None:
+    # Defensa (v1.9.8, B-3): una batería fuera de 0-100 o un odómetro
+    # negativo no son una medición. Al ingresar ya se omiten
+    # (contrato.sanear_mediciones); esto cubre filas encoladas antes.
+    if event.battery is not None and 0 <= event.battery <= 100:
         event_dict['battery'] = int(event.battery)
     if event.humidity is not None:
         # Doble precisión, como pide el contrato. Antes int() truncaba: 55.2
         # llegaba como 55. El esquema de RC lo declara xs:string.
         event_dict['humidity'] = float(event.humidity)
-    if event.odometer is not None:
+    if event.odometer is not None and event.odometer >= 0:
         event_dict['odometer'] = int(event.odometer)
     if event.temperature is not None:
         event_dict['temperature'] = float(event.temperature)

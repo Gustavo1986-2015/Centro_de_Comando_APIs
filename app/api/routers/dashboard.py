@@ -725,10 +725,16 @@ def _db_stats_sync():
         horas_retencion = 2
     corte = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=horas_retencion)
 
+    from app.database import es_base_de_cola
+
     for ruta in sorted(glob.glob("./db/*/*.db")):
         rel = os.path.relpath(ruta, "./db").replace("\\", "/")
         partes = rel.split("/")
         if len(partes) != 2:
+            continue
+        # Solo colas (v1.9.8). Una base de estado (la de Tive) no tiene eventos
+        # para purgar, y abrirla con get_session() le crearía una tabla de cola.
+        if not es_base_de_cola(ruta):
             continue
         provider, archivo = partes[0], partes[1]
         env = archivo.replace(".db", "")
@@ -820,9 +826,16 @@ async def purge_now(provider: str, env: str, ignorar_retencion: bool = False,
     if not re.match(r"^[a-zA-Z0-9_]+$", provider) or not re.match(r"^[a-zA-Z0-9_]+$", env):
         raise HTTPException(status_code=400, detail="Proveedor o entorno inválido")
 
+    from app.database import es_base_de_cola
     from app.worker.processor import purge_provider_events
 
     ruta = os.path.join("db", provider, f"{env}.db")
+    # Solo se purga una cola (v1.9.8). Una base de estado, o una que no existe
+    # (get_session la crearía vacía), se rechaza sin abrirla.
+    if not await asyncio.to_thread(es_base_de_cola, ruta):
+        logger.warning(f"Purga rechazada: {provider}/{env} no es una base de cola de eventos.")
+        raise HTTPException(status_code=400,
+                            detail=f"{provider}/{env} no es una base de cola de eventos: no se purga.")
     antes_mb = _tamano_db_mb(ruta)
 
     logger.info(f"Purga manual solicitada para {provider}/{env} desde el panel.")
