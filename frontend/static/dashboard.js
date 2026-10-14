@@ -1219,8 +1219,10 @@
                 
                 // Filtrar push stats por proveedor activo en el selector
                 const currentFilter = document.getElementById('filter-provider')?.value || 'all';
-                const pushData = (currentFilter && currentFilter !== 'all' && data.push_per_provider)
-                    ? (data.push_per_provider[currentFilter.toLowerCase()] || data.push_stats)
+                // B-17 (v1.9.9): con un filtro, la de esa integración; si todavía
+                // no recibió nada, 0. Antes caía al total global.
+                const pushData = (currentFilter && currentFilter !== 'all')
+                    ? ((data.push_per_provider || {})[currentFilter.toLowerCase()] || { avg_ms: 0, compliance_pct: 100, count: 0 })
                     : (data.push_stats || {});
 
                 updateValue('val-push-latency', ((pushData.avg_ms || 0) / 1000).toFixed(3) + 's');
@@ -1387,6 +1389,7 @@
         function renderRecentTable() {
             const tbody = document.getElementById('recent-table-body');
             tbody.innerHTML = '';
+            _botonReintentoFallidos();
             
             let filtered = allRecentEvents;
             
@@ -1567,6 +1570,10 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
                 if (ev.status === 'failed' && ev.rc_response) {
                     let errStr = String(ev.rc_response).replace(/'/g, "\\'").replace(/"/g, '&quot;').replace(/\n/g, ' ');
                     rcHtml += `<button style="background-color: rgba(239, 68, 68, 0.2); border: 1px solid #EF4444; padding: 2px 5px; color: #EF4444; font-size: 0.7rem; border-radius:4px; cursor:pointer;" onclick="alert('Error RC:\\n${errStr}')">⚠️ Error</button>`;
+                }
+                // v1.9.9 (3.8): reintento manual, con el filtro "Fallidos".
+                if (ev.status === 'failed' && currentStatusFilter === 'failed') {
+                    rcHtml += `<button class="btn-reintentar-fila" onclick="abrirReintentoFila(${Number(ev.id)})" style="background:#B45309; color:white; border:none; padding:2px 6px; border-radius:4px; font-size:0.7em; cursor:pointer;" title="Volver a enviar este evento a RC">↻ Reintentar</button>`;
                 }
                 rcHtml += `</div>`;
                 rcHtml += `</div>`;
@@ -1755,13 +1762,7 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
                                           style="width:110px;"
                                           title="Peticiones por minuto que acepta este webhook. Vacío o 0 = usar el límite global del sistema.">`}
                             </td>
-                            <td>
-                                <select id="queue_${c._originalIdx}" class="form-control" style="width: 100px; background-color: var(--level-0); color: var(--color-text); cursor: pointer;">
-                                    <option value="sqlite" ${c.queue_backend === 'sqlite' ? 'selected' : ''}>SQLite</option>
-                                    <option value="postgres" ${c.queue_backend === 'postgres' ? 'selected' : ''}>PostgreSQL</option>
-                                    <option value="redis" ${c.queue_backend === 'redis' ? 'selected' : ''}>Redis</option>
-                                </select>
-                            </td>
+                            <td>${_selectorMotorCola(c)}</td>
                             <td>${_opcionesDeModulo(c)}</td>
 
                         `;
@@ -1771,6 +1772,23 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
             } catch(e) {
                 console.error("Error al cargar config", e);
             }
+        }
+
+        // Motor de cola (v1.9.9, B-18): solo SQLite, que es el único
+        // implementado. Redis y PostgreSQL se ofrecían y elegirlos dejaba a la
+        // integración sin cola. Una configuración que ya tenga otro valor se
+        // muestra tal cual, con aviso, y guardar no lo cambia sin querer.
+        function _selectorMotorCola(c) {
+            const actual = String(c.queue_backend || 'sqlite').toLowerCase();
+            const otro = actual !== 'sqlite'
+                ? `<option value="${_escAttr(actual)}" selected>⚠ ${_escapeHtml(actual)} (no implementado)</option>` : '';
+            const aviso = actual !== 'sqlite'
+                ? `<div class="aviso-motor-cola" style="color:var(--color-yellow);font-size:0.72rem;margin-top:0.2rem;">
+                     ⚠ "${_escapeHtml(actual)}" no está implementado: esta integración no tiene cola. Elegí SQLite y guardá.</div>` : '';
+            return `<select id="queue_${c._originalIdx}" class="form-control" style="width: 100px; background-color: var(--level-0); color: var(--color-text); cursor: pointer;"
+                        title="${actual !== 'sqlite' ? _escAttr('Motor no implementado: ' + actual) : 'SQLite'}">
+                        <option value="sqlite" ${actual === 'sqlite' ? 'selected' : ''}>SQLite</option>${otro}
+                    </select>${aviso}`;
         }
 
         // Ancho del campo "RC Usuario" (v1.9.8): el usuario entero a la vista
@@ -1789,7 +1807,7 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
             }
             const etiquetas = c.module_options_labels || {};
             return '<div class="opciones-modulo">' + Object.keys(c.module_options || {}).map(clave => `
-                <label title="${_escapeHtml(etiquetas[clave] || clave)}">
+                <label title="${_escAttr(etiquetas[clave] || clave)}">
                     <input type="checkbox" id="modopt_${c._originalIdx}_${clave}" data-clave="${clave}"
                            ${c.module_options[clave] ? 'checked' : ''}>
                     ${_escapeHtml(etiquetas[clave] || clave)}
@@ -1810,7 +1828,7 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
             return `<div class="credenciales-modulo">
                 <div style="font-size:0.72rem;font-weight:700;margin-top:6px;">API de Tive</div>
                 <input class="form-control" type="text" id="modcred_${idx}_client_id"
-                       value="${cred.client_id ? _escapeHtml(cred.client_id) : ''}"
+                       value="${cred.client_id ? _escAttr(cred.client_id) : ''}"
                        placeholder="Client ID (ej: Envios Assistcargo)" autocomplete="off"
                        title="Client ID de la API de Tive. Texto libre: puede tener espacios.">
                 <input class="form-control" type="password" id="modcred_${idx}_client_secret"
@@ -1939,16 +1957,6 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
                 });
             } catch(e) {
                 console.error("Error cargando logs", e);
-            }
-        }
-
-        async function clearLogs() {
-            if(!confirm("¿Seguro que deseas vaciar todo el historial de auditoría?")) return;
-            try {
-                await fetch('/api/logs', { method: 'DELETE' });
-                await loadLogs();
-            } catch (err) {
-                console.error("Error limpiando logs", err);
             }
         }
 
@@ -2166,6 +2174,157 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
             }
         }
 
+        // ─── Reintento manual de fallidos (v1.9.9, 3.8) ──────────────────────
+        // Solo con el filtro "Fallidos". El servidor vuelve a validar todo: toca
+        // únicamente eventos en 'failed' y exige la cantidad que se confirmó acá.
+        let _reintento = null;
+
+        function _botonReintentoFallidos() {
+            const b = document.getElementById('btn-reintentar-fallidos');
+            if (b) b.style.display = currentStatusFilter === 'failed' ? '' : 'none';
+        }
+
+        function _mostrarModalReintento() {
+            document.getElementById('reintento-resumen').style.display = 'none';
+            document.getElementById('reintento-mensaje').style.display = 'none';
+            const boton = document.getElementById('reintento-confirmar');
+            boton.textContent = 'Revisar';
+            boton.disabled = false;
+            document.getElementById('reintento-modal').style.display = 'flex';
+        }
+
+        function cerrarReintento() {
+            _reintento = null;
+            document.getElementById('reintento-modal').style.display = 'none';
+        }
+
+        function _mensajeReintento(texto, esError) {
+            const p = document.getElementById('reintento-mensaje');
+            p.textContent = texto;
+            p.style.color = esError ? '#f87171' : 'var(--color-green-bright)';
+            p.style.display = 'block';
+        }
+
+        function abrirReintentoFila(id) {
+            const ev = allRecentEvents.find(e => e.id === id);
+            if (!ev) return;
+            _reintento = { modo: 'fila', ev, confirmando: null };
+            document.getElementById('reintento-contenido').innerHTML = `
+                <table class="inventario-tabla"><tbody>
+                    <tr><th>Evento</th><td>id ${Number(ev.id)} · ${_escapeHtml(String(ev.provider))}/${_escapeHtml(String(ev.env))} · ${_escapeHtml(String(ev.chassis || 'N/A'))} · código ${_escapeHtml(String(ev.code))}</td></tr>
+                    <tr><th>Job ID</th><td>${_escapeHtml(String(ev.job_id || 'N/A'))}</td></tr>
+                    <tr><th>Respuesta de RC</th><td style="white-space:pre-wrap; word-break:break-word;">${_escapeHtml(String(ev.rc_response || '').slice(0, 400))}</td></tr>
+                </tbody></table>`;
+            _mostrarModalReintento();
+        }
+
+        async function abrirReintentoFallidos() {
+            _reintento = { modo: 'grupos', grupos: [], confirmando: null };
+            document.getElementById('reintento-contenido').innerHTML = '<p style="color:var(--color-gray)">Cargando…</p>';
+            _mostrarModalReintento();
+            const params = new URLSearchParams();
+            if (currentProviderFilter !== 'all') params.set('provider', currentProviderFilter);
+            try {
+                const res = await fetch(`/api/reintentos/fallidos?${params.toString()}`, { cache: 'no-store' });
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.detail || res.status);
+                _reintento.grupos = data.grupos || [];
+                document.getElementById('reintento-contenido').innerHTML = _renderGruposReintento(_reintento.grupos);
+                _cambioEnReintento();
+            } catch (e) {
+                document.getElementById('reintento-contenido').innerHTML = '';
+                _mensajeReintento(`No se pudo armar el resumen: ${e.message || e}`, true);
+            }
+        }
+
+        function _renderGruposReintento(grupos) {
+            if (!grupos.length) return '<p style="color:var(--color-gray)">No hay eventos fallidos para reintentar.</p>';
+            // Los permanentes arrancan sin marcar: reintentarlos sin corregir
+            // el dato da el mismo rechazo.
+            const filas = grupos.map((g, i) => `<tr>
+                    <td><input type="checkbox" class="reintento-grupo" data-i="${i}" ${g.permanente ? '' : 'checked'} onchange="_cambioEnReintento()"></td>
+                    <td>${_escapeHtml(g.integracion)}</td>
+                    <td title="${_escAttr(g.ejemplo)}">${_escapeHtml(g.motivo)}</td>
+                    <td>${_escapeHtml(g.categoria)}${g.permanente ? `<div class="reintento-aviso" style="color:var(--color-yellow); font-size:0.78rem;">⚠ ${_escapeHtml(g.aviso)}</div>` : ''}</td>
+                    <td class="num">${Number(g.cantidad)}</td>
+                </tr>`).join('');
+            return `<table class="inventario-tabla">
+                    <thead><tr><th></th><th>Integración</th><th>Motivo de RC</th><th>Categoría</th><th class="num">Cantidad</th></tr></thead>
+                    <tbody>${filas}</tbody></table>
+                <div id="reintento-total" style="font-size:0.85rem; margin-top:0.6rem; color:var(--color-text);"></div>`;
+        }
+
+        function _gruposElegidosReintento() {
+            return Array.from(document.querySelectorAll('.reintento-grupo'))
+                .filter(c => c.checked)
+                .map(c => _reintento.grupos[Number(c.dataset.i)]);
+        }
+
+        function _cambioEnReintento() {
+            // Cambiar la selección invalida la revisión anterior.
+            if (!_reintento) return;
+            _reintento.confirmando = null;
+            document.getElementById('reintento-resumen').style.display = 'none';
+            document.getElementById('reintento-confirmar').textContent = 'Revisar';
+            if (_reintento.modo === 'grupos') {
+                const elegidos = _gruposElegidosReintento();
+                const total = elegidos.reduce((s, g) => s + g.cantidad, 0);
+                const el = document.getElementById('reintento-total');
+                if (el) el.textContent = `Elegidos: ${total} evento(s) en ${elegidos.length} grupo(s).`;
+            }
+        }
+
+        async function confirmarReintento() {
+            if (!_reintento) return;
+            let pedido, cantidad, detalle;
+            if (_reintento.modo === 'fila') {
+                const ev = _reintento.ev;
+                cantidad = 1;
+                pedido = { provider: String(ev.provider).toLowerCase(), env: String(ev.env).toLowerCase(),
+                           ids: [ev.id], cantidad_confirmada: 1 };
+                detalle = `id ${Number(ev.id)} de ${_escapeHtml(String(ev.provider))}/${_escapeHtml(String(ev.env))}`;
+            } else {
+                const elegidos = _gruposElegidosReintento();
+                if (!elegidos.length) { _mensajeReintento('Elegí al menos un grupo.', true); return; }
+                cantidad = elegidos.reduce((s, g) => s + g.cantidad, 0);
+                pedido = { grupos: elegidos.map(g => g.id), cantidad_confirmada: cantidad };
+                const permanentes = elegidos.filter(g => g.permanente).reduce((s, g) => s + g.cantidad, 0);
+                detalle = elegidos.map(g => `${_escapeHtml(g.integracion)} · ${_escapeHtml(g.motivo)}: ${Number(g.cantidad)}`).join('<br>')
+                    + (permanentes ? `<br>⚠ ${permanentes} son rechazos permanentes: van a volver a fallar salvo que se corrija el dato.` : '');
+            }
+            const boton = document.getElementById('reintento-confirmar');
+            const resumen = document.getElementById('reintento-resumen');
+            if (!_reintento.confirmando) {
+                // Primer clic: la cantidad exacta a la vista, sin ejecutar nada.
+                _reintento.confirmando = pedido;
+                resumen.innerHTML = `Se van a reintentar <strong>${cantidad}</strong> evento(s):<br>${detalle}`;
+                resumen.style.display = 'block';
+                boton.textContent = `Confirmar y reintentar ${cantidad}`;
+                return;
+            }
+            boton.disabled = true;
+            try {
+                const res = await fetch('/api/reintentos/reintentar', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(_reintento.confirmando),
+                });
+                const data = await res.json().catch(() => ({}));
+                if (!res.ok) {
+                    _reintento.confirmando = null;
+                    boton.textContent = 'Revisar';
+                    _mensajeReintento(`No se reintentó: ${data.detail || res.status}`, true);
+                    return;
+                }
+                resumen.style.display = 'none';
+                boton.textContent = 'Revisar';
+                _reintento.confirmando = null;
+                _mensajeReintento(`Listo: ${data.reintentados} evento(s) volvieron a la cola.`, false);
+                fetchFilteredEvents();
+            } finally {
+                boton.disabled = false;
+            }
+        }
+
         function _escapeHtml(txt) {
             const d = document.createElement('div');
             d.textContent = txt;
@@ -2173,7 +2332,8 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
         }
 
         // Para valores dentro de un atributo (v1.9.8). _escapeHtml usa el DOM,
-        // que no escapa comillas: un " cortaría el atributo.
+        // que no escapa comillas: un " cortaría el atributo. v1.9.9 (3.6): es
+        // el escape de TODO atributo del panel; _escapeHtml queda para texto.
         function _escAttr(v) {
             return String(v === null || v === undefined ? '' : v)
                 .replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/'/g, '&#39;')
@@ -2620,6 +2780,7 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
                 rowids: data.rows.map(r => conRowid ? r[0] : null),
                 editable: !!data.editable,
                 cifradas,
+                tipos: data.tipos || {},
             };
 
             if (data.editable) {
@@ -2641,7 +2802,7 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
                     const col = columnas[c];
                     const texto = _textoCeldaBd(valor);
                     const editar = _dbVista.editable && !cifradas.has(col)
-                        ? ` ondblclick="openEditModal(${Number(_dbVista.rowids[f])}, '${_escAttr(col)}', this)"` : '';
+                        ? ` ondblclick="openEditModal(${Number(_dbVista.rowids[f])}, '${_escAttr(col)}', this, ${f}, ${c})"` : '';
                     const contenido = texto === null ? '<em>NULL</em>'
                         : (cifradas.has(col) ? `<em>${_escapeHtml(texto)}</em>` : _escapeHtml(texto));
                     return `<td class="db-celda" data-f="${f}" data-c="${c}" onclick="verCeldaBd(${f}, ${c})"${editar}>${contenido}</td>`;
@@ -2731,18 +2892,46 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
             window.location.href = `/api/db-viewer/descargar?${params.toString()}`;
         }
 
-        function openEditModal(rowid, colName, tdEl) {
+        // Valor de una celda como texto editable (NULL = null).
+        function _textoEditable(valor) {
+            if (valor === null || valor === undefined) return null;
+            return typeof valor === 'object' ? JSON.stringify(valor) : String(valor);
+        }
+
+        // v1.9.9 (3.1): antes el modal mandaba el valor ORIGINAL de la celda y
+        // no cambiaba nada. Ahora el valor nuevo se escribe en el modal y, antes
+        // de guardar, se muestra el anterior y el nuevo para confirmar.
+        function openEditModal(rowid, colName, tdEl, fila, col) {
             if (!_dbEditorState.editable) return;
-            const currentVal = tdEl.innerText.trim();
-            _dbEditorState.pendingEdit = { rowid, colName, tdEl, originalVal: currentVal };
+            const valor = (_dbVista && fila !== undefined && _dbVista.rows[fila]) ? _dbVista.rows[fila][col]
+                                                                                : tdEl.innerText.trim();
+            const anterior = _textoEditable(valor);
+            _dbEditorState.pendingEdit = { rowid, colName, tdEl, anterior, revisado: false };
             document.getElementById('db-edit-modal-target').textContent = `${_dbEditorState.table} (fila ${rowid})`;
             document.getElementById('db-edit-modal-col').textContent = colName;
-            document.getElementById('db-edit-modal-val').textContent = currentVal;
+            const tipo = _dbVista && _dbVista.tipos ? (_dbVista.tipos[colName] || '') : '';
+            document.getElementById('db-edit-modal-tipo').textContent = tipo ? `(${tipo})` : '';
+            document.getElementById('db-edit-modal-anterior').textContent = anterior === null ? 'NULL' : anterior;
+            document.getElementById('db-edit-nuevo').value = anterior === null ? '' : anterior;
+            document.getElementById('db-edit-nulo').checked = anterior === null;
             document.getElementById('db-edit-password').value = '';
             document.getElementById('db-edit-error').style.display = 'none';
+            _cambioEnEdicion();
             const modal = document.getElementById('db-edit-modal');
             modal.style.display = 'flex';
-            setTimeout(() => document.getElementById('db-edit-password').focus(), 100);
+            setTimeout(() => document.getElementById('db-edit-nuevo').focus(), 100);
+        }
+
+        function _valorNuevoEnEdicion() {
+            return document.getElementById('db-edit-nulo').checked ? null : document.getElementById('db-edit-nuevo').value;
+        }
+
+        // Cualquier cambio en el valor vuelve a pedir la revisión.
+        function _cambioEnEdicion() {
+            if (!_dbEditorState.pendingEdit) return;
+            _dbEditorState.pendingEdit.revisado = false;
+            document.getElementById('db-edit-resumen').style.display = 'none';
+            document.getElementById('db-edit-confirmar').textContent = 'Revisar cambio';
         }
 
         function closeEditModal() {
@@ -2753,8 +2942,31 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
         async function confirmCellEdit() {
             const pass = document.getElementById('db-edit-password').value;
             const errEl = document.getElementById('db-edit-error');
-            const { rowid, colName, tdEl } = _dbEditorState.pendingEdit;
-            const newValue = _dbEditorState.pendingEdit.originalVal;
+            const pendiente = _dbEditorState.pendingEdit;
+            if (!pendiente) return;
+            const { rowid, colName, tdEl, anterior } = pendiente;
+            const newValue = _valorNuevoEnEdicion();
+            errEl.style.display = 'none';
+
+            if (newValue === anterior) {
+                errEl.textContent = 'El valor nuevo es igual al anterior: no hay nada que guardar.';
+                errEl.style.display = 'block';
+                return;
+            }
+            // Paso 1: mostrar el anterior y el nuevo, y pedir la confirmación.
+            if (!pendiente.revisado) {
+                const mostrar = v => v === null ? 'NULL' : (v === '' ? '(vacío)' : v);
+                const resumen = document.getElementById('db-edit-resumen');
+                resumen.innerHTML = `<div><strong>${_escapeHtml(colName)}</strong> pasa de</div>
+                    <div style="font-family:monospace;color:#f87171;word-break:break-all;">${_escapeHtml(mostrar(anterior))}</div>
+                    <div>a</div>
+                    <div style="font-family:monospace;color:var(--color-green-vibrant);word-break:break-all;">${_escapeHtml(mostrar(newValue))}</div>`;
+                resumen.style.display = 'block';
+                pendiente.revisado = true;
+                document.getElementById('db-edit-confirmar').textContent = 'Confirmar y guardar';
+                document.getElementById('db-edit-password').focus();
+                return;
+            }
 
             if (!pass) { errEl.textContent = 'Debes ingresar la contraseña.'; errEl.style.display='block'; return; }
 
@@ -2791,7 +3003,9 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
         // Cerrar modal al presionar Escape
         document.addEventListener('keydown', e => {
             if (e.key === 'Escape') closeEditModal();
-            if (e.key === 'Enter' && document.getElementById('db-edit-modal').style.display === 'flex') confirmCellEdit();
+            // Enter confirma solo desde la contraseña: en el valor nuevo es un salto de línea.
+            if (e.key === 'Enter' && document.getElementById('db-edit-modal').style.display === 'flex'
+                && document.activeElement && document.activeElement.id === 'db-edit-password') confirmCellEdit();
         });
 
         // Inicio
@@ -3111,13 +3325,13 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
 
                 return `
                 <div class="rule-row ${r.enabled ? '' : 'disabled'}" id="rulerow-${r.id}">
-                    <input type="text"  class="form-control" style="font-size:0.8rem;" value="${r.field   || ''}" placeholder="campo del payload"  onchange="updateRule('${r.id}','field',   this.value)">
+                    <input type="text"  class="form-control" style="font-size:0.8rem;" value="${_escAttr(r.field || '')}" placeholder="campo del payload"  onchange="updateRule('${r.id}','field',   this.value)">
                     <select             class="form-control" style="font-size:0.8rem;"                                                              onchange="updateRule('${r.id}','operator',this.value)">${opOptions}</select>
                     ${_inputValorRegla(r)}
-                    <input type="text"  class="form-control" style="font-size:0.8rem;" value="${r.label   || ''}" placeholder="descripción"        onchange="updateRule('${r.id}','label',   this.value)">
-                    <input type="text"  class="form-control" style="font-size:0.8rem;" value="${r.rc_code || ''}" placeholder="código RC o =campo" title="Un código fijo (ej: 10), o =campo para mandar el valor de ese campo tal cual (ej: =AlertType manda TemperatureMax). Acepta rutas y alternativas: =AlertType || Alert.AlertType" onchange="updateRule('${r.id}','rc_code', this.value)">
+                    <input type="text"  class="form-control" style="font-size:0.8rem;" value="${_escAttr(r.label || '')}" placeholder="descripción"        onchange="updateRule('${r.id}','label',   this.value)">
+                    <input type="text"  class="form-control" style="font-size:0.8rem;" value="${_escAttr(r.rc_code || '')}" placeholder="código RC o =campo" title="Un código fijo (ej: 10), o =campo para mandar el valor de ese campo tal cual (ej: =AlertType manda TemperatureMax). Acepta rutas y alternativas: =AlertType || Alert.AlertType" onchange="updateRule('${r.id}','rc_code', this.value)">
                     <select title="Estado: filtra repeticiones del mismo código (motor apagado, puerta abierta). Detecta transiciones si usás Dedup Key. Momentáneo: siempre emite (SOS, crash, geofence)." class="form-control" style="font-size:0.8rem;" onchange="updateRule('${r.id}','event_type',this.value)">${evTypeOptions}</select>
-                    <input type="text"  class="form-control" style="font-size:0.8rem;" value="${r.dedup_key || ''}" placeholder="ej: doorstatus" title="Clave de agrupación para estados mutuamente excluyentes del mismo sensor. Ej: doorstatus=1 (code 10) y doorstatus=0 (code 34) deben compartir key 'doorstatus' para que el sistema detecte transiciones (abrir→cerrar→abrir). Si lo dejás vacío, cada código se trata independientemente." onchange="updateRule('${r.id}','dedup_key',this.value)">
+                    <input type="text"  class="form-control" style="font-size:0.8rem;" value="${_escAttr(r.dedup_key || '')}" placeholder="ej: doorstatus" title="Clave de agrupación para estados mutuamente excluyentes del mismo sensor. Ej: doorstatus=1 (code 10) y doorstatus=0 (code 34) deben compartir key 'doorstatus' para que el sistema detecte transiciones (abrir→cerrar→abrir). Si lo dejás vacío, cada código se trata independientemente." onchange="updateRule('${r.id}','dedup_key',this.value)">
                     <div style="display:flex;gap:4px;align-items:center;">
                         <input type="checkbox" ${r.enabled ? 'checked' : ''} title="Activar/desactivar" style="width:16px;height:16px;accent-color:var(--color-green-vibrant);cursor:pointer;" onchange="updateRule('${r.id}','enabled',this.checked)">
                         <button class="btn-delete-rule" onclick="deleteRule('${r.id}')">✕</button>
@@ -3168,7 +3382,7 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
             if (_OPERADORES_SIN_VALOR.includes(r.operator)) {
                 return `<input type="text" class="form-control" style="font-size:0.8rem; opacity:0.5;" value="" placeholder="no aplica" disabled title="Con este operador solo importa si el campo existe: no se compara contra ningún valor">`;
             }
-            return `<input type="text"  class="form-control" style="font-size:0.8rem;" value="${r.value ?? '1'}" placeholder="valor (ej: 1)"    onchange="updateRule('${r.id}','value',   this.value)">`;
+            return `<input type="text"  class="form-control" style="font-size:0.8rem;" value="${_escAttr(r.value ?? '1')}" placeholder="valor (ej: 1)"    onchange="updateRule('${r.id}','value',   this.value)">`;
         }
 
         function updateRule(ruleId, key, value) {
@@ -3225,7 +3439,11 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
                     document.getElementById('dictValuePath').value = data.value_path || "";
                     document.getElementById('dictAuthType').value = data.auth_type || "none";
                     document.getElementById('dictAuthUser').value = data.auth_user || "";
-                    document.getElementById('dictAuthPass').value = data.auth_pass || "";
+                    // 2.4 (v1.9.9): la contraseña guardada no viaja al panel (está
+                    // cifrada). Vacío al guardar = se conserva la que hay.
+                    document.getElementById('dictAuthPass').value = "";
+                    document.getElementById('dictAuthPass').placeholder = data.tiene_auth_pass
+                        ? '•••••••• (cifrada) — dejar vacío para mantenerla' : '';
                     _mostrarCamposAuth('dict', data.auth_type || 'none');
                     document.getElementById('dictTokenUrl').value = data.token_url || "";
                     document.getElementById('dictTokenFormat').value = data.token_body_format || "form";
@@ -3936,10 +4154,27 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
                     <td>${esc(String(u.proveedor).toUpperCase())}</td>
                     <td><strong>${esc(u.equipo)}</strong></td>
                     <td>${esc(u.envio)}</td>
-                    <td title="${u.detalle ? _escapeHtml(String(u.detalle)) : ''}">${esc(u.motivo)}</td>
+                    <td title="${u.detalle ? _escAttr(String(u.detalle)) : ''}">${esc(u.motivo)}</td>
                     <td style="font-family:monospace;font-size:0.72rem;">${esc(u.alert_id)}</td>
                     <td class="num" style="font-family:monospace;font-size:0.72rem;">${_coordDescarte(u.latitud, u.longitud)}</td>
                 </tr>`).join('');
+            // B-8 (v1.9.9): integraciones del Studio sin patente real, por equipo.
+            const sinPatente = (d.por_equipo || []).length ? `
+                <h3 style="font-size:0.9rem;margin:1rem 0 0.5rem;">Sin patente real, por equipo (avisar al prestador)</h3>
+                <div style="overflow-x:auto;max-height:300px;overflow-y:auto;">
+                <table class="inventario-tabla">
+                  <thead><tr><th>Integración</th><th>Equipo (identificador recibido)</th><th>Campo faltante</th>
+                    <th class="num">Descartados</th><th class="num">Último</th><th class="num">Última posición</th></tr></thead>
+                  <tbody>${d.por_equipo.map(e => `<tr>
+                    <td><strong>${esc(String(e.proveedor).toUpperCase())}</strong>
+                        <span class="env-badge">${esc(String(e.env).toUpperCase())}</span></td>
+                    <td><strong>${esc(e.equipo)}</strong></td>
+                    <td>${esc(e.detalle)}</td>
+                    <td class="num">${Number(e.total).toLocaleString()}</td>
+                    <td class="num">${_horaDescarte(e.ultimo)}</td>
+                    <td class="num" style="font-family:monospace;font-size:0.72rem;">${_coordDescarte(e.latitud, e.longitud)}</td>
+                  </tr>`).join('')}</tbody>
+                </table></div>` : '';
             const perdidos = d.perdidos ? `<div style="color:var(--color-yellow);font-size:0.78rem;margin-top:0.5rem;">
                     ${Number(d.perdidos).toLocaleString()} descarte(s) no se pudieron guardar (sí quedaron en consola).</div>` : '';
             return `
@@ -3948,7 +4183,7 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
                   <thead><tr><th>Integración</th><th>Origen</th><th>Motivo</th>
                     <th class="num">Cantidad</th><th class="num">Último</th></tr></thead>
                   <tbody>${resumen}</tbody>
-                </table></div>
+                </table></div>${sinPatente}
                 <h3 style="font-size:0.9rem;margin:1rem 0 0.5rem;">Últimos descartes</h3>
                 <div style="overflow-x:auto;max-height:420px;overflow-y:auto;">
                 <table class="inventario-tabla">

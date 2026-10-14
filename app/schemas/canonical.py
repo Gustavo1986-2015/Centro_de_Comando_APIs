@@ -43,14 +43,3 @@ class RCCanonicalModel(BaseModel):
     vehicle_type: Optional[str] = Field(None, description="Tipo de trailer/vehículo")
     vehicle_brand: Optional[str] = Field(None, description="Marca del tráiler")
     vehicle_model: Optional[str] = Field(None, description="Modelo de telemática")
-
-class EventCreate(BaseModel):
-    """
-    Esquema para creación inicial de evento en la BD.
-    """
-    model_config = ConfigDict(extra='ignore')
-    
-    provider: str
-    status: str = "pending"
-    raw_data: str
-    canonical_data: RCCanonicalModel

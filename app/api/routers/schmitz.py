@@ -131,6 +131,9 @@ def _validate_schmitz_auth(request: Request, env: str = Query("prod")):
         )
         raise HTTPException(401, "API key invalida")
 
+    # v1.9.9 (3.4): la Aceptación PUSH cuenta solo lo aceptado, igual que el
+    # webhook genérico (v1.9.6). El middleware de main.py lo lee de acá.
+    request.state.push_aceptada = ("schmitz", entorno)
     return True
 
 

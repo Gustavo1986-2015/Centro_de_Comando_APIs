@@ -1,6 +1,16 @@
 from sqlalchemy import Column, Integer, String, Boolean, Date, Float, JSON
 from app.database import Base
 
+# Valores por defecto del comportamiento ante fallas de Recurso Confiable.
+# UN SOLO LUGAR (v1.9.9, B-23): antes estaban repetidos en el modelo, la
+# migración, el panel, el respaldo YAML y el worker.
+RC_VALORES_POR_DEFECTO = {
+    "rc_liberacion_tanda": 500,          # eventos por ciclo al recuperarse RC
+    "rc_max_reintentos": 4,              # intentos por evento antes de darlo por fallido
+    "rc_fallos_circuito": 5,             # llamadas fallidas seguidas para dejar de insistir
+    "rc_recuperacion_umbral_seg": 600,   # antigüedad para rescatar un lote atascado
+}
+
 class ProviderConfig(Base):
     """Modelo de base de datos para la configuración central del sistema."""
     __tablename__ = "provider_config"
@@ -73,7 +83,8 @@ class SystemSettings(Base):
     """Modelo para configuración global e infraestructura del Hub."""
     __tablename__ = "system_settings"
     id = Column(Integer, primary_key=True, index=True)
-    active_queue_backend = Column(String, default="sqlite") # 'sqlite', 'redis' o 'postgres'
+    # active_queue_backend: se quitó del modelo (v1.9.9, B-23). Nadie la leía;
+    # la columna puede seguir en bases viejas, sin uso.
     audit_retention_days = Column(Integer, default=30)
     processed_retention_days = Column(Integer, default=30)
     processed_logs_enabled = Column(Boolean, default=True)
@@ -81,10 +92,10 @@ class SystemSettings(Base):
     # ── Comportamiento ante fallas de Recurso Confiable ──────────────────────
     # Estaban fijos en el código o en variables de entorno del servidor, sin
     # forma de ajustarlos durante un incidente sin acceso a la máquina.
-    rc_liberacion_tanda = Column(Integer, default=500)   # eventos por ciclo al recuperarse RC
-    rc_max_reintentos = Column(Integer, default=4)       # intentos por evento antes de darlo por fallido
-    rc_fallos_circuito = Column(Integer, default=5)      # llamadas fallidas seguidas para dejar de insistir
-    rc_recuperacion_umbral_seg = Column(Integer, default=600)  # antigüedad para rescatar un lote atascado
+    rc_liberacion_tanda = Column(Integer, default=RC_VALORES_POR_DEFECTO["rc_liberacion_tanda"])
+    rc_max_reintentos = Column(Integer, default=RC_VALORES_POR_DEFECTO["rc_max_reintentos"])
+    rc_fallos_circuito = Column(Integer, default=RC_VALORES_POR_DEFECTO["rc_fallos_circuito"])
+    rc_recuperacion_umbral_seg = Column(Integer, default=RC_VALORES_POR_DEFECTO["rc_recuperacion_umbral_seg"])
 
     # Horas que un evento ya despachado permanece en la base antes de purgarse.
     # La base es un colchón de tránsito: lo purgado queda en los respaldos JSONL.

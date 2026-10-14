@@ -11,7 +11,6 @@ línea al navegador se enmascaran. El enmascarado es genérico por nombre de
 parámetro, así que cubre proveedores actuales y futuros sin cambios.
 """
 import os
-import re
 import json
 import asyncio
 import logging
@@ -23,48 +22,21 @@ logger = logging.getLogger(__name__)
 # el log de la suite de tests del de la aplicación.
 LOG_FILE = os.getenv("LOG_FILE_PATH", os.path.join("logs", "app.jsonl"))
 
-# Parámetros cuyo valor nunca debe salir del servidor. Se comparan en minúsculas
-# y cubren tanto query strings como pares clave-valor en texto libre.
-_SECRET_PARAMS = (
-    "access_token", "token", "signature", "password", "pwd", "passwd",
-    "api_key", "apikey", "x-api-key", "secret",
-    "auth_pass", "webhook_auth_secret",
-)
-
-# Cubre las tres formas en que aparecen credenciales en los logs:
-#   access_token=XXXX          (query string)
-#   "password": "XXXX"         (JSON, con comilla de cierre antes del separador)
-#   'signature': 'XXXX'        (repr de dict de Python)
-_SECRET_PATTERNS = [
-    re.compile(
-        r"(?i)\b(" + "|".join(re.escape(p) for p in _SECRET_PARAMS) + r")"
-        r"([\"']?\s*[=:]\s*[\"']?)([^\s&\"',}]+)"
-    ),
-    # "Authorization: Bearer XXXX" / "Authorization: Basic XXXX".
-    # El patrón anterior captura solo el esquema ("Bearer") y dejaría el token
-    # a la vista, porque se detiene en el espacio.
-    re.compile(r"(?i)\b(bearer|basic)(\s+)([A-Za-z0-9\-\._~\+/=]+)"),
-]
+# El enmascarado vive en app/core/secretos.py (v1.9.9): uno solo para la
+# consola del panel, el archivo de log, la píldora de salud y los errores.
 
 
 def mask_secrets(text: str) -> str:
     """
-    Reemplaza el valor de cualquier parámetro sensible por una versión truncada.
+    Reemplaza el valor de cualquier parámetro sensible por su versión
+    enmascarada: los 2 primeros y los 2 últimos caracteres ("A1••••02").
 
-    Se conservan los primeros 4 caracteres para poder correlacionar un token con
-    el de otra línea sin exponerlo (útil para diagnosticar rotaciones de token).
+    v1.9.9 (B-12): un solo enmascarado para la consola del panel, el archivo de
+    log, la píldora de salud y los errores (app/core/secretos.py). Antes la
+    consola dejaba 4 caracteres y los demás lugares no enmascaraban nada.
     """
-    if not text:
-        return text
-
-    def _replace(m):
-        nombre, sep, valor = m.group(1), m.group(2), m.group(3)
-        visible = valor[:4] if len(valor) > 8 else ""
-        return f"{nombre}{sep}{visible}***"
-
-    for pat in _SECRET_PATTERNS:
-        text = pat.sub(_replace, text)
-    return text
+    from app.core.secretos import enmascarar
+    return enmascarar(text)
 
 
 def _parse_line(raw: str) -> dict | None:

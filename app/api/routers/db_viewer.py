@@ -86,6 +86,9 @@ _TABLAS_PROVEEDOR = {"normalized_rc_events"}
 # Base de estado de Tive: app/providers/tive/estado.py (_conexion).
 _TABLAS_ESTADO_TIVE = {"pares", "vistos", "tramos_pendientes", "consultas"}
 _TABLAS_INTERNAS = {"sqlite_sequence"}
+# Registro de descartes: app/core/descartes.py (db/descartes.db).
+ARCHIVO_DESCARTES = "descartes.db"
+_TABLAS_DESCARTES = {"descartes"}
 
 
 def _es_base_de_estado(db_rel: str) -> bool:
@@ -107,6 +110,8 @@ def _tabla_es_huerfana(db_rel: str, tabla: str) -> bool:
         return False
     if db_rel == "system_config_global.db":
         return tabla not in _TABLAS_CONFIG
+    if db_rel == ARCHIVO_DESCARTES:
+        return tabla not in _TABLAS_DESCARTES
     # Base de estado de Tive. Una normalized_rc_events vacía ahí es residuo:
     # hasta v1.9.7 el listado de almacenamiento la creaba al abrirla.
     if _es_base_de_estado(db_rel):
@@ -234,6 +239,10 @@ def _es_huerfana(rel: str) -> bool:
     operador quiera rescatar), solo se marcan.
     """
     if rel == "system_config_global.db":
+        return False
+    # Registro de descartes (v1.9.4). Es del esquema vigente: el visor lo
+    # marcaba "Residual" (v1.9.9, 3.7).
+    if rel == ARCHIVO_DESCARTES:
         return False
     partes = rel.split("/")
     if len(partes) == 2 and partes[1] in ("prod.db", "test.db"):
@@ -410,6 +419,8 @@ def execute_query(
             "offset": offset,
             "filtros_no_aplicados": no_aplicados,
             "cifradas": [c for c in columnas if _es_cifrada(c)],
+            # Tipo declarado de cada columna: el editor lo muestra (v1.9.9).
+            "tipos": {c[1]: (c[2] or "") for c in conn.execute(f"PRAGMA table_info({_q(tabla)})")},
             "editable": tabla in EDITABLE_TABLES  # El frontend muestra el modo edición solo si es True
         }
     except HTTPException:
@@ -698,26 +709,88 @@ def descargar_vista(
     )
 
 
+# ─── Edición de celdas (v1.9.9, 3.1) ────────────────────────────────────────
+
+def _info_columna(conn: sqlite3.Connection, tabla: str, columna: str) -> dict:
+    """Tipo declarado, NOT NULL y clave primaria de la columna, del esquema real."""
+    for _, nombre, tipo, notnull, _defecto, pk in conn.execute(f"PRAGMA table_info({_q(tabla)})"):
+        if nombre == columna:
+            return {"tipo": (tipo or "").upper(), "notnull": bool(notnull), "pk": bool(pk)}
+    raise HTTPException(status_code=400, detail="La columna no existe en esta tabla")
+
+
+_VERDADEROS, _FALSOS = {"1", "true", "verdadero", "si", "sí"}, {"0", "false", "falso", "no"}
+
+
+def _convertir(valor, info: dict, columna: str):
+    """
+    El valor nuevo, validado y convertido según el tipo declarado de la columna.
+    Devuelve (valor para SQLite, valor para el modelo). Lanza 400 con el motivo.
+    """
+    if info["pk"]:
+        raise HTTPException(status_code=400, detail=f"'{columna}' es la clave primaria: no se edita.")
+    if valor is None:
+        if info["notnull"]:
+            raise HTTPException(status_code=400, detail=f"'{columna}' no admite NULL.")
+        return None, None
+    texto = str(valor).strip()
+    tipo = info["tipo"]
+    try:
+        if "BOOL" in tipo:
+            if texto.lower() in _VERDADEROS:
+                return 1, True
+            if texto.lower() in _FALSOS:
+                return 0, False
+            raise ValueError("se espera true/false o 1/0")
+        if "INT" in tipo:
+            if not re.fullmatch(r"-?\d+", texto):
+                raise ValueError("se espera un número entero")
+            return int(texto), int(texto)
+        if any(t in tipo for t in ("REAL", "FLOA", "DOUB", "NUMERIC", "DECIMAL")):
+            numero = float(texto.replace(",", "."))
+            return numero, numero
+        if "JSON" in tipo:
+            objeto = json.loads(texto)
+            return json.dumps(objeto, ensure_ascii=False), objeto
+        if "DATE" in tipo or "TIME" in tipo:
+            fecha = datetime.fromisoformat(texto.replace("Z", "+00:00"))
+            return fecha.isoformat(sep=" "), fecha
+    except (ValueError, TypeError) as e:
+        raise HTTPException(
+            status_code=400,
+            detail=f"El valor no es válido para '{columna}' (tipo {tipo or 'sin tipo'}): {e}",
+        )
+    return str(valor), str(valor)
+
+
 @router.post("/api/db-viewer/update_cell")
-def update_cell(body: CellUpdateRequest, _: None = Depends(verify_dashboard_auth)):
+def update_cell(body: CellUpdateRequest, request: Request, cred=Depends(verify_dashboard_auth)):
     """
-    Edita una celda específica de una tabla permitida.
-    Requiere revalidar DASHBOARD_PASSWORD para confirmar la operación.
-    Las tablas operativas (normalized_rc_events, etc.) son de SOLO LECTURA y siempre serán rechazadas.
+    Edita una celda de una tabla permitida, con el valor que escribió el
+    operador (v1.9.9: antes se mandaba el valor original y no cambiaba nada).
+
+    - Revalida DASHBOARD_PASSWORD.
+    - Solo las tablas de EDITABLE_TABLES; las columnas *_enc nunca (403).
+    - El valor se valida contra el tipo declarado de la columna en la base.
+    - provider_config se escribe por la sesión de SQLAlchemy: un cambio de
+      use_mock o is_active sale con el MISMO aviso que el panel de
+      configuración (app/core/modo_simulado.py). B-13.
+    - Queda en el registro de acciones administrativas: usuario, base, tabla,
+      fila, columna, valor anterior y nuevo.
     """
-    # Ajuste 1 (Claude): Validar con la contraseña real del .env, no con un PIN cosmético
+    from app.core import config_cache, modo_simulado
+    from app.core.auditor import log_admin_action
+
     correct_pass = get_dashboard_password()
-    if not secrets.compare_digest(body.password.encode(), correct_pass.encode()):
+    if not correct_pass or not secrets.compare_digest(body.password.encode(), correct_pass.encode()):
         raise HTTPException(status_code=403, detail="Contraseña de administrador incorrecta")
 
-    # Ajuste 2 (Claude): Whitelist estricta — rechazo explícito de tablas operativas
+    # Whitelist estricta — rechazo explícito de tablas operativas
     if body.table not in EDITABLE_TABLES:
         raise HTTPException(
             status_code=403,
             detail=f"La tabla '{body.table}' es de solo lectura. Edición no permitida."
         )
-
-    # Validar nombres para prevenir SQL injection
     if not re.match(r'^[a-zA-Z0-9_]+$', body.table):
         raise HTTPException(status_code=400, detail="Nombre de tabla inválido")
     if not re.match(r'^[a-zA-Z0-9_]+$', body.column_name):
@@ -735,30 +808,58 @@ def update_cell(body: CellUpdateRequest, _: None = Depends(verify_dashboard_auth
     if not safe_db_path or not os.path.exists(safe_db_path):
         raise HTTPException(status_code=400, detail="Ruta de base de datos inválida")
 
+    conn = sqlite3.connect(safe_db_path)
     try:
-        conn = sqlite3.connect(safe_db_path)
-        cursor = conn.cursor()
-
-        # La tabla y la columna tienen que existir en la base (v1.9.8).
         if body.table not in _tablas_reales(conn):
             raise HTTPException(status_code=400, detail="La tabla no existe en esta base")
-        if body.column_name not in _columnas_reales(conn, body.table):
-            raise HTTPException(status_code=400, detail="La columna no existe en esta tabla")
-
-        # En SQLite, 'rowid' identifica la fila física inequívocamente
-        sql = f"UPDATE {body.table} SET {body.column_name} = ? WHERE rowid = ?"
-        cursor.execute(sql, (body.new_value, body.rowid))
-
-        if cursor.rowcount == 0:
+        info = _info_columna(conn, body.table, body.column_name)
+        valor_sql, valor_modelo = _convertir(body.new_value, info, body.column_name)
+        fila = conn.execute(f"SELECT {_q(body.column_name)} FROM {_q(body.table)} WHERE rowid = ?",
+                            (body.rowid,)).fetchone()
+        if fila is None:
             raise HTTPException(status_code=404, detail="No se encontró el registro para actualizar")
+        anterior = fila[0]
 
-        conn.commit()
-        return {"status": "success", "message": "Celda actualizada correctamente"}
+        usuario = getattr(cred, "username", "desconocido")
+        es_config = (body.table == "provider_config"
+                     and body.db_name.replace("\\", "/") == "system_config_global.db")
+        if es_config:
+            # Por la sesión: el aviso de modo simulado (y de activación) sale
+            # igual que desde el panel de configuración.
+            conn.close()
+            from app.database import get_session
+            from app.models.config_models import ProviderConfig
+            with modo_simulado.usuario(usuario, "visor de BD"):
+                db = get_session("system_config", "global")
+                try:
+                    conf = db.get(ProviderConfig, body.rowid)
+                    if conf is None or not hasattr(conf, body.column_name):
+                        raise HTTPException(status_code=404, detail="No se encontró el registro para actualizar")
+                    setattr(conf, body.column_name, valor_modelo)
+                    db.commit()
+                finally:
+                    db.close()
+        else:
+            cursor = conn.execute(f"UPDATE {_q(body.table)} SET {_q(body.column_name)} = ? WHERE rowid = ?",
+                                  (valor_sql, body.rowid))
+            if cursor.rowcount == 0:
+                raise HTTPException(status_code=404, detail="No se encontró el registro para actualizar")
+            conn.commit()
+        config_cache.invalidate()
+
+        log_admin_action("edicion_celda_visor", {
+            "base": body.db_name, "tabla": body.table, "fila": body.rowid, "columna": body.column_name,
+            "antes": anterior, "despues": valor_sql,
+        }, request, usuario)
+        return {"status": "success", "message": "Celda actualizada correctamente",
+                "antes": anterior, "despues": valor_sql}
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Error al actualizar celda: {e}")
         raise HTTPException(status_code=500, detail=f"Error interno: {str(e)}")
     finally:
-        if 'conn' in locals():
+        try:
             conn.close()
+        except Exception:
+            pass

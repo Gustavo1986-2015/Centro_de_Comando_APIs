@@ -190,6 +190,13 @@ async def send_batch_and_measure(canonical_events, rc_client):
         if results and isinstance(results, list) and len(results) > 0:
             primera = results[0]
             success, job_id, raw_response = primera[0], primera[1], primera[2]
+            if not success and str(job_id).startswith("rc_retry_"):
+                # v1.9.9 (1.6): RC respondió pero pidió reintentar (severity:
+                # Retry). Cuenta para el circuito como un timeout; los eventos
+                # siguen por su categoría (TRANSPORT) y vuelven a la cola con
+                # su reintento, conservando la respuesta de RC.
+                _rc_circuit_breaker.record_failure()
+                return results, elapsed
             if not success and "rc_conn_err" in str(job_id):
                 # Es un error de conexión real a RC
                 raise Exception(raw_response)
@@ -204,17 +211,6 @@ async def send_batch_and_measure(canonical_events, rc_client):
         elapsed = time.time() - start_time
         _rc_circuit_breaker.record_failure()
         raise
-
-def get_active_providers():
-    db = get_session("system_config", "global")
-    try:
-        configs = db.query(ProviderConfig).filter(ProviderConfig.is_active == True).all()
-        return [{"name": c.provider_name, "env": c.env, "purge_min": c.purge_interval_min} for c in configs]
-    except Exception as e:
-        logger.error(f"Error reading config: {e}")
-        return []
-    finally:
-        db.close()
 
 def get_next_retry_delay(retry_count: int) -> int:
     """Calcula el retroceso exponencial con Jitter (Full Jitter modificado)."""
@@ -231,7 +227,8 @@ def get_next_retry_delay(retry_count: int) -> int:
 # La liberación es progresiva: tras una caída larga puede haber decenas de miles
 # acumulados, y soltarlos todos de golpe volvería a saturar a RC apenas se
 # recupera. Cada ciclo del worker libera una tanda hasta agotarlos.
-_LIBERACION_TANDA_DEFECTO = int(os.getenv("RC_LIBERACION_TANDA", "500"))
+from app.models.config_models import RC_VALORES_POR_DEFECTO as _RC_DEFECTOS
+_LIBERACION_TANDA_DEFECTO = int(os.getenv("RC_LIBERACION_TANDA", str(_RC_DEFECTOS["rc_liberacion_tanda"])))
 
 # Los parámetros de comportamiento ante fallas se configuran desde el panel y se
 # cachean unos segundos: se leen en cada ciclo del worker, y consultar la base
@@ -254,9 +251,9 @@ def obtener_parametros_rc() -> dict:
 
     valores = {
         "liberacion_tanda": _LIBERACION_TANDA_DEFECTO,
-        "max_reintentos": 4,
-        "fallos_circuito": 5,
-        "recuperacion_umbral_seg": 600,
+        "max_reintentos": _RC_DEFECTOS["rc_max_reintentos"],
+        "fallos_circuito": _RC_DEFECTOS["rc_fallos_circuito"],
+        "recuperacion_umbral_seg": _RC_DEFECTOS["rc_recuperacion_umbral_seg"],
         "retencion_horas": 2,
     }
     try:
@@ -866,17 +863,6 @@ def increment_daily_stats(provider: str, env: str, sent_added: int, failed_added
     finally:
         db_global.close()
 
-async def process_pending_events():
-    """Ejecuta el procesamiento concurrente (en paralelo) de todas las APIs activas."""
-    tasks = []
-    active = get_active_providers()
-    for p in active:
-        tasks.append(process_provider_events(p["name"], p["env"]))
-    
-    if tasks:
-        await asyncio.gather(*tasks)
-
-
 def evento_a_registro_respaldo(r: NormalizedRCEvent, env: str) -> dict:
     """
     Arma el registro que se escribe en db/backups_diarios/.../procesados_*.jsonl.
@@ -1224,26 +1210,11 @@ def _initialize_providers_sync():
     """Setup inicial: lee/crea proveedores en DB y recupera eventos atascados. Bloqueante — llamar con asyncio.to_thread."""
     db = get_session("system_config", "global")
     try:
+        # Siembra en un solo lugar (v1.9.9, B-21): solo en una base vacía, y una
+        # base existente no recibe ni cambia ninguna fila.
+        from app.core.integraciones_iniciales import sembrar_si_vacia
+        sembrar_si_vacia(db)
         configs = db.query(ProviderConfig).all()
-        if not configs:
-            c1 = ProviderConfig(provider_name="schmitz", env="prod")
-            c2 = ProviderConfig(provider_name="schmitz", env="test")
-            c3 = ProviderConfig(provider_name="protrack", env="prod")
-            c4 = ProviderConfig(provider_name="protrack", env="test")
-            db.add_all([c1, c2, c3, c4])
-            db.commit()
-            configs = db.query(ProviderConfig).all()
-        else:
-            existing_names = {(c.provider_name, c.env) for c in configs}
-            to_add = []
-            if ("protrack", "prod") not in existing_names:
-                to_add.append(ProviderConfig(provider_name="protrack", env="prod", is_active=False))
-            if ("protrack", "test") not in existing_names:
-                to_add.append(ProviderConfig(provider_name="protrack", env="test"))
-            if to_add:
-                db.add_all(to_add)
-                db.commit()
-                configs = db.query(ProviderConfig).all()
 
         providers = [(c.provider_name, c.env) for c in configs]
 

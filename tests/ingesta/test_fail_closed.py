@@ -1,0 +1,310 @@
+"""Tests de comportamiento fail-closed en autenticación.
+
+Valida que:
+  - El webhook dinámico rechaza providers inexistentes (401/404)
+  - dynamic_webhook_receive tiene lógica de auth hardened (inspección de código fuente)
+  - schmitz.py no lee API key desde os.getenv (usa DB cifrada)
+  - verify_dashboard_auth retorna las credenciales tras validación exitosa
+"""
+import pytest
+import inspect
+
+
+def test_dynamic_webhook_nonexistent_provider_returns_401_or_404():
+    """Webhook dinámico con provider inexistente debe retornar 401 o 404, nunca 200/202."""
+    import base64
+    from fastapi.testclient import TestClient
+    from main import app
+
+    client = TestClient(app, raise_server_exceptions=False)
+    creds = base64.b64encode(b"test_admin:test_pass_123").decode()
+
+    response = client.post(
+        "/webhook/dynamic/proveedor_inexistente_xyz?env=test",
+        headers={
+            "Authorization": f"Basic {creds}",
+            "x-api-key": "cualquier_key_falsa",
+        },
+        json={"test": "data"},
+    )
+    assert response.status_code in (401, 404), (
+        f"Se esperaba 401 o 404 para provider inexistente, se recibió {response.status_code}"
+    )
+
+
+def test_dynamic_webhook_has_fail_closed_auth_logic(config_aislada):
+    """
+    El webhook genérico rechaza (401) sin clave, con clave incorrecta y a una
+    integración que no tiene clave cargada; la clave sale de la base, cifrada.
+    v1.9.9 (B-20): se EJECUTA el endpoint (antes buscaba "401" en el fuente).
+    """
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from app.api.routers import dynamic_webhook
+    from app.core.crypto import encrypt
+    from app.database import get_session
+    from app.models.config_models import ProviderConfig
+    esquema = {"base_mapping": {"chassis_number": "placa", "latitude": "lat", "longitude": "lon", "date": "fecha"}}
+    db = get_session("system_config", "global")
+    db.add_all([ProviderConfig(provider_name="conclave", env="prod", provider_type="push", is_active=True,
+                               use_mock=True, webhook_auth_secret_enc=encrypt("CLAVE"), mapping_schema=esquema),
+                ProviderConfig(provider_name="sinclave", env="prod", provider_type="push", is_active=True,
+                               use_mock=True, mapping_schema=esquema)])
+    db.commit()
+    db.close()
+    app = FastAPI()
+    app.include_router(dynamic_webhook.router)
+    c = TestClient(app)
+    cuerpo = {"placa": "AB123CD", "lat": 1.0, "lon": 2.0, "fecha": "2026-10-10T12:00:00Z"}
+    assert c.post("/webhook/dynamic/conclave?env=prod", json=cuerpo).status_code == 401
+    assert c.post("/webhook/dynamic/conclave?env=prod", json=cuerpo, headers={"x-api-key": "otra"}).status_code == 401
+    assert c.post("/webhook/dynamic/sinclave?env=prod", json=cuerpo, headers={"x-api-key": "x"}).status_code == 401
+    assert c.post("/webhook/dynamic/conclave?env=prod", json=cuerpo, headers={"x-api-key": "CLAVE"}).status_code == 200
+
+
+def test_schmitz_does_not_read_api_key_from_env(config_aislada, monkeypatch):
+    """
+    Schmitz no acepta la SCHMITZ_API_KEY del entorno: usa la clave cifrada de
+    la base. v1.9.9 (B-20): se EJECUTA el endpoint con las dos claves.
+    """
+    monkeypatch.setenv("SCHMITZ_API_KEY", "clave-del-entorno")
+    c = _b20_schmitz_con_claves(monkeypatch, {"prod": "clave-de-la-base"})
+    cuerpo = {"ChassisNumber": "R5868BDP", "DeviceTime": "2026-10-04T22:23:36Z"}
+    assert c.post("/Json/Data?env=prod", json=cuerpo, headers={"x-api-key": "clave-del-entorno"}).status_code == 401
+    assert c.post("/Json/Data?env=prod", json=cuerpo, headers={"x-api-key": "clave-de-la-base"}).status_code == 202
+
+
+def test_verify_dashboard_auth_returns_credentials():
+    """
+    verify_dashboard_auth devuelve las credenciales tras validarlas (bug L2) y
+    rechaza las incorrectas. v1.9.9 (B-20): se EJECUTA.
+    """
+    import os
+    from fastapi import HTTPException
+    from fastapi.security import HTTPBasicCredentials
+    from app.core.auth import verify_dashboard_auth
+    buena = HTTPBasicCredentials(username=os.environ["DASHBOARD_USER"], password=os.environ["DASHBOARD_PASSWORD"])
+    assert verify_dashboard_auth(buena) is buena
+    with pytest.raises(HTTPException) as e:
+        verify_dashboard_auth(HTTPBasicCredentials(username=os.environ["DASHBOARD_USER"], password="mala"))
+    assert e.value.status_code == 401
+
+
+# ── Aislamiento entre entornos de Schmitz ────────────────────────────────────
+# Había un fallback que, si faltaba la configuración del entorno pedido, tomaba
+# "cualquier configuración de schmitz". Eso permitía que una petición a prod se
+# autenticara con la clave de test: exactamente lo contrario a separarlos.
+
+def test_la_clave_de_un_entorno_no_abre_el_otro(monkeypatch):
+    from unittest.mock import MagicMock, patch
+    from fastapi import HTTPException
+    from app.api.routers.schmitz import _validate_schmitz_auth
+
+    solicitud = MagicMock()
+    solicitud.headers = {"x-api-key": "CLAVE_DE_TEST"}
+
+    # La base solo tiene configuración para 'test'
+    db = MagicMock()
+    db.query.return_value.filter_by.return_value.first.return_value = None
+
+    from app.api.routers.schmitz import invalidar_cache_auth
+    invalidar_cache_auth()
+
+    with patch("app.api.routers.schmitz.get_session", return_value=db):
+        with pytest.raises(HTTPException) as exc:
+            _validate_schmitz_auth(solicitud, env="prod")
+    invalidar_cache_auth()
+
+    assert exc.value.status_code == 401
+    assert "prod" in str(exc.value.detail)
+
+
+def test_un_entorno_sin_clave_rechaza_en_lugar_de_tomar_la_de_otro():
+    """
+    El caso concreto: la fila de prod existe (aparece en el panel) pero con la
+    API key vacía. Debe rechazar, no caer en la configuración de test.
+    """
+    from unittest.mock import MagicMock, patch
+    from fastapi import HTTPException
+    from app.api.routers.schmitz import _validate_schmitz_auth
+
+    solicitud = MagicMock()
+    solicitud.headers = {"x-api-key": "CLAVE_DE_TEST"}
+
+    config_sin_clave = MagicMock()
+    config_sin_clave.webhook_auth_secret_enc = None
+
+    db = MagicMock()
+    db.query.return_value.filter_by.return_value.first.return_value = config_sin_clave
+
+    from app.api.routers.schmitz import invalidar_cache_auth
+    invalidar_cache_auth()
+
+    with patch("app.api.routers.schmitz.get_session", return_value=db):
+        with pytest.raises(HTTPException) as exc:
+            _validate_schmitz_auth(solicitud, env="prod")
+    invalidar_cache_auth()
+
+    assert exc.value.status_code == 401
+    assert "API key" in str(exc.value.detail)
+
+
+def test_no_queda_ningun_fallback_entre_entornos(config_aislada, monkeypatch):
+    """
+    La clave de un entorno no vale en otro, y un entorno sin configuración no
+    toma la de otro. v1.9.9 (B-20): se EJECUTA el endpoint (antes se buscaba
+    'env=entorno' en el fuente).
+    """
+    c = _b20_schmitz_con_claves(monkeypatch, {"prod": "clave-prod", "test": "clave-test"})
+    cuerpo = {"ChassisNumber": "R5868BDP", "DeviceTime": "2026-10-04T22:23:36Z"}
+    enviar = lambda entorno, clave: c.post(f"/Json/Data?env={entorno}", json=cuerpo, headers={"x-api-key": clave}).status_code
+    assert enviar("test", "clave-prod") == 401
+    assert enviar("prod", "clave-test") == 401
+    assert enviar("staging", "clave-prod") == 401
+    assert (enviar("prod", "clave-prod"), enviar("test", "clave-test")) == (202, 202)
+
+
+# ── Costo de la validación en el camino con SLA ──────────────────────────────
+# La validación abría una sesión a la base de configuración en cada petición.
+# Medido: 1,13 ms de media pero hasta 125 ms bajo contención, sobre la misma
+# base que recibe las estadísticas diarias. A 40 mensajes por segundo eso
+# producía picos de latencia y peticiones que agotaban su tiempo de espera.
+
+def test_la_validacion_no_lee_la_base_en_cada_peticion():
+    from unittest.mock import MagicMock, patch
+    from app.api.routers import schmitz
+
+    schmitz.invalidar_cache_auth()
+
+    config = MagicMock()
+    config.webhook_auth_secret_enc = "cifrado"
+    db = MagicMock()
+    db.query.return_value.filter_by.return_value.first.return_value = config
+
+    lecturas = {"n": 0}
+
+    def _sesion(*args, **kwargs):
+        lecturas["n"] += 1
+        return db
+
+    solicitud = MagicMock()
+    solicitud.headers = {"x-api-key": "CLAVE"}
+
+    with patch("app.api.routers.schmitz.get_session", side_effect=_sesion), \
+         patch("app.api.routers.schmitz.decrypt", return_value="CLAVE"):
+        for _ in range(100):
+            schmitz._validate_schmitz_auth(solicitud, env="test")
+
+    assert lecturas["n"] == 1, f"Se leyó la base {lecturas['n']} veces en 100 peticiones"
+    schmitz.invalidar_cache_auth()
+
+
+def test_el_cache_es_independiente_por_entorno():
+    """Una clave cacheada para un entorno no debe servir para el otro."""
+    from app.api.routers import schmitz
+
+    schmitz.invalidar_cache_auth()
+    schmitz._auth_cache["test"] = (9e12, "CLAVE_TEST")
+
+    assert schmitz._auth_cache.get("prod") is None
+    schmitz.invalidar_cache_auth()
+
+
+def test_invalidar_el_cache_fuerza_la_relectura():
+    """Al cambiar la clave desde el panel, el cambio debe tomar efecto."""
+    from app.api.routers import schmitz
+
+    schmitz._auth_cache["test"] = (9e12, "VIEJA")
+    schmitz.invalidar_cache_auth("test")
+
+    assert "test" not in schmitz._auth_cache
+
+
+def test_un_fallo_al_leer_la_configuracion_rechaza(monkeypatch):
+    """
+    Si la base no responde, no se puede validar a nadie: se rechaza en lugar de
+    dejar pasar.
+    """
+    from unittest.mock import MagicMock, patch
+    from fastapi import HTTPException
+    from app.api.routers import schmitz
+
+    schmitz.invalidar_cache_auth()
+    solicitud = MagicMock()
+    solicitud.headers = {"x-api-key": "CUALQUIERA"}
+
+    def _falla(*args, **kwargs):
+        raise RuntimeError("base no disponible")
+
+    with patch("app.api.routers.schmitz.get_session", side_effect=_falla):
+        with pytest.raises(HTTPException) as exc:
+            schmitz._validate_schmitz_auth(solicitud, env="test")
+
+    assert exc.value.status_code == 401
+    schmitz.invalidar_cache_auth()
+
+
+# ─── v1.9.8 (auditoría B-5): la verificación de la clave de Schmitz, EJECUTADA ──
+#
+# Los tests de arriba buscan texto en el fuente: con la verificación quitada
+# (`if False:` en lugar del compare_digest) la suite completa seguía en verde.
+# Este manda peticiones reales a los dos endpoints de Schmitz.
+
+@pytest.fixture
+def schmitz_con_clave(config_aislada, monkeypatch):
+    import asyncio
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from app.api.routers import schmitz
+    from app.core.crypto import encrypt
+    from app.database import get_session
+    from app.models.config_models import ProviderConfig
+
+    db = get_session("system_config", "global")
+    db.add(ProviderConfig(provider_name="schmitz", env="prod", provider_type="push", is_active=True,
+                          use_mock=True, webhook_auth_secret_enc=encrypt("clave-buena-de-schmitz")))
+    db.commit()
+    db.close()
+    schmitz.invalidar_cache_auth()
+    monkeypatch.setattr(schmitz, "_webhook_queue", asyncio.Queue(maxsize=10))
+    app = FastAPI()
+    app.include_router(schmitz.router)
+    app.include_router(schmitz.router_spec)
+    yield TestClient(app)
+    schmitz.invalidar_cache_auth()
+
+
+PAYLOAD_MINIMO = {"ChassisNumber": "R5868BDP", "DeviceTime": "2026-10-04T22:23:36Z"}
+
+
+@pytest.mark.parametrize("ruta", ["/Json/Data?env=prod", "/schmitz/webhook?env=prod"])
+def test_schmitz_rechaza_sin_clave_y_con_clave_incorrecta(schmitz_con_clave, ruta):
+    sin_clave = schmitz_con_clave.post(ruta, json=PAYLOAD_MINIMO)
+    incorrecta = schmitz_con_clave.post(ruta, json=PAYLOAD_MINIMO, headers={"x-api-key": "otra-clave"})
+    correcta = schmitz_con_clave.post(ruta, json=PAYLOAD_MINIMO, headers={"x-api-key": "clave-buena-de-schmitz"})
+    assert sin_clave.status_code == 401, "sin clave tiene que rechazar"
+    assert incorrecta.status_code == 401, "con clave incorrecta tiene que rechazar"
+    assert correcta.status_code == 202, "con la clave correcta tiene que aceptar"
+
+
+# ─── v1.9.9 (B-20): Schmitz con claves por entorno, por su endpoint real ──────
+def _b20_schmitz_con_claves(monkeypatch, claves: dict):
+    import asyncio
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from app.api.routers import schmitz
+    from app.core.crypto import encrypt
+    from app.database import get_session
+    from app.models.config_models import ProviderConfig
+    db = get_session("system_config", "global")
+    for entorno, clave in claves.items():
+        db.add(ProviderConfig(provider_name="schmitz", env=entorno, provider_type="push", is_active=True,
+                              use_mock=True, webhook_auth_secret_enc=encrypt(clave)))
+    db.commit()
+    db.close()
+    schmitz.invalidar_cache_auth()
+    monkeypatch.setattr(schmitz, "_webhook_queue", asyncio.Queue(maxsize=50))
+    app = FastAPI()
+    app.include_router(schmitz.router)
+    app.include_router(schmitz.router_spec)
+    return TestClient(app)
