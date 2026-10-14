@@ -215,13 +215,10 @@ def _fetch_providers_sync() -> list:
     """Carga proveedores desde la BD de configuración. Sync, para ejecutar en ThreadPool."""
     config_db = get_session("system_config", "global")
     try:
-        providers = config_db.query(ProviderConfig).all()
-        if not providers:
-            return [
-                ProviderConfig(provider_name="schmitz", env="prod"),
-                ProviderConfig(provider_name="schmitz", env="test")
-            ]
-        return providers
+        # Sin integraciones no se inventan filas (v1.9.9, B-21): antes devolvía
+        # dos Schmitz que no existían en la base. La siembra es una sola, en
+        # app/core/integraciones_iniciales.py.
+        return config_db.query(ProviderConfig).all()
     finally:
         config_db.close()
 
@@ -530,12 +527,18 @@ async def get_stats_data(
 
     push_stats = get_push_stats(provider_filter)
     # Incluir stats por proveedor para filtrado client-side
+    claves_push = list(push_latency_store.keys())
     push_per_provider = {
         # list() sobre las claves: record_push_latency puede insertar una
         # clave nueva mientras esto corre, y ahí saltaba
         # "dictionary changed size during iteration".
-        k: get_push_stats(k) for k in list(push_latency_store.keys())
+        k: get_push_stats(k) for k in claves_push
     }
+    # B-17 (v1.9.9): también por integración (sus entornos juntos). El filtro
+    # del panel es por integración y buscaba "tive", pero solo existía
+    # "tive:prod": nunca la encontraba y mostraba el total global.
+    for integracion in {k.split(":")[0] for k in claves_push}:
+        push_per_provider.setdefault(integracion, get_push_stats(integracion))
 
     return {
         "pending": total_pending,

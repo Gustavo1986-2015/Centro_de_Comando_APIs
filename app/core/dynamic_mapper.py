@@ -7,6 +7,16 @@ from app.schemas.canonical import RCCanonicalModel
 
 logger = logging.getLogger("DynamicMapper")
 
+# B-8 (v1.9.9): motivo fijo del descarte "sin patente", para que el panel
+# cuente por equipo cuántos se descartaron por esto.
+MOTIVO_SIN_PATENTE = "sin patente real: el payload no trae el campo de patente configurado"
+
+# Último aviso en consola por (integración, entorno, identificador): el
+# registro de descartes guarda cada uno; la consola repite como mucho cada
+# minuto por equipo, para no inundarla si una integración entera está mal.
+_ultimo_aviso_sin_patente: dict = {}
+SEGUNDOS_ENTRE_AVISOS_SIN_PATENTE = 60
+
 _VALORES_VERDADEROS = {"true", "1", "on", "yes", "y", "si", "sí", "t"}
 _VALORES_FALSOS = {"false", "0", "off", "no", "n", "f", ""}
 
@@ -196,6 +206,10 @@ class DynamicMapper:
 
         # Identificador principal
         chassis_val = DynamicMapper._extract_value(payload, schema.get("chassis_number", ""))
+        # B-8 (v1.9.9): sin el campo de patente configurado, el identificador
+        # recibido (IMEI, serie) solo sirve si el diccionario lo traduce a una
+        # patente real. Antes salía a RC el IMEI como si fuera la patente.
+        sin_campo_de_patente = chassis_val is None
         chassis_number = str(chassis_val) if chassis_val is not None else original_imei
         
         # ── Traducción del identificador mediante el diccionario ────────────
@@ -218,6 +232,7 @@ class DynamicMapper:
                 ).first()
                 if dict_entry and dict_entry.dict_value:
                     chassis_number = dict_entry.dict_value
+                    sin_campo_de_patente = False   # el diccionario dio la patente real
                     logger.debug(f"Inyección al vuelo: {chassis_val} reemplazado por {chassis_number}")
                 elif require_dict_match:
                     # El proveedor usa diccionario y este ID no tiene traducción.
@@ -239,6 +254,11 @@ class DynamicMapper:
         # Coordenadas y Velocidad
         latitude = parse_float(DynamicMapper._extract_value(payload, schema.get("latitude", "")))
         longitude = parse_float(DynamicMapper._extract_value(payload, schema.get("longitude", "")))
+
+        if sin_campo_de_patente:
+            _descartar_sin_patente(provider_name, env, schema.get("chassis_number", ""),
+                                   original_imei, latitude, longitude)
+            return None
         # Sin "or 0.0": una velocidad que el proveedor no mide queda en None y
         # el panel muestra N/A. A RC le sigue llegando "0", que es lo que pide
         # el contrato: lo resuelve rc_soap al armar el envío.
@@ -425,3 +445,34 @@ class DynamicMapper:
         # coordenadas no entra a la cola.
         from app.core.contrato import filtrar_validos
         return filtrar_validos(results, provider_name, env)
+
+
+def _descartar_sin_patente(provider_name, env, campo, identificador, latitud, longitud) -> None:
+    """
+    B-8 (v1.9.9): evento de una integración del Studio sin patente real.
+
+    Queda en la consola y en el registro de descartes con lo que hace falta
+    para avisarle al prestador: integración, identificador recibido (IMEI o
+    serie), el campo de patente configurado que faltó y las coordenadas.
+    """
+    import time
+    from app.core import descartes
+
+    etiqueta = f"[{(provider_name or '?').upper()}-{env or '?'}]"
+    equipo = str(identificador) if identificador else "sin identificador"
+    detalle = f"campo de patente configurado: '{campo or '(sin configurar)'}'"
+    descartes.registrar(provider_name, env, "mapeo", MOTIVO_SIN_PATENTE, equipo=equipo,
+                        detalle=detalle, latitud=latitud, longitud=longitud)
+
+    clave = ((provider_name or "").lower(), (env or "").lower(), equipo)
+    ahora = time.time()
+    if ahora - _ultimo_aviso_sin_patente.get(clave, 0) < SEGUNDOS_ENTRE_AVISOS_SIN_PATENTE:
+        return
+    _ultimo_aviso_sin_patente[clave] = ahora
+    logger.warning(
+        f"{etiqueta} Evento descartado, NO se envía a RC: {MOTIVO_SIN_PATENTE} "
+        f"('{campo or '(sin configurar)'}'). Identificador recibido: {equipo}."
+        f"{descartes.texto_coordenadas(latitud, longitud)} Avisar al prestador para que "
+        f"envíe la patente, o cargarla en el diccionario. (Se repite como mucho cada "
+        f"minuto por equipo; cada descarte queda en el registro del panel.)"
+    )

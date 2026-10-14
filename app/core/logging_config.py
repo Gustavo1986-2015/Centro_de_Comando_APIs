@@ -90,7 +90,8 @@ def setup_logging(env_path=".env"):
             "console": {
                 "class": "logging.StreamHandler",
                 "formatter": "colored",
-                "stream": "ext://sys.stdout"
+                "stream": "ext://sys.stdout",
+                "filters": ["secretos"],
             },
             "file": {
                 "class": "logging.handlers.TimedRotatingFileHandler",
@@ -98,8 +99,14 @@ def setup_logging(env_path=".env"):
                 "filename": archivo_log,
                 "when": "midnight",
                 "backupCount": retention_days,
-                "encoding": "utf-8"
+                "encoding": "utf-8",
+                "filters": ["secretos"],
             }
+        },
+        # B-12 (v1.9.9): tokens, claves y secretos enmascarados en el archivo
+        # y en la consola, mensaje y traceback (app/core/secretos.py).
+        "filters": {
+            "secretos": {"()": "app.core.secretos.FiltroSecretos"},
         },
         "loggers": {
             "": {  # root logger

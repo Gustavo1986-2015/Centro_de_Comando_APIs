@@ -1,6 +1,5 @@
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker, declarative_base
-from fastapi import Query
 from contextlib import contextmanager
 import os
 import logging
@@ -73,11 +72,9 @@ def check_and_migrate_db():
             cursor.execute("PRAGMA table_info(system_settings)")
             cols_settings = [row[1] for row in cursor.fetchall()]
             if cols_settings:
+                from app.models.config_models import RC_VALORES_POR_DEFECTO
                 for columna, defecto in (
-                    ("rc_liberacion_tanda", 500),
-                    ("rc_max_reintentos", 4),
-                    ("rc_fallos_circuito", 5),
-                    ("rc_recuperacion_umbral_seg", 600),
+                    *RC_VALORES_POR_DEFECTO.items(),
                     ("retencion_horas_db", 2),
                     ("export_max_days", 7),
                 ):
@@ -225,6 +222,8 @@ def check_and_migrate_db():
                         f"{normalizados} configuración(es) vacía(s) normalizada(s) a NULL."
                     )
                     conn.commit()
+
+                _cifrar_credenciales_de_diccionario(cursor, conn)
                     
                 # Migración legacy Schmitz (.env -> DB)
                 schmitz_key = os.getenv("SCHMITZ_API_KEY")
@@ -342,6 +341,53 @@ def check_and_migrate_provider_db(provider: str, env: str):
             conn.commit()
     except Exception as e:
         logger.warning(f"Migracion idempotente omitida: {e}")
+
+def _cifrar_credenciales_de_diccionario(cursor, conn) -> int:
+    """
+    2.4 (v1.9.9): la contraseña (y el bearer token) del sincronizador de
+    diccionario, de CUALQUIER integración, se guardaban en texto plano dentro
+    de enrichment_config. Se cifran en su lugar, sin perderlas.
+
+    Idempotente: lo que ya está cifrado no se toca. Sin MASTER_ENC_KEY no hay
+    con qué cifrar: no se escribe nada y se avisa (el sincronizador sigue
+    leyendo el valor en claro, como hasta ahora).
+    """
+    import json as _json
+    from app.core.crypto import encrypt, get_master_key, is_encrypted
+    from app.core.secretos import SECRETOS_DICCIONARIO
+
+    filas = cursor.execute(
+        "SELECT id, provider_name, env, enrichment_config FROM provider_config"
+    ).fetchall()
+    cifrados = 0
+    for fila_id, nombre, entorno, texto in filas:
+        try:
+            datos = _json.loads(texto) if texto else None
+        except (TypeError, ValueError):
+            continue
+        if not isinstance(datos, dict):
+            continue
+        en_claro = [c for c in SECRETOS_DICCIONARIO if datos.get(c) and not is_encrypted(datos[c])]
+        if not en_claro:
+            continue
+        if not get_master_key():
+            logger.warning(
+                f"Migración de cifrado: {nombre}/{entorno} tiene credenciales del "
+                f"sincronizador de diccionario en texto plano, pero no hay MASTER_ENC_KEY "
+                f"para cifrarlas. Quedan como están."
+            )
+            continue
+        for clave in en_claro:
+            datos[clave] = encrypt(datos[clave])
+        cursor.execute("UPDATE provider_config SET enrichment_config = ? WHERE id = ?",
+                       (_json.dumps(datos, ensure_ascii=False), fila_id))
+        cifrados += 1
+    if cifrados:
+        conn.commit()
+        logger.info(f"Migración de cifrado: credenciales del diccionario cifradas en "
+                    f"{cifrados} integración(es).")
+    return cifrados
+
 
 def get_engine(provider: str, env: str = "prod"):
     """Devuelve (y crea si no existe) el motor SQLite para el proveedor y entorno dados."""
@@ -476,15 +522,3 @@ def es_base_de_cola(ruta: str) -> bool:
     return tablas == TABLAS_DE_COLA
 
 
-def get_db_provider(provider: str):
-    """
-    Fábrica de dependencias para FastAPI.
-    Lee automáticamente el query param ?env= (por defecto 'prod').
-    """
-    def _get_db(env: str = Query("prod", description="Entorno: test o prod")):
-        db = get_session(provider, env)
-        try:
-            yield db
-        finally:
-            db.close()
-    return _get_db

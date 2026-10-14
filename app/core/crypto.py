@@ -102,6 +102,44 @@ def decrypt(ciphertext) -> str:
         logger.warning("Campo cifrado no pudo ser descifrado (clave rotada?).")
         return None
 
+class CredencialSinCifrar(Exception):
+    """
+    B-16 (v1.9.9): en producción sin MASTER_ENC_KEY no se guarda una
+    credencial nueva o modificada: quedaría en texto plano. El mensaje es el
+    que ve el operador en el panel.
+    """
+
+
+MENSAJE_SIN_CLAVE = (
+    "No se guardó: el hub está en producción (APP_ENV=production) sin MASTER_ENC_KEY, "
+    "y la credencial quedaría guardada SIN CIFRAR. Definí MASTER_ENC_KEY en el .env del "
+    "servidor y reiniciá el hub; después volvé a cargarla. Lo ya guardado se sigue usando."
+)
+
+
+def produccion_sin_clave() -> bool:
+    """True si APP_ENV=production y no hay MASTER_ENC_KEY."""
+    return os.getenv("APP_ENV", "").strip().lower() == "production" and not os.getenv("MASTER_ENC_KEY")
+
+
+def cifrar_credencial(plaintext) -> str:
+    """
+    Como encrypt(), para credenciales que se GUARDAN (panel, importación).
+
+    B-16 (v1.9.9): en producción sin MASTER_ENC_KEY lanza CredencialSinCifrar
+    en vez de guardar en claro. El hub arranca y sigue recibiendo igual: solo
+    se niega a escribir una credencial nueva o modificada. Fuera de producción
+    se comporta como encrypt() (desarrollo y tests pueden no tener clave).
+    """
+    if not plaintext:
+        return plaintext
+    if is_encrypted(plaintext):
+        return plaintext
+    if produccion_sin_clave():
+        raise CredencialSinCifrar(MENSAJE_SIN_CLAVE)
+    return encrypt(plaintext)
+
+
 def is_encrypted(value) -> bool:
     """Detecta si un string parece ciphertext de Fernet."""
     if not value:

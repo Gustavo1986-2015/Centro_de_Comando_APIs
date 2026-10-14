@@ -126,6 +126,33 @@ def config_aislada(tmp_path, monkeypatch):
     config_cache.invalidate()
 
 
+_CREDENCIALES_DE_LA_SUITE = ("DASHBOARD_USER", "DASHBOARD_PASSWORD", "MASTER_ENC_KEY", "RC_TOKEN_ENC_KEY")
+
+
+@pytest.fixture(autouse=True)
+def _credenciales_intactas():
+    """
+    Guardia (v1.9.9, B-20): un test que escribe las credenciales o las llaves
+    de cifrado en os.environ sin restaurarlas contamina a todos los que vienen
+    después (costó 19 fallos intermitentes en el bloque de exportaciones).
+    Antes se buscaba el patrón en el texto de los archivos de test; ahora se
+    comprueba al terminar cada test. Si cambiaron, se restauran (para no
+    arrastrar el daño) y el test se marca con error. monkeypatch restaura antes
+    que esta guardia, así que monkeypatch.setenv no la dispara.
+    """
+    antes = {k: os.environ.get(k) for k in _CREDENCIALES_DE_LA_SUITE}
+    yield
+    pisadas = [k for k, v in antes.items() if os.environ.get(k) != v]
+    for k in pisadas:
+        if antes[k] is None:
+            os.environ.pop(k, None)
+        else:
+            os.environ[k] = antes[k]
+    assert not pisadas, (
+        f"El test cambió {', '.join(pisadas)} en os.environ y no la restauró: contamina a los "
+        "tests siguientes (401 según el orden). Usá monkeypatch.setenv.")
+
+
 @pytest.fixture(scope="session", autouse=True)
 def descartes_aislados(tmp_path_factory):
     """El registro de descartes de la suite va a una carpeta temporal, no a db/."""

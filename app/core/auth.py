@@ -58,6 +58,19 @@ def verificar_credenciales_al_arrancar():
             "configuración de proveedores y edición de base de datos."
         )
 
+    # B-16 (v1.9.9): sin clave de cifrado en producción el hub ARRANCA igual
+    # (no puede dejar de recibir), pero no guarda credenciales nuevas en claro:
+    # el panel lo rechaza con el motivo (app/core/crypto.py).
+    from app.core.crypto import produccion_sin_clave
+    if produccion_sin_clave():
+        logger.critical(
+            "******** MASTER_ENC_KEY NO ESTÁ DEFINIDA EN PRODUCCIÓN ******** "
+            "El hub arranca y sigue recibiendo, y usa las credenciales ya guardadas. "
+            "Pero NO va a guardar ninguna credencial nueva o modificada: quedaría sin "
+            "cifrar. El panel lo rechaza. Definí MASTER_ENC_KEY en el .env (la MISMA que "
+            "cifró las credenciales actuales) y reiniciá."
+        )
+
 
 def verify_dashboard_auth(credentials: HTTPBasicCredentials = Depends(security)):
     """Valida HTTP Basic Auth con secrets.compare_digest (anti timing attack)."""

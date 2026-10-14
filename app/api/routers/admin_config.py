@@ -12,12 +12,13 @@ from pydantic import BaseModel
 
 from app.core.auth import verify_dashboard_auth, get_dashboard_password
 from app.database import get_session
-from app.models.config_models import ProviderConfig, SystemSettings
+from app.models.config_models import ProviderConfig, SystemSettings, RC_VALORES_POR_DEFECTO
 from app.core import config_cache
 from app.core.auditor import log_admin_action
 from app.core import webhook_auth
 from app.core import modo_simulado
-from app.core.crypto import encrypt, decrypt
+from app.core.crypto import decrypt, cifrar_credencial, CredencialSinCifrar
+from app.core.secretos import cifrar_diccionario, diccionario_para_el_panel
 from app.providers import registry
 
 logger = logging.getLogger(__name__)
@@ -63,6 +64,11 @@ class RetentionUpdateModel(BaseModel):
 
 class ProcessedLogsToggleModel(BaseModel):
     enabled: bool
+
+# Días mínimos de retención de crudos y procesados, y de la purga manual de
+# logs: un solo valor para los dos (B-22, v1.9.9).
+MINIMO_DIAS_RETENCION = 1
+
 
 class PurgeLogsModel(BaseModel):
     category: str  # "crudos" | "procesados" | "ambos"
@@ -164,7 +170,7 @@ def save_mapping(provider_name: str, env: str, payload: dict, _: None = Depends(
         if 'mapping' in payload:
             config.mapping_schema = payload.get('mapping', {})
             if 'fetch' in payload:
-                config.fetch_config_enc = encrypt(json.dumps(payload.get('fetch', {})))
+                config.fetch_config_enc = cifrar_credencial(json.dumps(payload.get('fetch', {})))
                 config.fetch_config = sql_null()  # NULL de SQL, no el texto 'null' (v1.9.7, B-2)
         else:
             config.mapping_schema = payload
@@ -215,7 +221,9 @@ def save_enrichment(provider_name: str, env: str, payload: dict, _: None = Depen
         if not config:
             return {"status": "error", "message": "Provider not found"}
             
-        config.enrichment_config = payload
+        # 2.4 (v1.9.9): contraseña y bearer token cifrados; vacío conserva el
+        # que ya estaba (el panel ya no lo recibe, ver get_enrichment).
+        config.enrichment_config = cifrar_diccionario(payload, anterior=config.enrichment_config)
         config_db.commit()
         return {"status": "success"}
     except Exception as e:
@@ -235,7 +243,8 @@ def get_enrichment(provider_name: str, env: str, _: None = Depends(verify_dashbo
         ).first()
         if not config:
             return {}
-        return config.enrichment_config or {}
+        # Sin la contraseña: solo si hay una cargada (2.4, v1.9.9).
+        return diccionario_para_el_panel(config.enrichment_config)
     finally:
         config_db.close()
 
@@ -316,7 +325,7 @@ def _guardar_credenciales_de_modulo(conf, credenciales: dict) -> None:
     datos.setdefault("token_url", TOKEN_URL_POR_DEFECTO)
     datos.setdefault("token_body_format", "multipart")
     datos.setdefault("url", BASE_URL_POR_DEFECTO)
-    conf.fetch_config_enc = encrypt(json.dumps(datos))
+    conf.fetch_config_enc = cifrar_credencial(json.dumps(datos))
     conf.fetch_config = sql_null()  # NULL de SQL, no el texto 'null' (v1.9.7, B-2)
     logger.warning(
         f"Credenciales de la API de {conf.provider_name}/{conf.env} actualizadas desde el panel"
@@ -380,14 +389,11 @@ def _pista_clave_webhook(c) -> str | None:
 def get_all_configs(_: None = Depends(verify_dashboard_auth)):
     db = get_session("system_config", "global")
     try:
+        # Base vacía: las mismas integraciones iniciales que el worker, desde
+        # el mismo lugar (v1.9.9, B-21).
+        from app.core.integraciones_iniciales import sembrar_si_vacia
+        sembrar_si_vacia(db)
         configs = db.query(ProviderConfig).all()
-        # Inicializar si está vacío (auto-poblado en el primer inicio)
-        if not configs:
-            c1 = ProviderConfig(provider_name="schmitz", env="prod")
-            c2 = ProviderConfig(provider_name="schmitz", env="test")
-            db.add_all([c1, c2])
-            db.commit()
-            configs = db.query(ProviderConfig).all()
             
         return [{
             "id": c.id,
@@ -419,11 +425,19 @@ def update_configs(updates: List[ConfigUpdate], cred: HTTPBasicCredentials = Dep
     # El usuario queda en el aviso de cada cambio de modo simulado, que sale
     # después del commit (app/core/modo_simulado.py).
     with modo_simulado.usuario(getattr(cred, "username", None), "panel"):
-        return _aplicar_configs(updates)
+        try:
+            return _aplicar_configs(updates)
+        except CredencialSinCifrar as e:
+            # B-16 (v1.9.9): nada de la petición se guardó (no hubo commit).
+            logger.error(f"Guardado de configuración rechazado: {e}")
+            raise HTTPException(status_code=400, detail=str(e))
 
 
 def _aplicar_configs(updates: List[ConfigUpdate]):
     db = get_session("system_config", "global")
+    # Entornos cuya clave de webhook cambió: la caché de Schmitz se invalida
+    # después del commit (B-29, v1.9.9).
+    claves_de_webhook_cambiadas = []
     try:
         for u in updates:
             conf = db.query(ProviderConfig).filter(ProviderConfig.id == u.id).first()
@@ -434,11 +448,12 @@ def _aplicar_configs(updates: List[ConfigUpdate]):
                 # Se envían desde un nuevo endpoint o modelo extendido. 
                 # El modelo ConfigUpdate necesita soportar estos campos opcionales.
                 if hasattr(u, 'rc_password') and u.rc_password and u.rc_password != "••••••••" and u.rc_password.strip() != "":
-                    conf.rc_password_enc = encrypt(u.rc_password)
+                    conf.rc_password_enc = cifrar_credencial(u.rc_password)
                     conf.rc_password = None # borrar plaintext si existía
                     
                 if hasattr(u, 'webhook_auth_secret') and u.webhook_auth_secret and u.webhook_auth_secret != "••••••••" and u.webhook_auth_secret.strip() != "":
-                    conf.webhook_auth_secret_enc = encrypt(u.webhook_auth_secret)
+                    conf.webhook_auth_secret_enc = cifrar_credencial(u.webhook_auth_secret)
+                    claves_de_webhook_cambiadas.append(conf.env)
                     
                 if hasattr(u, 'webhook_auth_header') and u.webhook_auth_header:
                     conf.webhook_auth_header = u.webhook_auth_header
@@ -458,7 +473,7 @@ def _aplicar_configs(updates: List[ConfigUpdate]):
                     conf.webhook_auth_config = u.webhook_auth_config or None
                     
                 if hasattr(u, 'fetch_config') and u.fetch_config and u.fetch_config != "••••••••" and u.fetch_config.strip() != "":
-                    conf.fetch_config_enc = encrypt(u.fetch_config)
+                    conf.fetch_config_enc = cifrar_credencial(u.fetch_config)
                     conf.fetch_config = sql_null()  # borrar plaintext: NULL de SQL, no el texto 'null' (v1.9.7, B-2)
                     
                 # ── Modo simulado: activación protegida ──────────────────
@@ -524,6 +539,12 @@ def _aplicar_configs(updates: List[ConfigUpdate]):
                 if hasattr(conf, 'enable_state_dedup'):
                     conf.enable_state_dedup = u.enable_state_dedup
         db.commit()
+        # B-29 (v1.9.9): la clave nueva de Schmitz vale desde ya. Antes la caché
+        # de su autenticación tardaba hasta 30 s en releerla.
+        if claves_de_webhook_cambiadas:
+            from app.api.routers import schmitz
+            for entorno in claves_de_webhook_cambiadas:
+                schmitz.invalidar_cache_auth(entorno)
         return {"status": "ok"}
     finally:
         db.close()
@@ -552,9 +573,9 @@ def update_retention_config(
     # de crudos son varios GB, y obligar a guardar una semana llenaba el disco
     # sin que nadie pudiera evitarlo desde el panel. Un día sigue siendo un
     # piso real: nunca se borra lo del día en curso.
-    if not (1 <= body.audit_retention_days <= 90):
+    if not (MINIMO_DIAS_RETENCION <= body.audit_retention_days <= 90):
         raise HTTPException(status_code=400, detail="Retención de auditoría debe estar entre 1 y 90 días")
-    if not (1 <= body.processed_retention_days <= 30):
+    if not (MINIMO_DIAS_RETENCION <= body.processed_retention_days <= 30):
         raise HTTPException(status_code=400, detail="Retención de procesados debe estar entre 1 y 30 días")
     if body.export_max_days is not None and not (1 <= body.export_max_days <= 31):
         raise HTTPException(status_code=400, detail="El tope de días por descarga debe estar entre 1 y 31")
@@ -606,12 +627,18 @@ def manual_purge_logs(
     request: Request,
     _auth: HTTPBasicCredentials = Depends(verify_dashboard_auth)
 ):
+    # B-22 (v1.9.9): comparación en tiempo constante, como el resto del panel.
     expected_password = get_dashboard_password()
-    if body.admin_password != expected_password:
+    if not expected_password or not secrets.compare_digest(
+        (body.admin_password or "").encode(), expected_password.encode()
+    ):
         raise HTTPException(status_code=401, detail="Contraseña incorrecta")
-        
-    if body.days < 7:
-        raise HTTPException(status_code=400, detail="Mínimo de purga es 7 días")
+
+    # B-22: el mismo mínimo que la retención. Antes la purga exigía 7 días
+    # mientras la retención (y el formulario) admitían 1.
+    if body.days < MINIMO_DIAS_RETENCION:
+        raise HTTPException(status_code=400,
+                            detail=f"Mínimo de purga es {MINIMO_DIAS_RETENCION} día(s), igual que la retención")
         
     if body.confirm_text != "PURGAR":
         raise HTTPException(status_code=400, detail="Texto de confirmación inválido")
@@ -673,7 +700,7 @@ class ComportamientoRCModel(BaseModel):
     rc_liberacion_tanda: int
     rc_max_reintentos: int
     rc_fallos_circuito: int
-    rc_recuperacion_umbral_seg: int = 600
+    rc_recuperacion_umbral_seg: int = RC_VALORES_POR_DEFECTO["rc_recuperacion_umbral_seg"]
     retencion_horas_db: int = 2
 
 
@@ -685,10 +712,8 @@ def get_rc_behavior(_auth: HTTPBasicCredentials = Depends(verify_dashboard_auth)
         if not cfg:
             raise HTTPException(status_code=500, detail="Configuración no encontrada")
         return {
-            "rc_liberacion_tanda": getattr(cfg, "rc_liberacion_tanda", None) or 500,
-            "rc_max_reintentos": getattr(cfg, "rc_max_reintentos", None) or 4,
-            "rc_fallos_circuito": getattr(cfg, "rc_fallos_circuito", None) or 5,
-            "rc_recuperacion_umbral_seg": getattr(cfg, "rc_recuperacion_umbral_seg", None) or 600,
+            **{clave: getattr(cfg, clave, None) or defecto
+               for clave, defecto in RC_VALORES_POR_DEFECTO.items()},
             "retencion_horas_db": getattr(cfg, "retencion_horas_db", None) or 2,
         }
     finally:
