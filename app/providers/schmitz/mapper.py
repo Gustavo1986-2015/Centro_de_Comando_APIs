@@ -39,6 +39,27 @@ def unwrap_ex(obj, default=None):
     return obj if obj is not None else default
 
 
+def _medido(obj):
+    """
+    Valor de un campo Schmitz, o None si no se midió: ausente, o con el patrón
+    {exists: false, Value: …}. Un 0 medido es 0.
+    """
+    if isinstance(obj, dict) and "exists" in obj:
+        return obj.get("Value") if obj.get("exists") else None
+    return obj
+
+
+def _a_numero(valor):
+    """float, o None si está vacío o no es un número."""
+    if valor is None or str(valor).strip().lower() in ("", "null", "none"):
+        return None
+    try:
+        return float(valor)
+    except (TypeError, ValueError) as e:
+        logger.warning(f"Error de conversión de tipo: {e}")
+        return None
+
+
 def map_schmitz_payload(payload: Dict[str, Any], headers: Dict[str, str] = None, env: str = None) -> list:
     """
     Mapea un payload crudo de Schmitz a UNA LISTA de RCCanonicalModel.
@@ -83,22 +104,25 @@ def map_schmitz_payload(payload: Dict[str, Any], headers: Dict[str, str] = None,
     altitude  = position.get("Altitude")
     course    = position.get("GPSHeading")
 
-    # Velocidad: GPSSpeed como LongEx {exists, Value} o fallback a EBS.Velocity (string)
-    speed_raw = unwrap_ex(get_safe(position, ["GPSSpeed"])) or ebs.get("Velocity")
-    try:
-        speed = float(speed_raw) if speed_raw is not None and str(speed_raw).strip().lower() not in ("", "null", "none") else 0.0
-    except Exception as e:
-        logger.warning(f"Error de conversión de tipo: {e}")
-        speed = 0.0
+    # Velocidad (v1.9.9, B-19 y B-28):
+    #  - GPSSpeed medido manda, también cuando es 0. Antes un 0 era "falso"
+    #    para Python y se reemplazaba por EBS.Velocity;
+    #  - EBS.Velocity solo si GPSSpeed no vino (ausente o exists=false);
+    #  - sin ninguna de las dos, queda vacía en la base (el panel muestra
+    #    N/A). A RC le sigue llegando "0": la velocidad es obligatoria en el
+    #    contrato (D-TI-15) y la pone rc_soap al armar el envío, como en Tive.
+    speed = _a_numero(_medido(get_safe(position, ["GPSSpeed"])))
+    if speed is None:
+        speed = _a_numero(ebs.get("Velocity"))
 
     # Odometro: EBS.Milage (prioridad) o GPSMilage.Value (fallback)
     odometer    = ebs.get("Milage") or unwrap_ex(get_safe(position, ["GPSMilage"]))
     battery     = get_safe(sensor_status, ["Battery", "ExternalPowerSupplyVoltage"])
 
-    # Ignicion: IsIgnitionOn (bool directo del spec) o IsInMotion.Value como proxy
+    # Ignición: solo IsIgnitionOn (v1.9.9, B-19). Sin él queda sin dato: estar
+    # en movimiento no dice si el motor del camión está encendido, y RC lo
+    # leería como un dato medido.
     ignition    = sensor_status.get("IsIgnitionOn")
-    if ignition is None:
-        ignition = unwrap_ex(sensor_status.get("IsInMotion"))
 
     humidity    = tci.get("Humidity")
 

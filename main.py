@@ -11,6 +11,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 from app.api.routers import schmitz, dashboard, health, inspector, dynamic_webhook, db_viewer, vehicles, audit_logs, admin_config, exports, config_backup
+from app.api.routers import reintentos  # v1.9.9 (3.8): reintento manual de fallidos
 from app.api.routers.schmitz import start_webhook_batch_processor, router_spec as schmitz_router_spec
 from app.api.routers.dashboard import broadcast_loop, record_push_latency
 from app.worker.processor import worker_loop
@@ -85,6 +86,7 @@ app.include_router(inspector.router)
 app.include_router(dynamic_webhook.router)
 app.include_router(exports.router)
 app.include_router(config_backup.router)
+app.include_router(reintentos.router)
 
 app.mount("/static", StaticFiles(directory="frontend/static"), name="static")
 
@@ -100,7 +102,11 @@ async def measure_push_latency(request: Request, call_next):
         provider = None
         entorno = None
         if path == "/Json/Data" or path.startswith("/schmitz/"):
-            provider = "schmitz"
+            # v1.9.9 (3.4): solo si la autenticación la aceptó, como el
+            # webhook genérico. Antes los 401 entraban en la aceptación.
+            aceptada = getattr(request.state, "push_aceptada", None)
+            if aceptada:
+                provider, entorno = aceptada
         elif path.startswith("/webhook/dynamic/"):
             # v1.9.6: el nombre de la integración y no "webhook", y solo si el
             # webhook la ACEPTÓ. Antes todo el webhook genérico caía bajo

@@ -165,7 +165,9 @@ class RCResponseCategory(str, Enum):
                 Se resuelve renovando el token, así que sí se reintenta
       PROTOCOL  s:Fault de WCF, típicamente DeserializationFailed por un campo
                 mal formado. Permanente por la misma razón que BUSINESS
-      TRANSPORT sin envelope SOAP: timeout, conexión rechazada, 5xx. Transitorio
+      TRANSPORT sin envelope SOAP: timeout, conexión rechazada, 5xx. Transitorio.
+                También (v1.9.9, 1.6) una excepción de RC con `severity: Retry`:
+                RC mismo dice que el error es temporal y que se reintente
 
       SIMULADO  no hubo llamada: el proveedor está en modo simulado. No es una
                 respuesta de RC. Se distingue de SUCCESS a propósito: en el log
@@ -456,6 +458,33 @@ class RCSOAPClient:
         return False, ""
 
     @staticmethod
+    def _pide_reintentar(res_item) -> tuple[bool, str, str]:
+        """
+        Si la excepción de RC trae el par `severity: Retry` (sin importar
+        mayúsculas), RC está diciendo que el error es temporal (v1.9.9, 1.6).
+
+        Devuelve (pide_reintentar, key, code). Una severidad distinta, o
+        ausente, no es pedido de reintento: queda como estaba (BUSINESS).
+        """
+        if not isinstance(res_item, dict):
+            return False, "", ""
+        excepcion = res_item.get("exception")
+        try:
+            pares = excepcion.get("KeyValueOfstringstring", []) if excepcion else []
+        except AttributeError:
+            return False, "", ""
+        if not isinstance(pares, list):
+            return False, "", ""
+        valores = {}
+        for kv in pares:
+            if isinstance(kv, dict) and kv.get("Key") is not None:
+                valor = kv.get("Value")
+                valores[str(kv["Key"]).strip().lower()] = "" if valor is None else str(valor).strip()
+        if valores.get("severity", "").lower() != "retry":
+            return False, "", ""
+        return True, valores.get("key", ""), valores.get("code", "")
+
+    @staticmethod
     def _es_fallo_de_autenticacion(texto_excepcion: str) -> bool:
         """
         Distingue el subcaso AUTH dentro de los errores de negocio.
@@ -499,6 +528,26 @@ class RCSOAPClient:
                 f"Error de autenticación RC: {texto_excepcion}",
                 RCResponseCategory.AUTH,
             )
+
+        # ── RC pide reintentar: transitorio (v1.9.9, 1.6) ────────────────────
+        # Medido en producción el 13/10: RC devolvió `severity: Retry` (code
+        # 4023, CGI:SESSION_STORE_UNAVAILABLE, su servicio de autenticación
+        # caído) y el hub lo trató como rechazo permanente: 35 eventos quedaron
+        # 'failed' sin reintento. Con esa marca es TRANSPORT, como un timeout:
+        # vuelve a la cola con su reintento y cuenta para el circuito de RC.
+        if hay_excepcion:
+            reintentar, clave, codigo = self._pide_reintentar(res_item)
+            if reintentar:
+                logger.warning(
+                    f"[RC:REINTENTO] RC pidió reintentar ({clave}, {codigo}). "
+                    f"El evento vuelve a la cola con su reintento. Detalle: {texto_excepcion}"
+                )
+                return (
+                    False,
+                    f"rc_retry_{int(datetime.now().timestamp())}",
+                    f"RC pidió reintentar: {texto_excepcion}",
+                    RCResponseCategory.TRANSPORT,
+                )
 
         # ── Rechazo de negocio: permanente ───────────────────────────────────
         if hay_excepcion:
@@ -593,12 +642,32 @@ class RCSOAPClient:
                     # Aplicarlo a todos los eventos del lote
                     results = [(success, job_id, raw_response, categoria) for _ in events]
                 else:
-                    # Caso B: Mapeo posicional (un resultado por evento, o tamaño no coincide de otra forma)
+                    # Caso B: Mapeo posicional (un resultado por evento).
+                    #
+                    # B-15 (v1.9.9): si RC devuelve menos respuestas que eventos
+                    # (y más de una), un evento sin su propia respuesta NO hereda
+                    # la de otro. Antes tomaba la del primero, éxito incluido, y
+                    # quedaba como enviado sin que RC lo hubiera confirmado.
+                    # Ahora vuelve como transitorio: el worker lo reintenta.
+                    sin_respuesta = 0
                     for idx, ev in enumerate(events):
-                        # Intentar obtener el resultado posicional
-                        res_item = res_list[idx] if idx < len(res_list) else (res_list[0] if res_list else None)
-                        success, job_id, raw_response, categoria = self._parse_single_response(res_item)
-                        results.append((success, job_id, raw_response, categoria))
+                        if idx < len(res_list):
+                            results.append(self._parse_single_response(res_list[idx]))
+                            continue
+                        sin_respuesta += 1
+                        results.append((
+                            False,
+                            f"rc_sin_respuesta_{int(datetime.now().timestamp())}",
+                            f"RC devolvió {len(res_list)} respuesta(s) para {len(events)} eventos: "
+                            f"este evento no tuvo la suya. Se reintenta.",
+                            RCResponseCategory.TRANSPORT,
+                        ))
+                    if sin_respuesta:
+                        logger.warning(
+                            f"[RC:PARCIAL] RC devolvió {len(res_list)} respuesta(s) para "
+                            f"{len(events)} eventos. Los {sin_respuesta} sin respuesta propia "
+                            f"quedan para reintento, no como enviados."
+                        )
                         
                 return results
                 

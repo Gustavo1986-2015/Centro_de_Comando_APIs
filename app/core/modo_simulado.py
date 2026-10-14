@@ -62,6 +62,21 @@ def registrar(proveedor: str, env: str, anterior, nuevo, usuario_: str, origen: 
     )
 
 
+def registrar_activacion(proveedor: str, env: str, anterior, nuevo, usuario_: str, origen: str) -> None:
+    """
+    v1.9.9 (B-13): activar o desactivar una integración también cambia qué
+    llega a RC (inactiva = no procesa). Mismo aviso, con usuario y origen,
+    venga del panel, del visor de BD o de una importación.
+    """
+    accion = "ACTIVADA" if nuevo else "DESACTIVADA"
+    efecto = ("Vuelve a procesar sus eventos." if nuevo
+              else "Deja de procesar: sus eventos no llegan a Recurso Confiable.")
+    logger.warning(
+        f"INTEGRACIÓN {accion}: {proveedor}/{env}: {'activa' if anterior else 'inactiva'} -> "
+        f"{'activa' if nuevo else 'inactiva'} | usuario={usuario_} | origen={origen}. {efecto}"
+    )
+
+
 def _antes_del_flush(session, contexto, instancias):
     from app.models.config_models import ProviderConfig
 
@@ -75,6 +90,12 @@ def _antes_del_flush(session, contexto, instancias):
     for obj in session.dirty:
         if not isinstance(obj, ProviderConfig):
             continue
+        activa = inspect(obj).attrs.is_active.history
+        if activa.has_changes() and activa.deleted:
+            anterior, nuevo = activa.deleted[0], activa.added[0] if activa.added else None
+            if bool(anterior) != bool(nuevo):
+                pendientes.append(("activacion", obj.provider_name, obj.env, bool(anterior), bool(nuevo),
+                                   quien, origen))
         historia = inspect(obj).attrs.use_mock.history
         if not historia.has_changes() or not historia.deleted:
             continue
@@ -85,7 +106,10 @@ def _antes_del_flush(session, contexto, instancias):
 
 def _despues_del_commit(session):
     for cambio in session.info.pop(_CLAVE, []):
-        registrar(*cambio)
+        if cambio[0] == "activacion":
+            registrar_activacion(*cambio[1:])
+        else:
+            registrar(*cambio)
 
 
 def _despues_del_rollback(session):

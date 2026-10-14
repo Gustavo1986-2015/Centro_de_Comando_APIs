@@ -108,6 +108,33 @@ def sanear_mediciones(evento):
     return omitidos
 
 
+def _es_cero(valor) -> bool:
+    try:
+        return float(valor) == 0.0
+    except (TypeError, ValueError):
+        return False
+
+
+def avisar_si_coordenadas_cero(evento, proveedor: str | None, env: str | None) -> bool:
+    """
+    B-24 (v1.9.9): latitud Y longitud en 0 es casi siempre un GPS sin señal.
+    El evento se envía igual (decisión del usuario: el código puede traer
+    información, como una alerta de Tive); solo se avisa en consola. Una sola
+    coordenada en 0 no avisa: es un punto real posible (ecuador, Greenwich).
+    """
+    if not (_es_cero(getattr(evento, "latitude", None)) and _es_cero(getattr(evento, "longitude", None))):
+        return False
+    fecha = getattr(evento, "date", None)
+    logger.warning(
+        f"Coordenadas 0,0 — probable GPS sin señal | "
+        f"integración={(proveedor or '?').lower()}/{env or '?'} "
+        f"patente={getattr(evento, 'chassis_number', None) or 'sin patente'} "
+        f"código={getattr(evento, 'code', None)} "
+        f"fecha={fecha.isoformat() if hasattr(fecha, 'isoformat') else fecha}"
+    )
+    return True
+
+
 def filtrar_validos(eventos, proveedor: str | None, env: str | None) -> list:
     """
     Devuelve solo los eventos que cumplen el contrato. Cada descarte queda en
@@ -122,6 +149,7 @@ def filtrar_validos(eventos, proveedor: str | None, env: str | None) -> list:
             # omiten también los valores imposibles (B-3). Sin aviso por
             # evento: con Protrack sería una línea por cada uno.
             sanear_mediciones(ev)
+            avisar_si_coordenadas_cero(ev, proveedor, env)
             validos.append(ev)
             continue
         patente = getattr(ev, "chassis_number", None)

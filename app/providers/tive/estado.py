@@ -92,9 +92,30 @@ def _conexion(env: str) -> sqlite3.Connection:
             " intentos INTEGER NOT NULL DEFAULT 0, proximo REAL NOT NULL,"
             " ultimo_error TEXT, actualizado REAL NOT NULL)"
         )
+        _quitar_tabla_de_cola_vacia(con, ruta)
         con.commit()
         _conexiones[ruta] = con
     return con
+
+
+def _quitar_tabla_de_cola_vacia(con: sqlite3.Connection, ruta: str) -> None:
+    """
+    v1.9.9 (4.4): hasta v1.9.7 el listado de almacenamiento abría esta base con
+    get_session() y le creaba una tabla normalized_rc_events vacía. Se quita
+    SOLO si está vacía; con alguna fila no se toca y se avisa. Idempotente.
+    """
+    existe = con.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='normalized_rc_events'").fetchone()
+    if not existe:
+        return
+    filas = con.execute("SELECT COUNT(*) FROM normalized_rc_events").fetchone()[0]
+    if filas:
+        logger.warning(f"[TIVE] {os.path.basename(ruta)} tiene una tabla normalized_rc_events con "
+                       f"{filas} fila(s): no es de esta base, pero no se borra porque no está vacía.")
+        return
+    con.execute("DROP TABLE normalized_rc_events")
+    logger.info(f"[TIVE] {os.path.basename(ruta)}: se quitó la tabla normalized_rc_events vacía "
+                f"que dejó una versión anterior.")
 
 
 def cerrar_todo():

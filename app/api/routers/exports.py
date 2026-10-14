@@ -44,7 +44,7 @@ from fastapi.responses import StreamingResponse
 from app.core import config_cache
 from app.core.auditor import log_admin_action
 from app.core.auth import verify_dashboard_auth
-from app.database import get_session
+from app.database import es_base_de_cola, get_session
 from app.models.db_models import ESTADOS_TERMINADOS, NormalizedRCEvent
 from app.worker.processor import evento_a_registro_respaldo
 
@@ -67,6 +67,10 @@ MARGEN_DIAS_PURGA = 4
 _SEGMENTO_VALIDO = re.compile(r"^[a-z0-9_-]+$")
 
 TODOS = "todos"
+
+
+class _SinBaseDeCola(Exception):
+    """El par (proveedor, entorno) no tiene base de cola: solo respaldos."""
 
 
 def _validar_segmento(valor: str, campo: str) -> str:
@@ -295,6 +299,8 @@ def exportar_enviados(
         ent = os.path.splitext(os.path.basename(ruta))[0]
         if prov in ("system_config", "backups_diarios"):
             continue
+        # Una base de estado (la de Tive) no se abre: lo controla el recorrido
+        # de abajo con es_base_de_cola (v1.9.9, 3.2).
         if (provider in (TODOS, prov)) and (env in (TODOS, ent)):
             pares.add((prov, ent))
 
@@ -333,6 +339,12 @@ def exportar_enviados(
             # retención (horas), no por el rango pedido.
             vistos = set()
             try:
+                # Solo bases de cola (v1.9.9, 3.2). Una base de estado no tiene
+                # eventos y get_session() le crearía una tabla de cola; un par
+                # que viene solo de audit/ o de los respaldos puede no tener
+                # base, y get_session() la crearía vacía.
+                if not es_base_de_cola(os.path.join("db", prov, f"{ent}.db")):
+                    raise _SinBaseDeCola()
                 db = get_session(prov, ent)
                 try:
                     consulta = (
@@ -359,6 +371,8 @@ def exportar_enviados(
                         yield volcar()
                 finally:
                     db.close()
+            except _SinBaseDeCola:
+                pass
             except Exception as e:
                 # Una base ilegible no puede abortar la descarga entera: se
                 # sigue con los respaldos, que es donde está el grueso.
@@ -545,7 +559,8 @@ def opciones_de_exportacion(_auth=Depends(verify_dashboard_auth)):
     for ruta in glob.glob(os.path.join("db", "*", "*.db")):
         prov = os.path.basename(os.path.dirname(ruta))
         ent = os.path.splitext(os.path.basename(ruta))[0]
-        if prov not in ("system_config", "backups_diarios"):
+        # Solo bases de cola (v1.9.9, 3.2): no se ofrece "tive / prod_estado".
+        if prov not in ("system_config", "backups_diarios") and es_base_de_cola(ruta):
             combos.add((prov, ent))
 
     settings = config_cache.get_settings()

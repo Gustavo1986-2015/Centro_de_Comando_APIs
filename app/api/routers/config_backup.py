@@ -46,7 +46,7 @@ from app.core.auth import verify_dashboard_auth
 from app.core import config_cache, modo_simulado
 from app.core.crypto import decrypt, encrypt
 from app.database import get_session
-from app.models.config_models import ProviderConfig, SystemSettings
+from app.models.config_models import ProviderConfig, SystemSettings, RC_VALORES_POR_DEFECTO
 from app.version import __version__
 
 logger = logging.getLogger(__name__)
@@ -321,16 +321,21 @@ def _o_defecto(valor, defecto):
 # dos direcciones: si estuvieran duplicados, exportar e importar podrian
 # desincronizarse y un campo viajaria de ida pero no de vuelta.
 _CLAVES_SETTINGS = {
-    "active_queue_backend": ("motor_cola_activo", "sqlite"),
+    # "motor_cola_activo" (active_queue_backend) ya no sale (v1.9.9, B-23):
+    # nadie la leía. Un respaldo viejo que la traiga se importa igual; ver
+    # CLAVES_GENERALES_OBSOLETAS.
     "audit_retention_days": ("retencion_crudos_dias", 30),
     "processed_retention_days": ("retencion_procesados_dias", 30),
     "processed_logs_enabled": ("respaldo_procesados_activo", True),
     "retencion_horas_db": ("retencion_base_horas", 2),
     "export_max_days": ("tope_dias_por_descarga", 7),
-    "rc_liberacion_tanda": ("rc_liberacion_tanda", 500),
-    "rc_max_reintentos": ("rc_max_reintentos", 4),
-    "rc_fallos_circuito": ("rc_fallos_circuito", 5),
-    "rc_recuperacion_umbral_seg": ("rc_recuperacion_umbral_seg", 600),
+    **{clave: (clave, defecto) for clave, defecto in RC_VALORES_POR_DEFECTO.items()},
+}
+
+# Claves de 'configuracion_general' de respaldos viejos que ya no se usan. Se
+# ignoran al importar, con aviso en el plan: un YAML viejo no deja de importarse.
+CLAVES_GENERALES_OBSOLETAS = {
+    "motor_cola_activo": "ya no se usa (el motor de cola es por integración); se ignora",
 }
 
 
@@ -903,6 +908,11 @@ def analizar_import(datos: dict, sobrescribir: bool) -> dict:
                 datos.get("configuracion_general") or {}, settings
             ),
             "entorno_a_revisar": _comparar_entorno(datos.get("entorno") or {}),
+            "claves_obsoletas": [
+                {"campo": clave, "motivo": motivo}
+                for clave, motivo in CLAVES_GENERALES_OBSOLETAS.items()
+                if clave in (datos.get("configuracion_general") or {})
+            ],
             "resumen": (
                 f"{len(nuevos)} a crear · {len(actualizados)} a actualizar · "
                 f"{len(sin_cambios)} sin cambios · {len(omitidos)} omitido(s)"

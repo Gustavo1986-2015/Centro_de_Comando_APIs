@@ -64,7 +64,8 @@ def describir_error(e: BaseException) -> str:
     mensaje: en producción quedaba "[PROTRACK-prod] Error en Sondeo PULL: " sin
     nada después, y no había forma de saber qué había fallado.
     """
-    texto = str(e).strip()
+    from app.core.secretos import enmascarar
+    texto = enmascarar(str(e).strip())   # B-12 (v1.9.9): sin tokens ni claves completos
     return f"{type(e).__name__}: {texto}" if texto else type(e).__name__
 
 
@@ -115,7 +116,9 @@ async def _get_protrack_token(base_url: str, account: str, pwd: str) -> str:
         if cached and cached["expires_at"] > time.time():
             return cached["token"]
 
-        # Token vencido o inexistente: pedir uno nuevo
+        # Token vencido o inexistente: pedir uno nuevo. El destino del token
+        # pasa por el mismo guardián que la consulta (B-9, v1.9.9).
+        _verificar_destino_permitido(f"{base_url}/api/authorization")
         unix_time, signature = dynamic_md5(pwd)
 
         try:
@@ -266,19 +269,25 @@ PERMITIR_DESTINOS_INTERNOS = os.getenv("PULL_ALLOW_INTERNAL_URLS", "False").lowe
 _aviso_destinos_internos_emitido = False
 
 
+class DestinoNoPermitido(ValueError):
+    """El guardián de destinos rechazó una URL saliente (B-9)."""
+
+
 def _verificar_destino_permitido(url: str) -> None:
     """
-    Rechaza URLs que apunten a direcciones internas, salvo que se haya
-    habilitado explícitamente.
+    Guardián de destinos: rechaza toda URL saliente que no se pueda verificar
+    como externa, salvo que se hayan habilitado los destinos internos.
 
-    El Inspector ya validaba esto antes de salir a la red; el motor PULL no.
-    La URL viene de la configuración del panel, así que no es entrada anónima,
-    pero un valor mal cargado alcanzaría servicios internos del servidor.
+    Vale para todo destino saliente configurable desde el panel: el PULL, el
+    diccionario, el token de Protrack, el token OAuth2 y el resolutor de Tive.
 
-    Solo se bloquea cuando el destino es DEMOSTRABLEMENTE interno. Si el nombre
-    no resuelve —DNS caído, dominio nuevo— se deja pasar: un fallo de
-    resolución es transitorio y bloquear ahí dejaría sin datos a un proveedor
-    legítimo por un problema ajeno. El error real aparecerá al conectar.
+    B-9 (v1.9.9): ahora FALLA CERRADO. Una URL que no se puede analizar, sin
+    host, o con un host que no resuelve, se BLOQUEA (antes pasaba). Y se miran
+    TODAS las direcciones a las que resuelve el nombre, no solo la primera: un
+    nombre con una IP pública y otra interna también se bloquea.
+
+    Un DNS caído deja de consultar a ese proveedor hasta que vuelva: el ciclo
+    falla con el motivo y reintenta, igual que si no pudiera conectar.
     """
     global _aviso_destinos_internos_emitido
 
@@ -289,22 +298,35 @@ def _verificar_destino_permitido(url: str) -> None:
     try:
         partes = urllib.parse.urlparse(url)
         host = (partes.hostname or "").lower()
+        esquema = (partes.scheme or "").lower()
     except Exception:
-        return
+        raise DestinoNoPermitido(f"La URL de destino no se puede analizar: {url!r}. Se bloquea.")
 
-    if not host:
-        return
+    if esquema not in ("http", "https") or not host:
+        raise DestinoNoPermitido(
+            f"La URL de destino no es http(s) o no tiene host: {url!r}. Se bloquea."
+        )
 
-    def _es_interno() -> bool:
-        if any(host == p or host.startswith(p) for p in _REDES_INTERNAS):
-            return True
+    try:
+        direcciones = {info[4][0] for info in socket.getaddrinfo(host, None)}
+    except Exception as e:
+        raise DestinoNoPermitido(
+            f"El destino {host} no resuelve ({type(e).__name__}). Se bloquea: no se puede "
+            f"verificar que sea una dirección externa. Si es un corte de DNS, el próximo "
+            f"ciclo lo vuelve a intentar."
+        )
+
+    def _es_interna(texto_ip: str) -> bool:
         try:
-            ip = ipaddress.ip_address(socket.gethostbyname(host))
-        except Exception:
-            return False   # no resuelve: no se puede afirmar que sea interno
-        return ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved
+            ip = ipaddress.ip_address(texto_ip.split("%")[0])
+        except ValueError:
+            return True   # no se reconoce como IP: no se puede afirmar que sea externa
+        return (ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved
+                or ip.is_multicast or ip.is_unspecified)
 
-    if not _es_interno():
+    interno = (any(host == p or host.startswith(p) for p in _REDES_INTERNAS)
+               or not direcciones or any(_es_interna(d) for d in direcciones))
+    if not interno:
         return
 
     if PERMITIR_DESTINOS_INTERNOS:
@@ -317,7 +339,7 @@ def _verificar_destino_permitido(url: str) -> None:
             _aviso_destinos_internos_emitido = True
         return
 
-    raise ValueError(
+    raise DestinoNoPermitido(
         f"La URL de extracción apunta a una dirección interna ({host}). "
         f"Si es intencional —una prueba local—, habilitá "
         f"PULL_ALLOW_INTERNAL_URLS=True en el archivo de entorno."
@@ -456,7 +478,9 @@ def _leer_config_diccionario_sync(provider_name: str, env: str):
             .first()
         )
         is_active = bool(config and config.is_active)
-        enrich = (config.enrichment_config or {}) if is_active else {}
+        # 2.4 (v1.9.9): la contraseña del diccionario se guarda cifrada.
+        from app.core.secretos import descifrar_diccionario
+        enrich = descifrar_diccionario(config.enrichment_config) if is_active else {}
         fetch_c = _load_fetch_config(config) if is_active else {}
         return is_active, enrich, fetch_c
     finally:
