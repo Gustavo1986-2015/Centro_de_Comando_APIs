@@ -173,6 +173,7 @@
                     </label>
                     <button class="btn-save" onclick="resetFilters()" style="background: var(--level-2); color: var(--color-text); border: 1px solid var(--card-border); padding: 4px 8px;">Quitar Filtros</button>
                     <button class="btn-save" onclick="downloadExcel()" style="background: #10B981; color: white; padding: 4px 8px;" title="Descargar registros filtrados en formato Excel (CSV)">📥 Descargar Excel</button>
+                    <button id="btn-reintentar-fallidos" class="btn-save" onclick="abrirReintentoFallidos()" style="display:none; background: #B45309; color: white; padding: 4px 8px;" title="Resumen de los fallidos por integración y motivo de RC, para elegir qué reintentar">↻ Reintentar fallidos…</button>
                 </div>
             </div>
             <div class="table-container">
@@ -190,6 +191,22 @@
                         <!-- Las filas se insertan vía JS -->
                     </tbody>
                 </table>
+            </div>
+        </div>
+        <!-- v1.9.9 (3.8): reintento manual de eventos fallidos. -->
+        <div id="reintento-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.7); z-index:9999; align-items:center; justify-content:center;">
+            <div style="background:var(--level-1); border:1px solid var(--color-green-vibrant); border-radius:14px; padding:1.6rem; width:min(780px, 94vw); max-height:86vh; overflow:auto; box-shadow: 0 20px 60px rgba(0,0,0,0.6);">
+                <h3 style="color:var(--color-green-vibrant); margin:0 0 0.5rem;">↻ Reintentar eventos fallidos</h3>
+                <p style="color:var(--color-gray); font-size:0.82rem; margin:0 0 1rem;">Vuelven a la cola con el contador de reintentos en 0 y el worker los envía.
+                    Si la integración está en modo simulado, no se llama a RC. El resultado anterior de RC queda en el respaldo de procesados
+                    y la acción queda registrada con tu usuario.</p>
+                <div id="reintento-contenido"></div>
+                <div id="reintento-resumen" style="display:none; font-size:0.85rem; margin:0.8rem 0; padding:0.6rem 0.8rem; border-left:3px solid var(--color-yellow); background:rgba(255,255,255,0.04);"></div>
+                <div style="display:flex; gap:0.75rem; justify-content:flex-end; margin-top:1rem;">
+                    <button onclick="cerrarReintento()" style="padding:0.6rem 1.2rem; border-radius:8px; border:1px solid var(--card-border); background:var(--level-1); color:var(--color-text); cursor:pointer;">Cerrar</button>
+                    <button id="reintento-confirmar" onclick="confirmarReintento()" style="padding:0.6rem 1.4rem; border-radius:8px; border:none; background:var(--color-green-vibrant); color:var(--color-black); font-weight:700; cursor:pointer;">Revisar</button>
+                </div>
+                <p id="reintento-mensaje" style="font-size:0.85rem; margin:0.8rem 0 0; display:none;"></p>
             </div>
         </div>
     </main>
@@ -870,15 +887,24 @@
             <!-- Modal de confirmación de contraseña para edición -->
             <div id="db-edit-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.7); z-index:9999; align-items:center; justify-content:center;">
                 <div style="background:var(--level-1); border:1px solid var(--color-green-vibrant); border-radius:14px; padding:2rem; min-width:340px; box-shadow: 0 20px 60px rgba(0,0,0,0.6);">
-                    <h3 style="color:var(--color-green-vibrant); margin:0 0 0.5rem;">🔐 Confirmar Edición</h3>
-                    <p style="color:var(--color-gray); font-size:0.85rem; margin:0 0 1.2rem;">Ingresa la contraseña de administrador para guardar el cambio en <strong id="db-edit-modal-target" style="color:var(--color-text);"></strong>.</p>
-                    <div style="margin-bottom:0.5rem; font-size:0.8rem; color:var(--color-gray);">Campo: <span id="db-edit-modal-col" style="color:var(--color-text);"></span></div>
-                    <div style="margin-bottom:1.2rem; font-size:0.8rem; color:var(--color-gray);">Valor nuevo: <span id="db-edit-modal-val" style="color:var(--color-green-vibrant); word-break:break-all;"></span></div>
+                    <h3 style="color:var(--color-green-vibrant); margin:0 0 0.5rem;">🔐 Editar celda</h3>
+                    <p style="color:var(--color-gray); font-size:0.85rem; margin:0 0 1.2rem;">Cambio en <strong id="db-edit-modal-target" style="color:var(--color-text);"></strong>. Se pide la contraseña de administrador y queda registrado quién lo hizo.</p>
+                    <div style="margin-bottom:0.5rem; font-size:0.8rem; color:var(--color-gray);">Campo: <span id="db-edit-modal-col" style="color:var(--color-text);"></span>
+                        <span id="db-edit-modal-tipo" style="color:var(--color-gray); font-family:monospace;"></span></div>
+                    <!-- v1.9.9 (3.1): valor anterior a la vista, valor nuevo editable. -->
+                    <div style="font-size:0.8rem; color:var(--color-gray);">Valor anterior:</div>
+                    <pre id="db-edit-modal-anterior" style="margin:0.2rem 0 0.8rem; max-height:120px; overflow:auto; white-space:pre-wrap; word-break:break-all; font-size:0.8rem; color:var(--color-text);"></pre>
+                    <div style="font-size:0.8rem; color:var(--color-gray);">Valor nuevo:</div>
+                    <textarea id="db-edit-nuevo" rows="3" oninput="_cambioEnEdicion()"
+                        style="width:100%; padding:0.5rem; border-radius:8px; border:1px solid var(--card-border); background:var(--level-0); color:var(--color-text); font-family:monospace; font-size:0.85rem; box-sizing:border-box;"></textarea>
+                    <label style="display:block; font-size:0.78rem; color:var(--color-gray); margin:0.3rem 0 0.8rem;">
+                        <input type="checkbox" id="db-edit-nulo" onchange="_cambioEnEdicion()"> Guardar como NULL (sin valor)</label>
+                    <div id="db-edit-resumen" style="display:none; font-size:0.82rem; margin-bottom:0.8rem; padding:0.5rem 0.7rem; border-left:3px solid var(--color-yellow); background:rgba(255,255,255,0.04);"></div>
                     <input type="password" id="db-edit-password" placeholder="Contraseña de administrador" autocomplete="current-password"
                         style="width:100%; padding:0.7rem; border-radius:8px; border:1px solid var(--card-border); background:var(--level-0); color:var(--color-text); font-size:0.9rem; box-sizing:border-box; margin-bottom:1rem;">
                     <div style="display:flex; gap:0.75rem; justify-content:flex-end;">
                         <button onclick="closeEditModal()" style="padding:0.6rem 1.2rem; border-radius:8px; border:1px solid var(--card-border); background:var(--level-1); color:var(--color-text); cursor:pointer;">Cancelar</button>
-                        <button onclick="confirmCellEdit()" style="padding:0.6rem 1.4rem; border-radius:8px; border:none; background:var(--color-green-vibrant); color:var(--color-black); font-weight:700; cursor:pointer;">Confirmar Cambio</button>
+                        <button id="db-edit-confirmar" onclick="confirmCellEdit()" style="padding:0.6rem 1.4rem; border-radius:8px; border:none; background:var(--color-green-vibrant); color:var(--color-black); font-weight:700; cursor:pointer;">Revisar cambio</button>
                     </div>
                     <p id="db-edit-error" style="color:#f87171; font-size:0.8rem; margin:0.8rem 0 0; display:none;"></p>
                 </div>

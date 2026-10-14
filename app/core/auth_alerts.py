@@ -11,10 +11,14 @@ la avalancha esconde el problema tanto como el silencio. Por eso se agrupa:
 
   · La PRIMERA ocurrencia se emite de inmediato, para que salte apenas empieza.
   · Después, un resumen periódico con el acumulado mientras sigan llegando.
-  · Al cesar los rechazos, una línea de cierre indicando cuántos hubo en total.
 
 Con ese esquema, 5.320 rechazos en tres minutos producen tres o cuatro líneas
 en lugar de 5.320 o ninguna.
+
+v1.9.9 (B-25): la función que iba a escribir una línea de cierre al cesar los
+rechazos (cerrar_episodios_resueltos) no la llamaba nadie, así que esa línea
+nunca existió. Se quitó. Un episodio termina solo: tras SILENCIO_PARA_CERRAR_SEG
+sin rechazos, el siguiente abre uno nuevo, y el panel ya no lo lista.
 """
 import logging
 import threading
@@ -97,33 +101,12 @@ def registrar_rechazo(provider: str, env: str, motivo: str, detalle: str = "") -
         )
 
 
-def cerrar_episodios_resueltos() -> int:
-    """
-    Cierra los episodios sin actividad reciente, dejando constancia del total.
-
-    Se llama desde el watchdog: sin esto, un problema que se resuelve no deja
-    registro de cuánto duró ni cuántas peticiones se perdieron.
-    """
-    ahora = time.time()
-    cerrados = []
-
-    with _lock:
-        for clave, episodio in list(_episodios.items()):
-            if (ahora - episodio.ultimo) > SILENCIO_PARA_CERRAR_SEG:
-                cerrados.append((clave, episodio.total, episodio.ultimo - episodio.desde))
-                del _episodios[clave]
-
-    for (provider, env, motivo), total, duracion in cerrados:
-        logger.info(
-            f"[{provider.upper()}-{env}] Cesaron los rechazos por {motivo}. "
-            f"Total del episodio: {total} petición(es) en {duracion / 60:.1f} min."
-        )
-
-    return len(cerrados)
-
-
 def resumen_actual() -> list[dict]:
-    """Episodios en curso, para exponerlos en el panel de salud."""
+    """
+    Episodios en curso, para exponerlos en el panel de salud. Uno sin rechazos
+    desde hace más de SILENCIO_PARA_CERRAR_SEG ya terminó y no se lista: antes
+    se listaba para siempre, porque nada lo cerraba (v1.9.9, B-25).
+    """
     ahora = time.time()
     with _lock:
         return [
@@ -135,6 +118,7 @@ def resumen_actual() -> list[dict]:
                 "desde_hace_seg": round(ahora - ep.desde, 1),
             }
             for (provider, env, motivo), ep in _episodios.items()
+            if (ahora - ep.ultimo) <= SILENCIO_PARA_CERRAR_SEG
         ]
 
 

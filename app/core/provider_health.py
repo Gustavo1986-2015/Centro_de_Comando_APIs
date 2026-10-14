@@ -252,11 +252,17 @@ def report_dict_count(provider: str, env: str, count: int):
             e["dict_enabled"] = True
 
 
+def _sin_secretos(error) -> str:
+    """B-12 (v1.9.9): la píldora nunca muestra un token o una clave completos."""
+    from app.core.secretos import enmascarar
+    return enmascarar(str(error))[:300]
+
+
 def report_dict_error(provider: str, env: str, error: str):
     with _LOCK:
         e = _entry(provider, env)
         e["dict_enabled"] = True
-        e["dict_last_error"] = str(error)[:300]
+        e["dict_last_error"] = _sin_secretos(error)
 
 
 def report_dict_disabled(provider: str, env: str):
@@ -277,7 +283,7 @@ def report_auth_error(provider: str, env: str, error: str):
     with _LOCK:
         e = _entry(provider, env)
         e["auth_ok"] = False
-        e["auth_last_error"] = str(error)[:300]
+        e["auth_last_error"] = _sin_secretos(error)
 
 
 def report_fetch_ok(provider: str, env: str):
@@ -289,7 +295,7 @@ def report_fetch_ok(provider: str, env: str):
 
 def report_fetch_error(provider: str, env: str, error: str):
     with _LOCK:
-        _entry(provider, env)["last_fetch_error"] = str(error)[:300]
+        _entry(provider, env)["last_fetch_error"] = _sin_secretos(error)
 
 
 # ── Lectura para el dashboard ────────────────────────────────────────────────

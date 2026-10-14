@@ -45,7 +45,8 @@ _SEGUNDOS_ENTRE_PURGAS = 600
 DIRECTORIO = os.path.join(".", "db")
 ARCHIVO = "descartes.db"
 
-ORIGENES = ("admision", "contrato", "tive")
+# "mapeo" (v1.9.9, B-8): integración del Studio sin patente real.
+ORIGENES = ("admision", "contrato", "tive", "mapeo")
 
 _cola: "queue.Queue[tuple]" = queue.Queue(maxsize=_TAM_COLA)
 _lock_hilo = threading.Lock()
@@ -196,7 +197,7 @@ def consultar(limite: int = 100) -> dict:
     esperar_escritura(1.0)
     limite = max(1, min(int(limite), 1000))
     if not os.path.exists(_ruta()):
-        return {"resumen": [], "ultimos": [], "perdidos": _perdidos,
+        return {"resumen": [], "ultimos": [], "por_equipo": [], "perdidos": _perdidos,
                 "retencion_dias": DIAS_RETENCION, "max_filas": MAX_FILAS}
     con = _conectar()
     try:
@@ -208,9 +209,16 @@ def consultar(limite: int = 100) -> dict:
         ultimos = [dict(r) for r in con.execute(
             "SELECT ts, proveedor, env, origen, motivo, detalle, equipo, envio, alert_id, latitud, longitud"
             " FROM descartes ORDER BY id DESC LIMIT ?", (limite,))]
+        # B-8 (v1.9.9): los "sin patente" contados por equipo, para avisarle al
+        # prestador cuáles le faltan. En SQLite, con MAX() las columnas sueltas
+        # (latitud, longitud) salen de la fila del último descarte.
+        por_equipo = [dict(r) for r in con.execute(
+            "SELECT proveedor, env, equipo, detalle, COUNT(*) AS total, MAX(ts) AS ultimo,"
+            " latitud, longitud FROM descartes WHERE origen = 'mapeo'"
+            " GROUP BY proveedor, env, equipo, detalle ORDER BY total DESC, ultimo DESC LIMIT 200")]
     finally:
         con.close()
-    return {"resumen": resumen, "ultimos": ultimos, "perdidos": _perdidos,
+    return {"resumen": resumen, "ultimos": ultimos, "por_equipo": por_equipo, "perdidos": _perdidos,
             "retencion_dias": DIAS_RETENCION, "max_filas": MAX_FILAS}
 
 

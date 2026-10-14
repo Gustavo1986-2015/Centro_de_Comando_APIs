@@ -32,8 +32,7 @@ class QueueFactory:
 
             if backend == "redis":
                 raise NotImplementedError(
-                    "Backend Redis no implementado todavia. Use queue_backend='sqlite'. "
-                    "La clase RedisQueue existe como placeholder para futura implementacion."
+                    "Backend Redis no implementado. Use queue_backend='sqlite'."
                 )
             if backend not in ("sqlite",):
                 raise ValueError(f"Backend de cola no soportado: '{backend}'. Valores validos: sqlite.")
