@@ -38,6 +38,7 @@
             <li id="tab-history" onclick="switchView('history')">Historial Diario</li>
             <li id="tab-db-viewer" onclick="switchView('db-viewer')">Visor de Base de Datos</li>
             <li id="tab-diagnostico" onclick="switchView('diagnostico')">Diagnóstico y Salud</li>
+            <li id="tab-descartes" onclick="switchView('descartes')">Descartes</li>
             <li id="tab-monitor" onclick="switchView('monitor')">Monitor Interno (APIs)</li>
             <li id="tab-console" onclick="switchView('console')">Consola en Vivo</li>
         </ul>
@@ -105,8 +106,11 @@
                 </div>
             </div>
             <div class="card failed" data-metric="failed" style="cursor: pointer; transition: transform 0.2s;" onclick="setFilterStatus('failed')" onmouseover="this.style.transform='scale(1.02)'" onmouseout="this.style.transform='scale(1)'" title="Clic para filtrar fallidos">
-                <div class="card-title">Fallidos (Hoy)</div>
+                <div class="card-title" title="Eventos en 'failed' ahora: baja al recuperarlos con el reintento manual">Fallidos (sin resolver)</div>
                 <div class="card-value" id="val-failed">0</div>
+                <!-- v1.9.10: los fallos acumulados de hoy y los recuperados hoy. -->
+                <div class="card-subvalor" id="val-failed-detalle" style="font-size:0.72rem; color:var(--color-gray);"
+                     title="hoy: fallos acumulados del día · recuperados: fallidos que hoy se volvieron a la cola con el reintento manual">hoy: 0 · recuperados: 0</div>
                 <div class="sparkline-wrap">
                     <svg class="sparkline" id="spark-failed" viewBox="0 0 120 30" preserveAspectRatio="none"></svg>
                 </div>
@@ -521,6 +525,18 @@
                     <div id="resumen-enviados" class="resumen-descarga">—</div>
                 </div>
             </div>
+        </div>
+
+        <!-- v1.9.10: retención del registro de descartes. -->
+        <div class="recent-section" style="margin-top: 2rem;">
+            <h2>Retención de descartes</h2>
+            <div class="donde-intro">Cuánto guarda el registro de descartes (db/descartes.db). Lo más viejo se borra primero.</div>
+            <div style="display:flex; flex-wrap:wrap; gap:1rem; align-items:flex-end; margin-top:1rem;">
+                <label style="font-size:0.85rem;">Días (1 a 90)<br><input type="number" id="desc-ret-dias" min="1" max="90" class="form-control" style="width:120px;"></label>
+                <label style="font-size:0.85rem;">Tope de filas (10.000 a 1.000.000)<br><input type="number" id="desc-ret-filas" min="10000" max="1000000" step="1000" class="form-control" style="width:160px;"></label>
+                <button class="btn-save" onclick="guardarRetencionDescartes()">Guardar retención de descartes</button>
+            </div>
+            <div id="desc-ret-info" style="font-size:0.85rem; color:var(--color-gray); margin-top:0.6rem;"></div>
         </div>
 
         <div class="recent-section" style="margin-top: 2rem;">
@@ -1117,12 +1133,58 @@
             <div style="margin-top:0.5rem;">
                 <button class="btn-save" onclick="cargarDescartes()"
                         style="background:var(--color-gray); color:white;">Actualizar</button>
+                <a href="#" id="desc-enlace-seccion" onclick="switchView('descartes'); return false;"
+                   style="margin-left:0.8rem; font-size:0.85rem;">Ver todos, con filtros y exportación, en la sección Descartes →</a>
             </div>
             <div id="descartes-contenedor" style="margin-top:1rem;">
                 <div style="color:#a1a1aa; font-size:0.85rem;">Consultando…</div>
             </div>
         </div>
 
+    </main>
+
+    <!-- v1.9.10: Descartes, con filtros, agrupado por equipo y exportación. -->
+    <main id="view-descartes" style="display: none;">
+        <div class="recent-section" style="margin-top: 2rem;">
+            <h2>Descartes</h2>
+            <div class="donde-intro">
+                Lo que llegó y NO se envió a Recurso Confiable, por categoría. <strong>Esperado</strong>:
+                el sistema lo descarta por diseño (por ejemplo, una posición que va por RC directo).
+                <strong>A revisar</strong>: falta un dato o algo está mal configurado.
+                <span id="desc-mas-viejo" style="display:block; margin-top:0.3rem; color:var(--color-gray);"></span>
+            </div>
+            <div class="desc-filtros" style="display:flex; flex-wrap:wrap; gap:0.6rem; align-items:flex-end; margin-top:1rem;">
+                <label style="font-size:0.8rem;">Desde<br><input type="datetime-local" id="desc-desde" class="form-control" style="width:auto;"></label>
+                <label style="font-size:0.8rem;">Hasta<br><input type="datetime-local" id="desc-hasta" class="form-control" style="width:auto;"></label>
+                <label style="font-size:0.8rem;">Integración<br><select id="desc-integracion" class="form-control" style="width:auto;"><option value="">Todas</option></select></label>
+                <label style="font-size:0.8rem;">Tipo<br><select id="desc-tipo" class="form-control" style="width:auto;">
+                    <option value="a_revisar">A revisar</option>
+                    <option value="esperado">Esperado</option>
+                    <option value="todos">Todos</option>
+                </select></label>
+                <label style="font-size:0.8rem;">Equipo o envío<br><input type="text" id="desc-texto" class="form-control" maxlength="100" placeholder="patente, IMEI o envío" style="width:200px;"></label>
+                <button class="btn-save" onclick="buscarDescartes(0)">Buscar</button>
+                <button class="btn-save" onclick="limpiarFiltrosDescartes()" style="background:var(--level-2); color:var(--color-text); border:1px solid var(--card-border);">Quitar filtros</button>
+                <button class="btn-save" onclick="exportarDescartes('csv')" style="background:#10B981; color:white;" title="Los descartes con los filtros aplicados">📥 CSV</button>
+                <button class="btn-save" onclick="exportarDescartes('xlsx')" style="background:#10B981; color:white;" title="Los descartes con los filtros aplicados">📥 Excel</button>
+            </div>
+            <div id="desc-tarjetas" style="display:flex; flex-wrap:wrap; gap:0.6rem; margin-top:1rem;"></div>
+            <div style="display:flex; gap:0.5rem; margin-top:1rem;">
+                <button id="desc-pestana-lista" class="btn-save" onclick="pestanaDescartes('lista')">Descartes</button>
+                <button id="desc-pestana-equipos" class="btn-save" onclick="pestanaDescartes('equipos')" style="background:var(--level-2); color:var(--color-text);">Por equipo</button>
+                <span id="desc-total" style="align-self:center; color:var(--color-gray); font-size:0.85rem;"></span>
+            </div>
+            <div id="desc-tabla" class="table-container" style="margin-top:0.6rem;"></div>
+            <div id="desc-paginacion" style="display:flex; gap:0.5rem; align-items:center; margin-top:0.6rem;"></div>
+        </div>
+        <div id="desc-crudo-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.7); z-index:9999; align-items:center; justify-content:center;">
+            <div style="background:var(--level-1); border:1px solid var(--color-green-vibrant); border-radius:14px; padding:1.4rem; width:min(820px, 94vw); max-height:86vh; overflow:auto;">
+                <h3 style="margin:0 0 0.6rem;">Crudo del descarte</h3>
+                <div id="desc-crudo-info" style="font-size:0.8rem; color:var(--color-gray); margin-bottom:0.5rem;"></div>
+                <pre id="desc-crudo-contenido" style="white-space:pre-wrap; word-break:break-all; font-size:0.78rem; max-height:60vh; overflow:auto;"></pre>
+                <div style="text-align:right; margin-top:0.8rem;"><button class="btn-save" onclick="document.getElementById('desc-crudo-modal').style.display='none'">Cerrar</button></div>
+            </div>
+        </div>
     </main>
 
     <main id="view-monitor" style="display: none;">

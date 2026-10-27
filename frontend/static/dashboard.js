@@ -532,7 +532,7 @@
             const estado = {
                 pending: data.pending || 0,
                 sent:    data.sent    || 0,
-                failed:  data.failed  || 0,
+                failed:  data.fallidos_ahora ?? data.failed ?? 0,
                 retries: data.retries || 0,
             };
 
@@ -855,6 +855,9 @@
             if(document.getElementById('view-console')) {
                 document.getElementById('view-console').style.display = view === 'console' ? 'flex' : 'none';
             }
+            if(document.getElementById('view-descartes')) {
+                document.getElementById('view-descartes').style.display = view === 'descartes' ? 'flex' : 'none';
+            }
             if(document.getElementById('view-integrations')) {
                 document.getElementById('view-integrations').style.display = view === 'integrations' ? 'flex' : 'none';
             }
@@ -870,6 +873,9 @@
             }
             if(document.getElementById('tab-console')) {
                 document.getElementById('tab-console').classList.toggle('active-tab', view === 'console');
+            }
+            if(document.getElementById('tab-descartes')) {
+                document.getElementById('tab-descartes').classList.toggle('active-tab', view === 'descartes');
             }
             if(document.getElementById('tab-integrations')) {
                 document.getElementById('tab-integrations').classList.toggle('active-tab', view === 'integrations');
@@ -890,6 +896,9 @@
                 cargarOpcionesDeExportacion();
                 cargarInventarioDeDatos();
                 cargarPrecedencia();
+                cargarRetencionDescartes();
+            } else if (view === 'descartes') {
+                cargarSeccionDescartes();
             } else if (view === 'diagnostico') {
                 cargarDiagnosticoLatencia();
                 cargarRedSeguridad();
@@ -1213,7 +1222,9 @@
                 // The current backend get_stats_data doesn't receive filters via SSE, so data is global.
                 updateValue('val-pending', data.pending);
                 updateValue('val-sent', data.sent);
-                updateValue('val-failed', data.failed);
+                // v1.9.10: sin resolver ahora (baja al recuperarlos); debajo, hoy y recuperados.
+                updateValue('val-failed', data.fallidos_ahora ?? data.failed);
+                _detalleFallidos(data);
                 updateValue('val-retries', data.retries);
                 applyCardHierarchy(data);
                 
@@ -1479,7 +1490,11 @@
                 let sensorHtml = `<div style="font-size:0.8rem; color:var(--color-gray); line-height: 1.4;">`;
                 // N/A cuando el proveedor no mide velocidad (Tive). A RC le llega
                 // "0", que es lo que pide el contrato; acá no se inventa el dato.
-                const velocidad = (ev.speed === null || ev.speed === undefined)
+                // v1.9.10: Tive con velocidad estimada lleva el motivo y el método
+                // de ubicación de las dos lecturas (qué tan fiable es el valor).
+                const velocidad = ev.velocidad_detalle
+                    ? `<span class="velocidad-estimada" style="color:var(--color-white)" title="${_escAttr(_tituloVelocidadEstimada(ev.velocidad_detalle))}">${_escapeHtml(_textoVelocidadEstimada(ev.velocidad_detalle))}</span>`
+                    : (ev.speed === null || ev.speed === undefined)
                     ? '<span style="color:var(--color-gray-label)" title="El proveedor no informa velocidad">N/A</span>'
                     : `<span style="color:var(--color-white)">${ev.speed} km/h</span>`;
                 sensorHtml += `<div>Velocidad: ${velocidad}</div>`;
@@ -1547,6 +1562,10 @@
                 let rcFormatFinal = ev.rc_format || {};
                 if (ev.job_id && typeof rcFormatFinal === 'object') {
                     rcFormatFinal = { ...rcFormatFinal, _rc_assigned_job_id: ev.job_id };
+                }
+                // v1.9.10: el cálculo de la velocidad. Con "_" como el job_id: no viaja a RC.
+                if (ev.velocidad_detalle && typeof rcFormatFinal === 'object') {
+                    rcFormatFinal = { ...rcFormatFinal, _velocidad_estimada: ev.velocidad_detalle };
                 }
                 const jsonPayload = encodeURIComponent(JSON.stringify(rcFormatFinal, null, 2));
                 const safeTime = fallbackTime.replace(/[: ()]/g, '');
@@ -2174,14 +2193,296 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
             }
         }
 
+        // ─── Sección Descartes (v1.9.10) ──────────────────────────────────────
+        // Por defecto: últimas 24 h, solo "a revisar". Todo dato que viene de la
+        // base se escapa. Las fechas viajan en ISO con zona; se muestran en la
+        // hora local del navegador.
+        let _desc = { catalogo: null, categorias: [], pagina: 0, porPagina: 50, pestana: 'lista' };
+
+        function _fechaLocalInput(fecha) {
+            const p = n => String(n).padStart(2, '0');
+            return `${fecha.getFullYear()}-${p(fecha.getMonth() + 1)}-${p(fecha.getDate())}T${p(fecha.getHours())}:${p(fecha.getMinutes())}`;
+        }
+
+        function _textoFechaDescarte(ts) {
+            // Hora local en 24 h, explícita: con algunos idiomas del navegador
+            // (es-419) toLocaleString() da 12 h sin "a. m./p. m." y 19:31 se lee 07:31.
+            if (!ts) return '—';
+            const d = new Date(ts * 1000);
+            const p = n => String(n).padStart(2, '0');
+            return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+        }
+
+        function _categoriaDescarte(codigo) {
+            return ((_desc.catalogo || {}).categorias || []).find(c => c.codigo === codigo)
+                || { codigo, nombre: codigo || 'Otro', descripcion: '', tipo: 'a_revisar' };
+        }
+
+        function _paramsDescartes(extra) {
+            const params = new URLSearchParams();
+            const desde = document.getElementById('desc-desde').value;
+            const hasta = document.getElementById('desc-hasta').value;
+            if (desde) params.set('desde', new Date(desde).toISOString());
+            if (hasta) params.set('hasta', new Date(hasta).toISOString());
+            const integracion = document.getElementById('desc-integracion').value;
+            if (integracion) {
+                const [prov, ent] = integracion.split('/');
+                params.set('provider', prov);
+                if (ent) params.set('env', ent);
+            }
+            params.set('tipo', document.getElementById('desc-tipo').value || 'todos');
+            if (_desc.categorias.length) params.set('categorias', _desc.categorias.join(','));
+            const texto = document.getElementById('desc-texto').value.trim();
+            if (texto) params.set('texto', texto);
+            for (const [k, v] of Object.entries(extra || {})) params.set(k, v);
+            return params;
+        }
+
+        async function cargarSeccionDescartes() {
+            if (!_desc.catalogo) {
+                const r = await fetch('/api/descartes/catalogo', { cache: 'no-store' });
+                _desc.catalogo = await r.json();
+                try {
+                    const configs = await (await fetch('/api/config', { cache: 'no-store' })).json();
+                    const sel = document.getElementById('desc-integracion');
+                    const vistos = new Set();
+                    for (const c of configs || []) {
+                        const v = `${String(c.provider_name).toLowerCase()}/${String(c.env).toLowerCase()}`;
+                        if (vistos.has(v)) continue;
+                        vistos.add(v);
+                        const o = document.createElement('option');
+                        o.value = v;
+                        o.textContent = v;
+                        sel.appendChild(o);
+                    }
+                } catch (e) { console.warn('No se pudieron listar las integraciones', e); }
+            }
+            const desde = document.getElementById('desc-desde');
+            if (!desde.value) {
+                desde.value = _fechaLocalInput(new Date(Date.now() - 24 * 3600 * 1000));
+                document.getElementById('desc-tipo').value = 'a_revisar';
+            }
+            await buscarDescartes(0);
+        }
+
+        function limpiarFiltrosDescartes() {
+            _desc.categorias = [];
+            document.getElementById('desc-desde').value = _fechaLocalInput(new Date(Date.now() - 24 * 3600 * 1000));
+            document.getElementById('desc-hasta').value = '';
+            document.getElementById('desc-integracion').value = '';
+            document.getElementById('desc-tipo').value = 'a_revisar';
+            document.getElementById('desc-texto').value = '';
+            buscarDescartes(0);
+        }
+
+        function filtrarCategoriaDescartes(codigo) {
+            // Clic en una tarjeta: solo esa categoría (otro clic la quita).
+            _desc.categorias = (_desc.categorias.length === 1 && _desc.categorias[0] === codigo) ? [] : [codigo];
+            if (_desc.categorias.length) document.getElementById('desc-tipo').value = 'todos';
+            buscarDescartes(0);
+        }
+
+        function pestanaDescartes(pestana) {
+            _desc.pestana = pestana;
+            document.getElementById('desc-pestana-lista').style.opacity = pestana === 'lista' ? '1' : '0.6';
+            document.getElementById('desc-pestana-equipos').style.opacity = pestana === 'equipos' ? '1' : '0.6';
+            buscarDescartes(_desc.pagina);
+        }
+
+        async function buscarDescartes(pagina) {
+            _desc.pagina = pagina || 0;
+            const params = _paramsDescartes({ limit: _desc.porPagina, offset: _desc.pagina * _desc.porPagina });
+            const tabla = document.getElementById('desc-tabla');
+            const res = await fetch(`/api/descartes?${params.toString()}`, { cache: 'no-store' });
+            const data = await res.json();
+            if (!res.ok) {
+                tabla.innerHTML = `<div style="color:#f87171;">${_escapeHtml(String(data.detail || res.status))}</div>`;
+                return;
+            }
+            document.getElementById('desc-mas-viejo').textContent = data.mas_viejo
+                ? `Descarte más viejo disponible: ${_textoFechaDescarte(data.mas_viejo)}.` : 'Todavía no hay descartes guardados.';
+            document.getElementById('desc-tarjetas').innerHTML = _renderTarjetasDescartes(data.por_categoria || {});
+            if (_desc.pestana === 'equipos') {
+                const p = _paramsDescartes({ limit: 500 });
+                const r = await fetch(`/api/descartes/por-equipo?${p.toString()}`, { cache: 'no-store' });
+                const grupos = await r.json();
+                document.getElementById('desc-total').textContent = `${grupos.total} grupo(s)`;
+                tabla.innerHTML = _renderPorEquipoDescartes(grupos.grupos || []);
+                document.getElementById('desc-paginacion').innerHTML = '';
+                return;
+            }
+            document.getElementById('desc-total').textContent = `${data.total} descarte(s)`;
+            tabla.innerHTML = _renderTablaDescartes(data.filas || []);
+            document.getElementById('desc-paginacion').innerHTML = _renderPaginacionDescartes(data.total);
+        }
+
+        function _renderTarjetasDescartes(porCategoria) {
+            const codigos = Object.keys(porCategoria).sort((a, b) => porCategoria[b] - porCategoria[a]);
+            if (!codigos.length) return '<div style="color:var(--color-gray); font-size:0.85rem;">Sin descartes en el rango.</div>';
+            return codigos.map(codigo => {
+                const c = _categoriaDescarte(codigo);
+                const elegida = _desc.categorias.includes(codigo);
+                const color = c.tipo === 'esperado' ? 'var(--color-gray)' : 'var(--color-yellow)';
+                return `<div class="desc-tarjeta" data-categoria="${_escAttr(codigo)}" onclick="filtrarCategoriaDescartes('${_escAttr(codigo)}')"
+                        title="${_escAttr(c.descripcion)}"
+                        style="cursor:pointer; padding:0.5rem 0.8rem; border-radius:8px; border:1px solid ${elegida ? 'var(--color-green-vibrant)' : 'var(--card-border)'}; background:var(--level-1); min-width:150px;">
+                    <div style="font-size:0.72rem; color:${color};">${c.tipo === 'esperado' ? 'Esperado' : 'A revisar'}</div>
+                    <div style="font-size:0.85rem;">${_escapeHtml(c.nombre)}</div>
+                    <div style="font-size:1.3rem; font-weight:700;">${Number(porCategoria[codigo]).toLocaleString()}</div>
+                </div>`;
+            }).join('');
+        }
+
+        function _enlaceMapa(lat, lon) {
+            if (lat === null || lat === undefined || lon === null || lon === undefined) return '—';
+            const la = Number(lat), lo = Number(lon);
+            if (!isFinite(la) || !isFinite(lo)) return '—';
+            return `<a href="https://www.google.com/maps?q=${la},${lo}" target="_blank" rel="noopener">${la}, ${lo}</a>`;
+        }
+
+        function _renderTablaDescartes(filas) {
+            if (!filas.length) return '<div style="color:var(--color-gray); font-size:0.85rem;">No hay descartes con estos filtros.</div>';
+            const cuerpo = filas.map(f => {
+                const c = _categoriaDescarte(f.categoria);
+                const crudo = f.ingest_id
+                    ? `<button class="desc-ver-crudo" onclick="verCrudoDescarte(${Number(f.id)})" style="font-size:0.72rem;">Ver crudo</button>`
+                    : '<span style="color:var(--color-gray); font-size:0.72rem;" title="Sin vínculo con el crudo">—</span>';
+                return `<tr>
+                    <td>${_escapeHtml(_textoFechaDescarte(f.ts))}</td>
+                    <td>${_escapeHtml(`${f.proveedor}/${f.env}`)}</td>
+                    <td title="${_escAttr(c.descripcion)}">${_escapeHtml(c.nombre)}</td>
+                    <td>${_escapeHtml(f.motivo || '')}${f.detalle ? `<div style="font-size:0.72rem; color:var(--color-gray);">${_escapeHtml(f.detalle)}</div>` : ''}</td>
+                    <td>${_escapeHtml(f.equipo || '—')}</td>
+                    <td>${_escapeHtml(f.envio || '—')}</td>
+                    <td>${_escapeHtml(f.alert_id || '—')}</td>
+                    <td>${_enlaceMapa(f.latitud, f.longitud)}</td>
+                    <td>${crudo}</td>
+                </tr>`;
+            }).join('');
+            return `<table class="inventario-tabla"><thead><tr><th>Fecha (local)</th><th>Integración</th><th>Categoría</th>
+                <th>Motivo</th><th>Equipo</th><th>Envío</th><th>AlertId</th><th>Coordenadas</th><th>Crudo</th></tr></thead>
+                <tbody>${cuerpo}</tbody></table>`;
+        }
+
+        function _renderPorEquipoDescartes(grupos) {
+            if (!grupos.length) return '<div style="color:var(--color-gray); font-size:0.85rem;">No hay descartes con estos filtros.</div>';
+            const cuerpo = grupos.map(g => `<tr>
+                    <td>${_escapeHtml(g.equipo || '—')}</td>
+                    <td>${_escapeHtml(`${g.proveedor}/${g.env}`)}</td>
+                    <td>${_escapeHtml(_categoriaDescarte(g.categoria).nombre)}</td>
+                    <td class="num">${Number(g.cantidad).toLocaleString()}</td>
+                    <td>${_escapeHtml(_textoFechaDescarte(g.primero))}</td>
+                    <td>${_escapeHtml(_textoFechaDescarte(g.ultimo))}</td>
+                    <td>${_escapeHtml(g.ultimo_envio || '—')}</td>
+                </tr>`).join('');
+            return `<table class="inventario-tabla"><thead><tr><th>Equipo</th><th>Integración</th><th>Categoría</th>
+                <th class="num">Cantidad</th><th>Primero</th><th>Último</th><th>Último envío</th></tr></thead>
+                <tbody>${cuerpo}</tbody></table>`;
+        }
+
+        function _renderPaginacionDescartes(total) {
+            const paginas = Math.max(1, Math.ceil(total / _desc.porPagina));
+            const actual = _desc.pagina;
+            return `<button ${actual <= 0 ? 'disabled' : ''} onclick="buscarDescartes(${actual - 1})">← Anterior</button>
+                <span style="font-size:0.85rem;">Página ${actual + 1} de ${paginas}</span>
+                <button ${actual + 1 >= paginas ? 'disabled' : ''} onclick="buscarDescartes(${actual + 1})">Siguiente →</button>`;
+        }
+
+        async function verCrudoDescarte(id) {
+            const modal = document.getElementById('desc-crudo-modal');
+            const info = document.getElementById('desc-crudo-info');
+            const contenido = document.getElementById('desc-crudo-contenido');
+            const res = await fetch(`/api/descartes/${Number(id)}/crudo`, { cache: 'no-store' });
+            const data = await res.json();
+            if (!res.ok) {
+                info.textContent = '';
+                contenido.textContent = data.detail || `No disponible (${res.status}).`;
+            } else {
+                info.textContent = `${data.archivo} · recibido ${data.timestamp || '—'} · ingest_id ${data.ingest_id}`;
+                contenido.textContent = JSON.stringify(data.payload, null, 2);
+            }
+            modal.style.display = 'flex';
+        }
+
+        function exportarDescartes(formato) {
+            const params = _paramsDescartes({ formato });
+            window.location.href = `/api/descartes/exportar?${params.toString()}`;
+        }
+
+        async function cargarRetencionDescartes() {
+            const res = await fetch('/api/descartes/retencion', { cache: 'no-store' });
+            if (!res.ok) return;
+            const d = await res.json();
+            document.getElementById('desc-ret-dias').value = d.dias;
+            document.getElementById('desc-ret-filas').value = d.max_filas;
+            document.getElementById('desc-ret-info').textContent = d.mas_viejo
+                ? `Descarte más viejo disponible: ${_textoFechaDescarte(d.mas_viejo)}.` : 'Todavía no hay descartes guardados.';
+        }
+
+        async function guardarRetencionDescartes() {
+            const cuerpo = { dias: parseInt(document.getElementById('desc-ret-dias').value, 10),
+                             max_filas: parseInt(document.getElementById('desc-ret-filas').value, 10) };
+            const res = await fetch('/api/descartes/retencion', {
+                method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(cuerpo) });
+            const d = await res.json().catch(() => ({}));
+            const info = document.getElementById('desc-ret-info');
+            if (!res.ok) {
+                info.textContent = `No se guardó: ${typeof d.detail === 'string' ? d.detail : res.status}`;
+                info.style.color = '#f87171';
+                return;
+            }
+            info.style.color = 'var(--color-gray)';
+            info.textContent = `Guardado: ${d.dias} días, ${Number(d.max_filas).toLocaleString()} filas. `
+                + (d.mas_viejo ? `Descarte más viejo disponible: ${_textoFechaDescarte(d.mas_viejo)}.` : '');
+        }
+
+        // ─── Velocidad estimada de Tive (v1.9.10) ────────────────────────────
+        // 0 = detenido, 1 = no calculada (marcador), >= 2 = km/h estimados.
+        // Junto al valor, el método de ubicación de las dos lecturas usadas.
+        function _textoVelocidadEstimada(d) {
+            const metodo = l => (l && l.metodo) || '?';
+            const metodos = `${metodo(d.anterior)}→${metodo(d.actual)}`;
+            switch (d.motivo) {
+                case 'estimada': return `${d.valor} km/h (estimada · ${metodos})`;
+                case 'detenido_umbral': return `0 (detenido · ${metodos})`;
+                case 'detenido_informado': return '0 (detenido · ShipmentStopped)';
+                case 'maritimo': return '0 (marítimo · container)';
+                case 'sin_posicion_previa': return '1 (no calculada: sin posición previa)';
+                case 'misma_hora_coordenadas_distintas': return '1 (no calculada: misma hora con coordenadas distintas)';
+                case 'medida': return `${d.valor} km/h (medida)`;
+                default: return `${d.valor} (${d.texto || d.motivo})`;
+            }
+        }
+
+        function _tituloVelocidadEstimada(d) {
+            const lectura = (nombre, l) => l
+                ? `${nombre}: ${l.metodo || '?'}, precisión ${l.precision_m !== null && l.precision_m !== undefined ? l.precision_m + ' m' : '?'}, ${l.momento}`
+                : `${nombre}: —`;
+            const tramo = d.distancia_m !== null && d.distancia_m !== undefined
+                ? `${d.distancia_m} m en ${d.segundos} s (umbral ${d.umbral_m} m)` : '';
+            return [`Velocidad ${d.texto || d.motivo}${d.lectura_repetida ? ' (lectura repetida)' : ''}`,
+                    lectura('anterior', d.anterior), lectura('actual', d.actual), tramo].filter(Boolean).join(' · ');
+        }
+
         // ─── Reintento manual de fallidos (v1.9.9, 3.8) ──────────────────────
         // Solo con el filtro "Fallidos". El servidor vuelve a validar todo: toca
         // únicamente eventos en 'failed' y exige la cantidad que se confirmó acá.
         let _reintento = null;
 
+        // v1.9.10: fallidos sin resolver ahora, del último refresco del tablero.
+        let _fallidosAhora = 0;
+
+        function _detalleFallidos(data) {
+            _fallidosAhora = Number(data.fallidos_ahora ?? data.failed ?? 0);
+            const el = document.getElementById('val-failed-detalle');
+            if (el) el.textContent = `hoy: ${Number(data.fallidos_hoy ?? data.failed ?? 0).toLocaleString()} · recuperados: ${Number(data.recuperados_hoy ?? 0).toLocaleString()}`;
+            _botonReintentoFallidos();
+        }
+
         function _botonReintentoFallidos() {
+            // Con el filtro "Fallidos" y solo si hay algo sin resolver.
             const b = document.getElementById('btn-reintentar-fallidos');
-            if (b) b.style.display = currentStatusFilter === 'failed' ? '' : 'none';
+            if (b) b.style.display = currentStatusFilter === 'failed' && _fallidosAhora > 0 ? '' : 'none';
         }
 
         function _mostrarModalReintento() {
