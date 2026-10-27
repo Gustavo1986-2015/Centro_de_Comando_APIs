@@ -461,7 +461,7 @@ def _descartar_sin_patente(provider_name, env, campo, identificador, latitud, lo
     etiqueta = f"[{(provider_name or '?').upper()}-{env or '?'}]"
     equipo = str(identificador) if identificador else "sin identificador"
     detalle = f"campo de patente configurado: '{campo or '(sin configurar)'}'"
-    descartes.registrar(provider_name, env, "mapeo", MOTIVO_SIN_PATENTE, equipo=equipo,
+    descartes.registrar(provider_name, env, "mapeo", MOTIVO_SIN_PATENTE, categoria="sin_patente", equipo=equipo,
                         detalle=detalle, latitud=latitud, longitud=longitud)
 
     clave = ((provider_name or "").lower(), (env or "").lower(), equipo)

@@ -130,6 +130,15 @@ def coordenadas(payload: dict, mapping_schema: dict | None) -> tuple:
 MAX_EQUIPOS_EN_RESUMEN = 10
 
 
+def categoria_de(motivo: str) -> str:
+    """
+    Categoría del catálogo de descartes (v1.9.10). Una condición rota descarta
+    todo hasta que se corrija (a revisar); el resto es el filtro haciendo lo
+    que se le configuró (esperado).
+    """
+    return "admision_mal_configurada" if (motivo or "").startswith("condición de admisión #") else "admision_filtro"
+
+
 def registrar_descarte(provider: str, env: str, motivo: str, identidad: str | None = None,
                        coordenadas_evento: tuple | None = None) -> None:
     """
@@ -142,8 +151,8 @@ def registrar_descarte(provider: str, env: str, motivo: str, identidad: str | No
     # la consola los resume por minuto, la base no.
     from app.core import descartes
     latitud, longitud = coordenadas_evento or (None, None)
-    descartes.registrar(provider, env, "admision", motivo, equipo=identidad,
-                        latitud=latitud, longitud=longitud)
+    descartes.registrar(provider, env, "admision", motivo, categoria=categoria_de(motivo),
+                        equipo=identidad, latitud=latitud, longitud=longitud)
 
     clave = (provider.lower(), env.lower(), motivo)
     ahora = time.time()

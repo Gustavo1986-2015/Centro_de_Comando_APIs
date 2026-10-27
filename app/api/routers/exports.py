@@ -164,6 +164,89 @@ def _nombre_archivo(base: str, provider: str, env: str, desde: date, hasta: date
     return f"{base}_{provider}_{env}_{tramo}.{ext}"
 
 
+# ─── Formatos reutilizables (v1.9.10, descartes) ────────────────────────────
+
+def csv_para_excel(columnas: list[str], filas) -> "Iterator[str]":
+    """
+    El CSV de las exportaciones: BOM para que Excel lo abra en UTF-8 y ';' como
+    separador, igual que "Enviados". Generador, para StreamingResponse.
+    """
+    buffer = io.StringIO()
+    escritor = csv.writer(buffer, delimiter=";", lineterminator="\n")
+    yield "﻿"
+    escritor.writerow(columnas)
+    for fila in filas:
+        escritor.writerow(fila)
+        if buffer.tell() > 64_000:
+            yield buffer.getvalue()
+            buffer.seek(0)
+            buffer.truncate(0)
+    yield buffer.getvalue()
+
+
+def xlsx_desde_filas(columnas: list[str], filas, hoja: str = "Datos") -> bytes:
+    """
+    Un .xlsx mínimo (Office Open XML) con una hoja y texto en línea, sin
+    dependencias nuevas: la imagen del servidor no cambia. Los números van como
+    número; el resto, como texto.
+    """
+    import zipfile
+    from xml.sax.saxutils import escape
+
+    def columna(i: int) -> str:
+        letras = ""
+        i += 1
+        while i:
+            i, resto = divmod(i - 1, 26)
+            letras = chr(65 + resto) + letras
+        return letras
+
+    def celda(ref: str, valor) -> str:
+        if valor is None or valor == "":
+            return ""
+        if isinstance(valor, (int, float)) and not isinstance(valor, bool):
+            return f'<c r="{ref}"><v>{valor}</v></c>'
+        texto = escape(str(valor)).replace("\n", "&#10;")
+        # Caracteres de control que XML no admite.
+        texto = "".join(ch for ch in texto if ch >= " " or ch in "\t")
+        return f'<c r="{ref}" t="inlineStr"><is><t xml:space="preserve">{texto}</t></is></c>'
+
+    filas_xml = []
+    for n, fila in enumerate([columnas, *filas], start=1):
+        celdas = "".join(celda(f"{columna(i)}{n}", v) for i, v in enumerate(fila))
+        filas_xml.append(f'<row r="{n}">{celdas}</row>')
+    hoja_xml = ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+                '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+                f'<sheetData>{"".join(filas_xml)}</sheetData></worksheet>')
+    salida = io.BytesIO()
+    with zipfile.ZipFile(salida, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr("[Content_Types].xml",
+                   '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+                   '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+                   '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
+                   '<Default Extension="xml" ContentType="application/xml"/>'
+                   '<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>'
+                   '<Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>'
+                   '</Types>')
+        z.writestr("_rels/.rels",
+                   '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+                   '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+                   '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>'
+                   '</Relationships>')
+        z.writestr("xl/workbook.xml",
+                   '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+                   '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" '
+                   'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
+                   f'<sheets><sheet name="{escape(hoja[:31])}" sheetId="1" r:id="rId1"/></sheets></workbook>')
+        z.writestr("xl/_rels/workbook.xml.rels",
+                   '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+                   '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+                   '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>'
+                   '</Relationships>')
+        z.writestr("xl/worksheets/sheet1.xml", hoja_xml)
+    return salida.getvalue()
+
+
 # ─── Crudos del AVL ──────────────────────────────────────────────────────────
 
 @router.get("/api/export/crudos")

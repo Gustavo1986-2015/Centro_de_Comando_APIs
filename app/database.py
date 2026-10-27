@@ -268,6 +268,10 @@ def check_and_migrate_db():
             if "avg_push_latency_ms" not in columns_stats:
                 cursor.execute("ALTER TABLE daily_stats ADD COLUMN avg_push_latency_ms REAL")
                 conn.commit()
+            if "recovered_count" not in columns_stats:
+                # v1.9.10: recuperados con el reintento manual. 0 en las filas viejas.
+                cursor.execute("ALTER TABLE daily_stats ADD COLUMN recovered_count INTEGER DEFAULT 0")
+                conn.commit()
                 
         # 3. Migración para system_settings
         cursor.execute("PRAGMA table_info(system_settings)")
@@ -282,6 +286,12 @@ def check_and_migrate_db():
             if "processed_logs_enabled" not in columns_sys:
                 cursor.execute("ALTER TABLE system_settings ADD COLUMN processed_logs_enabled BOOLEAN DEFAULT 1")
                 conn.commit()
+            # v1.9.10: retención de descartes desde el panel. Sin valor (NULL)
+            # rige la de siempre: la base existente no cambia de comportamiento.
+            for columna in ("descartes_retencion_dias", "descartes_max_filas"):
+                if columna not in columns_sys:
+                    cursor.execute(f"ALTER TABLE system_settings ADD COLUMN {columna} INTEGER")
+                    conn.commit()
 
             cursor.execute("SELECT COUNT(*) FROM system_settings")
             if cursor.fetchone()[0] == 0:
@@ -315,6 +325,11 @@ def check_and_migrate_provider_db(provider: str, env: str):
                 conn.commit()
             if "next_retry_at" not in columns:
                 cursor.execute("ALTER TABLE normalized_rc_events ADD COLUMN next_retry_at DATETIME")
+                conn.commit()
+            if "velocidad_detalle" not in columns:
+                # v1.9.10: detalle de la velocidad estimada de Tive. NULL en las
+                # filas existentes y en todo proveedor que no la estime.
+                cursor.execute("ALTER TABLE normalized_rc_events ADD COLUMN velocidad_detalle TEXT")
                 conn.commit()
             if "ingest_id" not in columns:
                 # Sin backfill: las filas viejas quedan en NULL y SQLite admite

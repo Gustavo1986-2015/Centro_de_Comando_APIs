@@ -85,7 +85,7 @@ def test_no_mezcla_los_dias(base_limpia):
 
 def test_un_dia_sin_actividad_devuelve_cero_no_error(base_limpia):
     from app.api.routers.dashboard import _totales_del_dia_sync
-    assert _totales_del_dia_sync() == {"sent": 0, "failed": 0}
+    assert _totales_del_dia_sync() == {"sent": 0, "failed": 0, "recovered": 0}   # v1.9.10: + recuperados
 
 
 def test_coincide_con_lo_que_muestra_el_historial(base_limpia):
@@ -314,7 +314,7 @@ def test_el_criterio_de_fecha_esta_escrito_en_un_solo_lugar(tmp_path):
     """, TZ=_b20_tz_con_otra_fecha()))
     if not salida["fechas_distintas"]:
         pytest.skip("este sistema no aplica TZ por variable de entorno")
-    assert salida["tarjeta"] == {"sent": 3, "failed": 1}
+    assert salida["tarjeta"] == {"sent": 3, "failed": 1, "recovered": 0}   # v1.9.10: + recuperados
 
 
 # ─── v1.9.9 (B-20): ayuda para correr código del hub en un proceso aparte ──────

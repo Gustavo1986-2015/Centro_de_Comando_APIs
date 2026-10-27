@@ -322,7 +322,9 @@ def test_cableado_js_reintento_de_una_fila(escenario, tmp_path):
     filas = c.get("/api/stats", params={"status": "failed"}, auth=_auth()).json()["recent"]
     fila = next(f for f in filas if f["id"] == ids["NEGOCIO"])
     r = _node({
-        "globales": {"allRecentEvents": filas, "currentStatusFilter": "failed", "currentProviderFilter": "all"},
+        # v1.9.10: el botón general aparece solo con fallidos sin resolver (Bloque 2).
+        "globales": {"allRecentEvents": filas, "currentStatusFilter": "failed", "currentProviderFilter": "all",
+                     "_fallidosAhora": 3},
         "cargar": ["_escapeHtml", "_escAttr", "_mostrarModalReintento", "_mensajeReintento", "_cambioEnReintento"],
         "stubs": ["fetchFilteredEvents"],
         "respuestas": {"/api/reintentos/reintentar": {"status": 200, "cuerpo": {"reintentados": 1}}},

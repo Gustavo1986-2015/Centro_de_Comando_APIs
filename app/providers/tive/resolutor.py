@@ -270,7 +270,8 @@ def _vencer_tramos(env: str) -> int:
                    f"ingest_id={tramo['ingest_id']})")
         logger.warning(f"[TIVE-{env}] Descartado, NO se envía a RC: {motivo} {detalle} "
                        f"| envío={payload.get('ShipmentId') or '-'}")
-        descartes.registrar(PROVEEDOR, env, "tive", motivo,
+        descartes.registrar(PROVEEDOR, env, "tive", motivo, categoria="tive_retenido_vencido",
+                            ingest_id=tramo["ingest_id"],
                             equipo=f"serie {tramo['series'][0]}" if tramo["series"] else None,
                             envio=payload.get("ShipmentId"), detalle=detalle)
         estado.quitar_tramo(env, tramo["ingest_id"])

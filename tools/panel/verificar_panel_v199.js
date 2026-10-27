@@ -129,7 +129,7 @@ async function llamar(fn, args) {
     }
     resultados.push(await llamar(paso.fn, paso.args || []));
   }
-  fs.writeFileSync(salida, JSON.stringify({ resultados, fetch: pedidos, consola,
+  fs.writeFileSync(salida, JSON.stringify({ resultados, fetch: pedidos, consola, ubicacion: window.location.href,
     elementos: Object.fromEntries(Object.entries(elementos).map(([k, v]) => [k, { innerHTML: v.innerHTML, value: v.value, textContent: v.textContent, style: v.style,
       hijos: v.children.map(h => h.innerHTML) }])) }, null, 1));
 })().catch(e => { process.stderr.write(String(e.stack || e)); process.exit(1); });

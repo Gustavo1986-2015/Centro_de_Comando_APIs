@@ -84,7 +84,8 @@ class CellUpdateRequest(BaseModel):
 _TABLAS_CONFIG = {"provider_config", "provider_dictionary", "daily_stats", "system_settings"}
 _TABLAS_PROVEEDOR = {"normalized_rc_events"}
 # Base de estado de Tive: app/providers/tive/estado.py (_conexion).
-_TABLAS_ESTADO_TIVE = {"pares", "vistos", "tramos_pendientes", "consultas"}
+_TABLAS_ESTADO_TIVE = {"pares", "vistos", "tramos_pendientes", "consultas",
+                       "velocidad_historial"}   # v1.9.10: historial de la velocidad estimada
 _TABLAS_INTERNAS = {"sqlite_sequence"}
 # Registro de descartes: app/core/descartes.py (db/descartes.db).
 ARCHIVO_DESCARTES = "descartes.db"
