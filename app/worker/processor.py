@@ -863,6 +863,33 @@ def increment_daily_stats(provider: str, env: str, sent_added: int, failed_added
     finally:
         db_global.close()
 
+def sumar_recuperados(provider: str, env: str, cantidad: int) -> None:
+    """
+    v1.9.10: suma al día (fecha local, como el resto del acumulado) los
+    fallidos que se volvieron a la cola con el reintento manual del panel.
+    """
+    if cantidad <= 0:
+        return
+    from datetime import datetime
+    db_global = get_session("system_config", "global")
+    try:
+        hoy = datetime.now().date()
+        stat = db_global.query(DailyStat).filter(
+            DailyStat.date == hoy, DailyStat.provider == provider, DailyStat.env == env
+        ).first()
+        if not stat:
+            stat = DailyStat(date=hoy, provider=provider, env=env, sent_count=0, failed_count=0,
+                             recovered_count=0)
+            db_global.add(stat)
+        stat.recovered_count = (stat.recovered_count or 0) + cantidad
+        db_global.commit()
+    except Exception as e:
+        logger.error(f"Error sumando recuperados del día para {provider}_{env}: {e}")
+        db_global.rollback()
+    finally:
+        db_global.close()
+
+
 def evento_a_registro_respaldo(r: NormalizedRCEvent, env: str) -> dict:
     """
     Arma el registro que se escribe en db/backups_diarios/.../procesados_*.jsonl.
@@ -899,7 +926,7 @@ def evento_a_registro_respaldo(r: NormalizedRCEvent, env: str) -> dict:
     def _iso(valor):
         return valor.isoformat() if valor else None
 
-    return {
+    registro = {
         # --- Claves originales: NO tocar orden ni semántica ---
         "id": r.id,
         "provider": r.provider,
@@ -936,6 +963,16 @@ def evento_a_registro_respaldo(r: NormalizedRCEvent, env: str) -> dict:
         "rc_latency_sec": r.rc_latency_sec,
         "retry_count": r.retry_count,
     }
+    # v1.9.10: cómo se estimó la velocidad (Tive, con su interruptor). Solo si
+    # existe: el respaldo de los demás proveedores queda igual que en v1.9.9.
+    detalle = getattr(r, "velocidad_detalle", None)
+    if detalle:
+        import json
+        try:
+            registro["velocidad_detalle"] = json.loads(detalle)
+        except (TypeError, ValueError):
+            registro["velocidad_detalle"] = detalle
+    return registro
 
 
 async def purge_provider_events(provider: str, env: str, ignorar_retencion: bool = False):

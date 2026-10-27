@@ -50,6 +50,7 @@ global.currentStatusFilter = 'all';
 global.currentProviderFilter = 'all';
 global.currentLatencyFilter = 'all';
 global.currentSoloEventos = false;
+global._fallidosAhora = 0;   // v1.9.10: lo usa _botonReintentoFallidos
 global.allRecentEvents = [];
 
 for (const f of ['_escapeHtml', '_anchoUsuarioRc', '_escAttr', '_botonReintentoFallidos', '_selectorMotorCola', 'esPull', '_modoAuthWebhook', '_selectorAuthWebhook', '_opcionesDeModulo', '_credencialesDeModulo',

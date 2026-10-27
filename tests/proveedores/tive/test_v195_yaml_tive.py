@@ -102,7 +102,12 @@ def test_la_importacion_real_deja_tive_como_se_pidio(cliente, auth):
 def test_los_interruptores_coinciden_con_los_valores_por_defecto_del_modulo():
     from app.providers.tive import modulo
     (tive,) = yaml.safe_load(YAML)["proveedores"]
-    assert tive["opciones_modulo"] == modulo.INTERRUPTORES
+    opciones = tive["opciones_modulo"]
+    assert opciones == {k: v for k, v in modulo.INTERRUPTORES.items() if k in opciones}
+    # v1.9.10: el YAML del servidor es anterior a "velocidad_equipos". Sin la
+    # clave, el módulo usa su valor por defecto: apagado, como en v1.9.9.
+    assert set(modulo.INTERRUPTORES) - set(opciones) == {"velocidad_equipos"}
+    assert modulo.opciones_efectivas(opciones)["velocidad_equipos"] is False
 
 
 def test_es_el_mismo_archivo_que_se_entrega():

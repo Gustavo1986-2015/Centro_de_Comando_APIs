@@ -102,6 +102,12 @@ pytest.ini
 db_backup*/
 rc_token_cache*.json
 
+# v1.9.10: copias de respaldo de db/ y los archivos WAL de SQLite (una base
+# abierta deja X.db-wal y X.db-shm al lado; *.db no los cubría).
+db_respaldo*/
+*.db-wal
+*.db-shm
+
 
 # Excepción a *.jsonl: crudos reales de prueba, recortados de direcciones (v1.9.2).
 !tests/fixtures/*.jsonl

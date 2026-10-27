@@ -43,3 +43,7 @@ class RCCanonicalModel(BaseModel):
     vehicle_type: Optional[str] = Field(None, description="Tipo de trailer/vehículo")
     vehicle_brand: Optional[str] = Field(None, description="Marca del tráiler")
     vehicle_model: Optional[str] = Field(None, description="Modelo de telemática")
+    # v1.9.10: detalle de la velocidad estimada (solo Tive, con su interruptor).
+    # No viaja a RC (a RC va solo `speed`) y no sale en model_dump: se guarda
+    # en la cola para el panel, el visor y el JSON RC.
+    detalle_velocidad: Optional[dict] = Field(None, exclude=True, description="Detalle de la velocidad estimada")

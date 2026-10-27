@@ -245,6 +245,9 @@ def _reintentar_sync(pedido: PedidoReintento, usuario: str) -> dict:
                                       synchronize_session=False))
             db.commit()
             resultado[f"{p}/{e}"] = cambiados
+            # v1.9.10: la tarjeta "Fallidos" los cuenta como recuperados de hoy.
+            from app.worker.processor import sumar_recuperados
+            sumar_recuperados(p, e, cambiados)
     finally:
         for db in sesiones.values():
             db.close()

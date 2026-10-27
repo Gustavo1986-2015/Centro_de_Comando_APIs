@@ -12,7 +12,7 @@ from app.core import latencia, provider_health
 from app.core.rate_limit import check_rate_limit
 from app.models.db_models import NormalizedRCEvent
 from app.core.auditor import log_raw_payload
-from app.core import admision, safety_net, webhook_auth
+from app.core import admision, descartes, safety_net, webhook_auth
 from app.core.crypto import decrypt
 from app.core.auth_alerts import registrar_rechazo
 from app.providers import registry
@@ -118,6 +118,12 @@ def _validate_dynamic_auth(
     finally:
         db_global.close()
 
+def _detalle_velocidad(evento) -> str | None:
+    """v1.9.10: el detalle de la velocidad estimada (solo Tive), en JSON, o None."""
+    detalle = getattr(evento, "detalle_velocidad", None)
+    return json.dumps(detalle, ensure_ascii=False) if detalle else None
+
+
 def _save_dynamic_events(provider_name, env, canonical_events, payload, ingest_id=None):
     """
     Guarda eventos de manera síncrona, diseñado para ser ejecutado en ThreadPool.
@@ -157,6 +163,7 @@ def _save_dynamic_events(provider_name, env, canonical_events, payload, ingest_i
                 vehicle_type=canonical_event.vehicle_type,
                 vehicle_brand=canonical_event.vehicle_brand,
                 vehicle_model=canonical_event.vehicle_model,
+                velocidad_detalle=_detalle_velocidad(canonical_event),
                 retry_count=0,
                 next_retry_at=None
             ))
@@ -259,7 +266,11 @@ async def _recibir(provider_name: str, request: Request, env: str, auth_config: 
         )
 
     # 2.5 Auditoría cruda (fire-and-forget asíncrona)
-    asyncio.create_task(asyncio.to_thread(log_raw_payload, provider_name, env, payload))
+    # v1.9.10: el ingest_id se asigna ANTES del crudo, que lo lleva: así un
+    # descarte de esta recepción (admisión, mapeo, contrato, Tive) queda
+    # vinculado a su crudo y el panel puede mostrarlo.
+    ingest_id = safety_net.nuevo_ingest_id()
+    asyncio.create_task(asyncio.to_thread(log_raw_payload, provider_name, env, payload, ingest_id))
 
     # 2.6 Módulo dedicado. Si el proveedor tiene lógica propia (Tive), el
     # payload va a su módulo y el endpoint no sabe nada de ese proveedor: solo
@@ -267,7 +278,6 @@ async def _recibir(provider_name: str, request: Request, env: str, auth_config: 
     # despertar al worker— es común.
     modulo = registry.modulo_dedicado(provider_name) if auth_config.get("dedicado") else None
     if modulo is not None:
-        ingest_id = safety_net.nuevo_ingest_id()
         try:
             canonical_events = await run_in_threadpool(
                 modulo.procesar, payload, env, auth_config.get("opciones_modulo") or {}, ingest_id
@@ -299,7 +309,8 @@ async def _recibir(provider_name: str, request: Request, env: str, auth_config: 
         # queremos, y sumaría ruido a sus métricas de entrega.
         motivo_descarte = admision.evaluar(payload, mapping_schema)
         if motivo_descarte:
-            admision.registrar_descarte(
+            descartes.con_ingest(
+                ingest_id, admision.registrar_descarte,
                 provider_name, env, motivo_descarte,
                 admision.identidad(payload, mapping_schema),
                 admision.coordenadas(payload, mapping_schema),
@@ -314,7 +325,7 @@ async def _recibir(provider_name: str, request: Request, env: str, auth_config: 
         # 3. Transformación Dinámica al Modelo Canónico (RC)
         try:
             canonical_events = await run_in_threadpool(
-                DynamicMapper.map_payload_multi,
+                descartes.con_ingest, ingest_id, DynamicMapper.map_payload_multi,
                 payload, mapping_schema, provider_name, env, require_dict_match,
                 require_dict_match   # sin diccionario configurado no se consulta la tabla
             )
@@ -360,8 +371,6 @@ async def _recibir(provider_name: str, request: Request, env: str, auth_config: 
 
         if not canonical_events:
             return {"status": "ok", "message": "Todos los eventos fueron suprimidos por deduplicación de estado.", "events_count": 0}
-
-        ingest_id = safety_net.nuevo_ingest_id()
 
     if crono is not None:
         crono.marca("procesamiento")
@@ -445,7 +454,8 @@ async def persistir_desde_red_de_seguridad(provider: str, env: str,
         if modulo is not None:
             eventos = modulo.procesar(payload, env, opciones_modulo, iid)
         else:
-            eventos = DynamicMapper.map_payload_multi(
+            eventos = descartes.con_ingest(
+                iid, DynamicMapper.map_payload_multi,
                 payload, mapping_schema, provider, env, dict_enabled, dict_enabled
             )
         for indice, ev in enumerate(eventos):
@@ -461,6 +471,7 @@ async def persistir_desde_red_de_seguridad(provider: str, env: str,
                 "serial_number": ev.serial_number, "shipment": ev.shipment,
                 "vehicle_type": ev.vehicle_type, "vehicle_brand": ev.vehicle_brand,
                 "vehicle_model": ev.vehicle_model, "retry_count": 0,
+                "velocidad_detalle": _detalle_velocidad(ev),
             })
 
     if not filas:

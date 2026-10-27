@@ -135,6 +135,15 @@ def avisar_si_coordenadas_cero(evento, proveedor: str | None, env: str | None) -
     return True
 
 
+def categoria_del_faltante(falta: list[str]) -> str:
+    """Categoría del catálogo de descartes (v1.9.10): la patente manda, después la fecha."""
+    if "patente" in falta:
+        return "sin_patente"
+    if "fecha" in falta:
+        return "sin_fecha"
+    return "sin_coordenadas"
+
+
 def filtrar_validos(eventos, proveedor: str | None, env: str | None) -> list:
     """
     Devuelve solo los eventos que cumplen el contrato. Cada descarte queda en
@@ -165,6 +174,7 @@ def filtrar_validos(eventos, proveedor: str | None, env: str | None) -> list:
         # Además de la consola, al registro persistente que muestra el panel.
         descartes.registrar(
             proveedor, env, "contrato", f"falta {', '.join(falta)}",
+            categoria=categoria_del_faltante(falta),
             equipo=patente or (f"serie {serie}" if serie else None),
             envio=getattr(ev, "shipment", None),
             detalle=f"código={getattr(ev, 'code', None)}",

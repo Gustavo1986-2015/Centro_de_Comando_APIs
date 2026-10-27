@@ -116,7 +116,7 @@ def test_la_version_es_la_del_hub_y_se_ve_en_el_pie_del_panel(config_aislada):
     # versión lo dejaba en rojo. El número exacto lo fija este test.
     from app.api.routers import dashboard
     from app.version import __version__
-    assert __version__ == "1.9.9"
+    assert __version__ == "1.9.10"
     r = _app(dashboard.router).get("/dashboard", auth=_auth())
     assert r.status_code == 200
     assert f'id="version-hub" title="Versión del hub en ejecución">v{__version__}</span>' in r.text
@@ -183,7 +183,8 @@ def test_descartes_migracion_idempotente_de_una_base_vieja(descartes_propios):
     columnas = [c[1] for c in con.execute("PRAGMA table_info(descartes)")]
     filas = con.execute("SELECT motivo, equipo, latitud, longitud FROM descartes").fetchall()
     con.close()
-    assert columnas[-2:] == ["latitud", "longitud"] and columnas.count("latitud") == 1
+    # v1.9.10 suma categoria e ingest_id después de latitud y longitud.
+    assert columnas[-4:] == ["latitud", "longitud", "categoria", "ingest_id"] and columnas.count("latitud") == 1
     assert filas == [("viejo", "K1", None, None)]
 
 

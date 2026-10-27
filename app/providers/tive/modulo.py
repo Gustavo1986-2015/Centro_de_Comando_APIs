@@ -51,7 +51,7 @@ from datetime import datetime, timezone
 import dateutil.parser
 
 from app.core.contrato import filtrar_validos
-from app.providers.tive import estado
+from app.providers.tive import estado, velocidad
 from app.schemas.canonical import RCCanonicalModel
 
 logger = logging.getLogger(__name__)
@@ -73,6 +73,10 @@ INTERRUPTORES = {
     # v1.9.5. Apagado: las posiciones de trackers y beacons llegan a SIMON por
     # el webhook directo de RC. Se enciende el día que se dé de baja.
     "posiciones_equipos": False,
+    # v1.9.10. Apagado: comportamiento exacto de v1.9.9 (sin velocidad, a RC
+    # le llega "0"). Encendido: velocidad estimada de trackers y beacons,
+    # para SIMON, el día que se apague el webhook directo de Tive a RC.
+    "velocidad_equipos": False,
 }
 
 DESCRIPCION_INTERRUPTORES = {
@@ -81,6 +85,7 @@ DESCRIPCION_INTERRUPTORES = {
     "alertas_trackers": "Alertas de trackers (duplica RC si no se pidió la baja)",
     "resolver_nombres_api": "Resolver nombres con la API de Tive",
     "posiciones_equipos": "Posiciones de equipos (duplica RC si no se pidió la baja)",
+    "velocidad_equipos": "Velocidad estimada de equipos",
 }
 
 # El panel muestra el formulario de credenciales de la API solo para módulos
@@ -183,10 +188,12 @@ def _identidad(payload) -> str:
     return " ".join(partes)
 
 
-def _descartar(env: str, motivo: str, payload, nivel=logging.INFO, detalle: str | None = None) -> None:
+def _descartar(env: str, categoria: str, motivo: str, payload, nivel=logging.INFO,
+               detalle: str | None = None) -> None:
     """
     Consola y registro persistente del panel. El motivo es corto y estable
-    (se cuenta agrupando por él); lo variable va en `detalle`.
+    (se cuenta agrupando por él); lo variable va en `detalle`. La categoría es
+    del catálogo de app/core/descartes.py (v1.9.10).
     """
     from app.core import descartes
     # Dónde estaba el equipo (v1.9.8): la posición del evento, o la de la alerta.
@@ -200,7 +207,7 @@ def _descartar(env: str, motivo: str, payload, nivel=logging.INFO, detalle: str 
                       f"{f' {detalle}' if detalle else ''} | {_identidad(payload)}"
                       f"{descartes.texto_coordenadas(latitud, longitud)}")
     descartes.registrar(
-        PROVEEDOR, env, "tive", motivo,
+        PROVEEDOR, env, "tive", motivo, categoria=categoria,
         equipo=_texto(payload.get("DeviceName")) or _texto(_g(payload, "Alert", "DeviceName"))
         or _id_equipo(payload) or _texto(_g(payload, "Shipment", "DeviceId")),
         envio=_texto(payload.get("ShipmentId")) or _texto(_g(payload, "Shipment", "Id")),
@@ -373,6 +380,8 @@ def resolver_patentes(env: str, payload) -> list[tuple[str, str | None]]:
 
 def _evento(env: str, payload, patente: str, serie: str | None, codigo: str,
             fecha: datetime | None = None) -> RCCanonicalModel:
+    # La velocidad estimada (v1.9.10), si el interruptor está encendido, se
+    # aplica después en procesar(): acá queda como en v1.9.9.
     return RCCanonicalModel(
         chassis_number=patente,
         latitude=_numero(_g(payload, "Location", "Latitude")),
@@ -415,12 +424,95 @@ def _vigilar_metodo(env: str, payload) -> None:
     )
 
 
+# ── Velocidad estimada de equipos (v1.9.10) ──────────────────────────────────
+#
+# El cálculo está en velocidad.py (funciones puras, sin nada de Tive). Acá va
+# lo propio de Tive: qué es un equipo, ShipmentStopped, el tramo marítimo y la
+# lectura del payload. Solo con el interruptor "velocidad_equipos" encendido.
+
+TIPO_DETENIDO = "ShipmentStopped"
+METODO_MARITIMO = "container"
+
+
+def _velocidad_medida(payload) -> float | None:
+    """
+    Punto preparado: si Tive algún día manda una velocidad MEDIDA, se lee acá
+    y tiene prioridad sobre la estimada (velocidad.estimar la respeta).
+
+    Hoy Tive no manda ningún campo de velocidad: medido en los crudos de
+    audit/tive_prod/. No se inventa el nombre del campo.
+    """
+    return None
+
+
+def _lectura(payload) -> "velocidad.Lectura | None":
+    """La lectura del evento (posición o alerta), o None si no sirve para el cálculo."""
+    lat = _numero(_g(payload, "Location", "Latitude"))
+    lon = _numero(_g(payload, "Location", "Longitude"))
+    momento = _fecha(payload)
+    if lat is None or lon is None or momento is None or (lat == 0 and lon == 0):
+        return None
+    return velocidad.Lectura(momento, lat, lon, _texto(_g(payload, "Location", "LocationMethod")),
+                             _numero(_g(payload, "Location", "Accuracy", "Meters")))
+
+
+def _equipo_de(env: str, payload) -> str | None:
+    """El equipo cuyo historial corresponde: su nombre, o el aprendido por su DeviceId."""
+    nombre = _texto(payload.get("DeviceName")) or _texto(_g(payload, "Alert", "DeviceName"))
+    if nombre:
+        return nombre
+    propio = _id_equipo(payload)
+    return estado.nombre_de(env, propio) if propio else None
+
+
+def _calcular_velocidad(env: str, payload) -> "velocidad.Resultado | None":
+    """
+    La velocidad del evento, o None si no corresponde (no es un equipo ni un
+    tramo marítimo, o no tiene coordenadas). Alimenta el historial del equipo
+    con TODA posición o alerta con coordenadas, aunque el evento no se envíe.
+    """
+    metodo = _texto(_g(payload, "Location", "LocationMethod"))
+    lectura = _lectura(payload)
+    if metodo and metodo.lower() == METODO_MARITIMO:
+        # Posición marítima del contenedor: siempre 0, y no entra al historial
+        # del tracker (velocidad.maritimo la marca para no guardarse).
+        resultado = velocidad.maritimo(lectura)
+        patentes = resolver_patentes(env, payload)
+        equipo = patentes[0][0] if patentes else None
+    else:
+        if not _es_alerta(payload) and not _texto(payload.get("DeviceName")):
+            return None      # tramo de tercero que no es marítimo: sin velocidad, como en v1.9.9
+        equipo = _equipo_de(env, payload) if lectura else None
+        if lectura is None or not equipo:
+            return None
+        historial = estado.historial_velocidad(env, equipo)
+        if (_es_alerta(payload) and _tipo_alerta(payload) == TIPO_DETENIDO
+                and estado_alerta(payload, env) in ("apertura", "actualizacion")):
+            # Tive afirma que está detenido. El cierre (-FIN) NO confirma
+            # movimiento (lo confirmó Tive): se calcula como una posición.
+            resultado = velocidad.detenido_informado(lectura)
+            resultado.guardar = not any(l.momento == lectura.momento and l.misma_posicion(lectura)
+                                        for l in historial)
+        else:
+            resultado = velocidad.estimar(lectura, historial, _velocidad_medida(payload))
+    if resultado.guardar and lectura is not None and equipo:
+        estado.guardar_lectura(env, equipo, lectura, resultado.valor, resultado.detalle())
+    anterior = resultado.anterior
+    logger.debug(
+        f"[TIVE-{env}] Velocidad {equipo}: {resultado.valor} ({velocidad.MOTIVOS.get(resultado.motivo)})"
+        f" {anterior.metodo if anterior else '-'}->{(lectura.metodo if lectura else None) or '-'}"
+        f"{f' {resultado.distancia_m:.1f} m en {resultado.segundos:.0f} s' if resultado.distancia_m is not None and resultado.segundos is not None else ''}"
+        f"{' (lectura repetida)' if resultado.repetida else ''} | {_identidad(payload)}"
+    )
+    return resultado
+
+
 # ── Clasificación ────────────────────────────────────────────────────────────
 
 def _candidatos_alerta(env: str, payload, opciones: dict) -> list[tuple]:
     tipo = _tipo_alerta(payload)
     if not tipo:
-        _descartar(env, "alerta sin AlertType", payload, logging.WARNING)
+        _descartar(env, "tive_alerta_sin_tipo", "alerta sin AlertType", payload, logging.WARNING)
         return []
 
     # Llegada y salida son puntuales por definición (documentación de Tive):
@@ -429,7 +521,7 @@ def _candidatos_alerta(env: str, payload, opciones: dict) -> list[tuple]:
     forma = "puntual" if tipo == TIPO_LLEGADA_SALIDA else estado_alerta(payload, env)
     if forma is None:
         reasons = [d.get("Reasons") for d in (_g(payload, "Alert", "Details") or []) if isinstance(d, dict)]
-        _descartar(env, "forma de alerta no reconocida: no se puede saber si es apertura, "
+        _descartar(env, "tive_alerta_forma_desconocida", "forma de alerta no reconocida: no se puede saber si es apertura, "
                         "cierre o puntual", payload, logging.WARNING, detalle=f"(Reasons={reasons})")
         return []
 
@@ -444,12 +536,12 @@ def _candidatos_alerta(env: str, payload, opciones: dict) -> list[tuple]:
 
     device_id = _id_equipo(payload)
     if not device_id:
-        _descartar(env, "alerta sin DeviceId: no se puede saber si es de tracker o de beacon",
+        _descartar(env, "tive_alerta_sin_device_id", "alerta sin DeviceId: no se puede saber si es de tracker o de beacon",
                    payload, logging.WARNING)
         return []
     clase = "tracker" if device_id.isdigit() else "beacon"
     if not opciones[f"alertas_{clase}s"]:
-        _descartar(env, f"alerta de {clase}, interruptor apagado", payload)
+        _descartar(env, "tive_alerta_interruptor_apagado", f"alerta de {clase}, interruptor apagado", payload)
         return []
     if clase == "beacon":
         logger.info(
@@ -459,7 +551,7 @@ def _candidatos_alerta(env: str, payload, opciones: dict) -> list[tuple]:
 
     patentes = resolver_patentes(env, payload)
     if not patentes:
-        _descartar(env, "alerta sin patente resoluble", payload, logging.WARNING)
+        _descartar(env, "tive_sin_nombre_equipo", "alerta sin patente resoluble", payload, logging.WARNING)
         return []
 
     if tipo == TIPO_LLEGADA_SALIDA:
@@ -483,10 +575,10 @@ def _candidatos_alerta(env: str, payload, opciones: dict) -> list[tuple]:
         if trigger and lectura:
             claves.append(f"alerta|{device_id}|{trigger}|{lectura}|{clave_estado}|{patente}")
         if forma == "actualizacion":
-            motivo_dup = "actualización de una alerta abierta que ya se envió"
+            motivo_dup = ("tive_duplicado_alerta", "actualización de una alerta abierta que ya se envió")
             nota = "actualización de una alerta cuya apertura nunca se registró: se envía como apertura"
         else:
-            motivo_dup = f"duplicado de {codigo} ({forma}) ya recibido"
+            motivo_dup = ("tive_duplicado_alerta", f"duplicado de {codigo} ({forma}) ya recibido")
             nota = None
         candidatos.append((_evento(env, payload, patente, serie, codigo, fecha), claves, motivo_dup, nota))
     return candidatos
@@ -548,10 +640,11 @@ def _candidatos_posicion_de_equipo(env: str, payload, opciones: dict) -> list[tu
     """
     nombre = _texto(payload.get("DeviceName"))
     if not opciones["posiciones_equipos"]:
-        _descartar(env, "posición de tracker, va por RC directo", payload)
+        _descartar(env, "tive_posicion_tracker_rc_directo", "posición de tracker, va por RC directo", payload)
         return []
     return [(_evento(env, payload, nombre, _id_equipo(payload), CODIGO_POSICION),
-             _clave_posicion(payload, nombre), "posición duplicada (mismo envío, equipo y lectura)", None)]
+             _clave_posicion(payload, nombre),
+             ("tive_duplicado_posicion", "posición duplicada (mismo envío, equipo y lectura)"), None)]
 
 
 def _candidatos_posicion(env: str, payload, opciones: dict, ingest_id: str | None = None) -> list[tuple]:
@@ -561,13 +654,13 @@ def _candidatos_posicion(env: str, payload, opciones: dict, ingest_id: str | Non
     lat = _numero(_g(payload, "Location", "Latitude"))
     lon = _numero(_g(payload, "Location", "Longitude"))
     if lat is None or lon is None:
-        _descartar(env, "evento sin nombre de equipo y sin coordenadas en Location: no es un "
+        _descartar(env, "sin_coordenadas", "evento sin nombre de equipo y sin coordenadas en Location: no es un "
                         "tramo de tercero utilizable", payload, logging.WARNING)
         return []
 
     # Tramo de tercero: DeviceName nulo + coordenadas en Location.
     if not opciones["posiciones_terceros"]:
-        _descartar(env, "posición de tramo de tercero, interruptor apagado", payload)
+        _descartar(env, "tive_tercero_interruptor_apagado", "posición de tramo de tercero, interruptor apagado", payload)
         return []
 
     patentes = resolver_patentes(env, payload)
@@ -576,7 +669,7 @@ def _candidatos_posicion(env: str, payload, opciones: dict, ingest_id: str | Non
     if not patentes:
         envio = payload.get("Shipment") if isinstance(payload.get("Shipment"), dict) else {}
         _descartar(
-            env,
+            env, "tive_sin_nombre_equipo",
             "tramo de tercero sin patente resoluble: ningún equipo del envío tiene par aprendido",
             payload, logging.WARNING,
             detalle=(f"(envío={_texto(payload.get('ShipmentId')) or '-'}, "
@@ -591,7 +684,8 @@ def _candidatos_posicion(env: str, payload, opciones: dict, ingest_id: str | Non
     for patente, serie in patentes:
         candidatos.append((
             _evento(env, payload, patente, serie, CODIGO_POSICION),
-            _clave_posicion(payload, patente), "posición duplicada (mismo envío, equipo y lectura)", None,
+            _clave_posicion(payload, patente),
+            ("tive_duplicado_posicion", "posición duplicada (mismo envío, equipo y lectura)"), None,
         ))
     return candidatos
 
@@ -599,6 +693,16 @@ def _candidatos_posicion(env: str, payload, opciones: dict, ingest_id: str | Non
 # ── Punto de entrada ─────────────────────────────────────────────────────────
 
 def procesar(payload, env: str, module_options, ingest_id: str) -> list[RCCanonicalModel]:
+    """
+    Los eventos a encolar para un payload de Tive (ver _procesar). Fija el
+    ingest_id de la recepción para que cada descarte quede vinculado a su
+    crudo (v1.9.10).
+    """
+    from app.core import descartes
+    return descartes.con_ingest(ingest_id, _procesar, payload, env, module_options, ingest_id)
+
+
+def _procesar(payload, env: str, module_options, ingest_id: str) -> list[RCCanonicalModel]:
     """
     Los eventos a encolar para un payload de Tive. Lista vacía si no hay nada
     que enviar; cada descarte queda en consola con motivo e identidad.
@@ -611,7 +715,7 @@ def procesar(payload, env: str, module_options, ingest_id: str) -> list[RCCanoni
         return []
 
     if _texto(payload.get("AccountId")) == "-1":
-        _descartar(env, "muestra del botón de prueba de Tive (AccountId -1)", payload)
+        _descartar(env, "tive_boton_prueba", "muestra del botón de prueba de Tive (AccountId -1)", payload)
         return []
 
     # Antes de cualquier filtro: hasta una posición de tracker que no se envía
@@ -620,6 +724,8 @@ def procesar(payload, env: str, module_options, ingest_id: str) -> list[RCCanoni
     _vigilar_metodo(env, payload)
 
     opciones = opciones_efectivas(module_options)
+    # Antes de los filtros: el historial se alimenta aunque el evento no se envíe.
+    resultado_velocidad = _calcular_velocidad(env, payload) if opciones["velocidad_equipos"] else None
     if _es_alerta(payload):
         candidatos = _candidatos_alerta(env, payload, opciones)
     else:
@@ -636,9 +742,12 @@ def procesar(payload, env: str, module_options, ingest_id: str) -> list[RCCanoni
         if not any(evento is v for v in validos):
             continue
         if estado.registrar_o_duplicado(env, claves, ingest_id):
-            _descartar(env, motivo_dup, payload)
+            _descartar(env, motivo_dup[0], motivo_dup[1], payload)
             continue
         if nota:
             logger.info(f"[TIVE-{env}] {nota} | {_identidad(payload)}")
+        if resultado_velocidad is not None:
+            evento.speed = float(resultado_velocidad.valor)
+            evento.detalle_velocidad = resultado_velocidad.detalle()
         salida.append(evento)
     return salida

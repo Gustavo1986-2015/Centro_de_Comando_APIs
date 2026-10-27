@@ -9,6 +9,10 @@ eventos. Tiene que sobrevivir a un reinicio por dos razones medidas:
     equipo, que pueden haber llegado días antes (Tive informó que durante el
     tránsito marítimo los sensores quedan en memoria y se descargan al llegar
     a puerto).
+  - HISTORIAL DE VELOCIDAD (v1.9.10): las últimas posiciones de cada equipo,
+    para estimar su velocidad contra la lectura anterior en el tiempo. Tiene
+    que sobrevivir a un reinicio: sin él, la primera posición de cada equipo
+    después de reiniciar saldría "sin posición previa".
   - VISTOS: Tive entrega "al menos una vez". La actualización de una alerta
     abierta de J392825 se reenvió 9 veces a lo largo de 5 horas el 01/10. Una
     deduplicación en memoria la volvería a enviar después de cada reinicio.
@@ -91,6 +95,15 @@ def _conexion(env: str) -> sqlite3.Connection:
             " serie TEXT PRIMARY KEY, account_id TEXT, estado TEXT NOT NULL,"
             " intentos INTEGER NOT NULL DEFAULT 0, proximo REAL NOT NULL,"
             " ultimo_error TEXT, actualizado REAL NOT NULL)"
+        )
+        # v1.9.10: últimas posiciones por equipo, para la velocidad estimada.
+        # lat/lon ya redondeadas; momento en ISO UTC de ancho fijo, así el
+        # orden de texto es el orden en el tiempo.
+        con.execute(
+            "CREATE TABLE IF NOT EXISTS velocidad_historial ("
+            " equipo TEXT NOT NULL, momento TEXT NOT NULL, lat REAL NOT NULL, lon REAL NOT NULL,"
+            " metodo TEXT, precision_m REAL, valor INTEGER NOT NULL, detalle TEXT NOT NULL,"
+            " guardado REAL NOT NULL, PRIMARY KEY (equipo, momento, lat, lon))"
         )
         _quitar_tabla_de_cola_vacia(con, ruta)
         con.commit()
@@ -279,6 +292,51 @@ def nombre_de(env: str, device_id) -> str | None:
             "SELECT device_name FROM pares WHERE device_id = ?", (str(device_id).strip(),)
         ).fetchone()
     return fila[0] if fila else None
+
+
+# ── Historial de velocidad (v1.9.10) ────────────────────────────────────────
+
+# Posiciones que se guardan por equipo. Alcanza con pocas: se compara contra la
+# anterior en el tiempo, y Tive entrega desordenado con demoras de horas.
+HISTORIAL_POR_EQUIPO = 20
+
+
+def _momento_texto(momento: datetime) -> str:
+    return momento.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f+00:00")
+
+
+def historial_velocidad(env: str, equipo: str) -> list:
+    """Las lecturas guardadas del equipo, como `velocidad.Lectura`."""
+    from app.providers.tive.velocidad import Lectura
+    with _lock:
+        filas = _conexion(env).execute(
+            "SELECT momento, lat, lon, metodo, precision_m, valor, detalle FROM velocidad_historial"
+            " WHERE equipo = ? ORDER BY momento", (equipo,)
+        ).fetchall()
+    return [Lectura(datetime.fromisoformat(f[0]), f[1], f[2], f[3], f[4], f[5], json.loads(f[6]))
+            for f in filas]
+
+
+def guardar_lectura(env: str, equipo: str, lectura, valor: int, detalle: dict) -> None:
+    """
+    Agrega la lectura (si no estaba) y deja solo las HISTORIAL_POR_EQUIPO más
+    recientes en el tiempo.
+    """
+    with _lock:
+        con = _conexion(env)
+        con.execute(
+            "INSERT OR IGNORE INTO velocidad_historial"
+            " (equipo, momento, lat, lon, metodo, precision_m, valor, detalle, guardado)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (equipo, _momento_texto(lectura.momento), lectura.lat, lectura.lon, lectura.metodo,
+             lectura.precision_m, valor, json.dumps(detalle, ensure_ascii=False), time.time()),
+        )
+        con.execute(
+            "DELETE FROM velocidad_historial WHERE equipo = ? AND momento NOT IN ("
+            " SELECT momento FROM velocidad_historial WHERE equipo = ? ORDER BY momento DESC LIMIT ?)",
+            (equipo, equipo, HISTORIAL_POR_EQUIPO),
+        )
+        con.commit()
 
 
 # ── Duplicados ───────────────────────────────────────────────────────────────
