@@ -54,6 +54,7 @@ global.currentStatusFilter = 'all';
 global.currentProviderFilter = 'all';
 global.currentLatencyFilter = 'all';
 global.currentSoloEventos = false;
+global._fallidosAhora = 0;   // v1.9.10: lo usa _botonReintentoFallidos
 global.allRecentEvents = [];
 global._currentRules = [];
 

@@ -330,9 +330,10 @@ def test_cableado_visor_js_real(visor, tmp_path):
     respaldo = c.get("/api/db-viewer/respaldo", params={"integracion": "protrack_prod", "desde": "2026-10-07",
                                                         "hasta": "2026-10-08", "limit": 50, "offset": 0},
                      auth=_auth()).json()
-    descartes.registrar("tive", "prod", "tive", "con coordenadas", equipo="K1", latitud=-34.809466,
-                        longitud=-58.540894)
-    descartes.registrar("tive", "prod", "tive", "sin coordenadas", equipo="K2")
+    # v1.9.10: la categoría del catálogo es obligatoria.
+    descartes.registrar("tive", "prod", "tive", "con coordenadas", categoria="otro", equipo="K1",
+                        latitud=-34.809466, longitud=-58.540894)
+    descartes.registrar("tive", "prod", "tive", "sin coordenadas", categoria="otro", equipo="K2")
     descartes.esperar_escritura(3.0)
     from app.api.routers import dashboard
     lista_descartes = _app(dashboard.router).get("/api/diagnostico/descartes?limite=10", auth=_auth()).json()

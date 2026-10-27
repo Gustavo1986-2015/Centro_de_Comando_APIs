@@ -192,6 +192,21 @@ def _formato_rc(ev) -> dict:
         return {"_error": f"No se pudo armar el evento RC: {e}"}
 
 
+def _detalle_velocidad(ev) -> dict | None:
+    """
+    v1.9.10: el detalle de la velocidad estimada de Tive (valor, motivo,
+    distancia, segundos, método y precisión de las dos lecturas), o None.
+    No viaja a RC: es para saber qué tan fiable es el valor.
+    """
+    texto = getattr(ev, "velocidad_detalle", None)
+    if not texto:
+        return None
+    try:
+        return json.loads(texto)
+    except (TypeError, ValueError):
+        return None
+
+
 @router.get("/dashboard", response_class=HTMLResponse)
 async def get_dashboard(request: Request, _: None = Depends(verify_dashboard_auth)):
     """Renderiza el Centro de Comando en Vivo."""
@@ -253,8 +268,9 @@ def _totales_del_dia_sync() -> dict:
         fila = db.query(
             func.coalesce(func.sum(DailyStat.sent_count), 0),
             func.coalesce(func.sum(DailyStat.failed_count), 0),
+            func.coalesce(func.sum(DailyStat.recovered_count), 0),
         ).filter(DailyStat.date == hoy).first()
-        return {"sent": int(fila[0] or 0), "failed": int(fila[1] or 0)}
+        return {"sent": int(fila[0] or 0), "failed": int(fila[1] or 0), "recovered": int(fila[2] or 0)}
     except Exception as e:
         # Que falle el acumulado no puede tumbar el dashboard entero: se
         # devuelve None para que el llamador caiga al conteo sobre la tabla,
@@ -310,7 +326,9 @@ def _fetch_events_for_provider_sync(provider_name, provider_env, status_filter, 
             ), else_=0)).label("failed"),
             func.sum(case((
                 NormalizedRCEvent.created_at >= thirty_secs_ago, 1
-            ), else_=0)).label("throughput")
+            ), else_=0)).label("throughput"),
+            # v1.9.10: fallidos sin resolver AHORA, de cualquier día.
+            func.sum(case((NormalizedRCEvent.status == "failed", 1), else_=0)).label("failed_now"),
         ).first()
 
         query = db.query(NormalizedRCEvent)
@@ -371,6 +389,8 @@ async def get_stats_data(
     total_pending = 0
     total_sent = 0
     total_failed = 0
+    total_failed_now = 0
+    total_recovered = 0
     total_retries = 0
     recent_events_global = []
     
@@ -408,6 +428,7 @@ async def get_stats_data(
         total_retries += int(stats.retries or 0)
         total_sent += int(stats.sent or 0)
         total_failed += int(stats.failed or 0)
+        total_failed_now += int(stats.failed_now or 0)
         throughput_count = int(stats.throughput or 0)
         throughput_per_provider[f"{provider_name}_{provider_env}"] = throughput_count
         recent_events_global.extend(recent)
@@ -420,6 +441,7 @@ async def get_stats_data(
     if acumulado is not None:
         total_sent = acumulado["sent"]
         total_failed = acumulado["failed"]
+        total_recovered = acumulado.get("recovered", 0)
 
     # Ordenar los recientes de todas las BDs y quedarnos con los 200 últimos absolutos
     recent_events_global.sort(key=lambda x: x.updated_at or x.created_at, reverse=True)
@@ -493,6 +515,8 @@ async def get_stats_data(
             # None = el proveedor no mide velocidad: el panel muestra N/A. A RC
             # le llega "0", que es lo que pide el contrato.
             "speed": getattr(ev, 'speed', None),
+            # v1.9.10: cómo se estimó la velocidad (Tive, con su interruptor).
+            "velocidad_detalle": _detalle_velocidad(ev),
             # "is not None": una latitud 0 es un dato real, no "Sin GPS".
             "coords": (f"{ev.latitude}, {ev.longitude}"
                        if getattr(ev, 'latitude', None) is not None and getattr(ev, 'longitude', None) is not None
@@ -544,6 +568,12 @@ async def get_stats_data(
         "pending": total_pending,
         "sent": total_sent,
         "failed": total_failed,
+        # v1.9.10: la tarjeta "Fallidos". El número grande es lo que está en
+        # 'failed' ahora (baja al recuperarlos); debajo, los fallos acumulados
+        # de hoy y los recuperados hoy con el reintento manual.
+        "fallidos_ahora": total_failed_now,
+        "fallidos_hoy": total_failed,
+        "recuperados_hoy": total_recovered,
         "retries": total_retries,
         "avg_latency_sec": avg_latency,
         "avg_rc_latency_sec": avg_rc_latency,

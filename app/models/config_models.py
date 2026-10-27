@@ -78,6 +78,9 @@ class DailyStat(Base):
     avg_hub_latency_sec = Column(Float, nullable=True)
     avg_rc_latency_sec = Column(Float, nullable=True)
     avg_push_latency_ms = Column(Float, nullable=True)
+    # v1.9.10: fallidos que ese día se volvieron a la cola con el reintento
+    # manual del panel (la tarjeta "Fallidos" los muestra como recuperados).
+    recovered_count = Column(Integer, default=0)
 
 class SystemSettings(Base):
     """Modelo para configuración global e infraestructura del Hub."""
@@ -105,3 +108,7 @@ class SystemSettings(Base):
     # Un solo día de crudos a caudal de certificación son ~2 GB: sin techo, el
     # primer clic se lleva puesto el navegador. Se frena con un 400 explícito.
     export_max_days = Column(Integer, default=7)
+    # v1.9.10: retención del registro de descartes (db/descartes.db), desde el
+    # panel. NULL = la de siempre (app/core/descartes.py: 7 días, 50.000 filas).
+    descartes_retencion_dias = Column(Integer, nullable=True)
+    descartes_max_filas = Column(Integer, nullable=True)

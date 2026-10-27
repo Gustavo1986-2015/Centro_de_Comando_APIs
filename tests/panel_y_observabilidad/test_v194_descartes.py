@@ -42,11 +42,13 @@ def _consultar():
 
 
 def test_registrar_y_consultar():
+    # v1.9.10: la categoría del catálogo es obligatoria.
     descartes.registrar("tive", "prod", "tive", "posición de tracker, va por RC directo",
-                        equipo="K676092", envio=None)
-    descartes.registrar("tive", "prod", "tive", "posición de tracker, va por RC directo", equipo="J1")
+                        categoria="tive_posicion_tracker_rc_directo", equipo="K676092", envio=None)
+    descartes.registrar("tive", "prod", "tive", "posición de tracker, va por RC directo",
+                        categoria="tive_posicion_tracker_rc_directo", equipo="J1")
     descartes.registrar("tive", "prod", "tive", "duplicado de ShockEvents (puntual) ya recibido",
-                        equipo="K393478", envio="VIAJE", alert_id="f2769c5b")
+                        categoria="tive_duplicado_alerta", equipo="K393478", envio="VIAJE", alert_id="f2769c5b")
     d = _consultar()
     totales = {(r["origen"], r["motivo"]): r["total"] for r in d["resumen"]}
     assert totales[("tive", "posición de tracker, va por RC directo")] == 2
@@ -57,7 +59,7 @@ def test_registrar_y_consultar():
 
 def test_sobrevive_un_reinicio():
     """Lo guardado sigue ahí con una conexión nueva, como tras reiniciar el hub."""
-    descartes.registrar("schmitz", "prod", "contrato", "falta fecha", equipo="R5868BDP")
+    descartes.registrar("schmitz", "prod", "contrato", "falta fecha", categoria="sin_fecha", equipo="R5868BDP")
     descartes.esperar_escritura(3.0)
     con = sqlite3.connect(os.path.join(descartes.DIRECTORIO, descartes.ARCHIVO))
     filas = con.execute("SELECT proveedor, motivo, equipo FROM descartes").fetchall()
@@ -68,7 +70,7 @@ def test_sobrevive_un_reinicio():
 def test_tope_de_filas_y_retencion(monkeypatch):
     monkeypatch.setattr(descartes, "MAX_FILAS", 5)
     for i in range(10):
-        descartes.registrar("studio", "prod", "admision", "m", equipo=f"E{i}")
+        descartes.registrar("studio", "prod", "admision", "m", categoria="admision_filtro", equipo=f"E{i}")
     descartes.esperar_escritura(3.0)
     con = sqlite3.connect(os.path.join(descartes.DIRECTORIO, descartes.ARCHIVO))
     con.execute("INSERT INTO descartes (ts, proveedor, env, origen, motivo) VALUES (?, 'v', 'p', 'admision', 'viejo')",
@@ -89,7 +91,7 @@ def test_si_la_cola_se_llena_se_cuenta_y_se_avisa(monkeypatch, caplog):
     monkeypatch.setattr(descartes, "_asegurar_hilo", lambda: None)
     monkeypatch.setattr(descartes, "_ultimo_aviso_perdidos", 0.0)
     with caplog.at_level(logging.WARNING, logger="app.core.descartes"):
-        descartes.registrar("tive", "prod", "tive", "m")
+        descartes.registrar("tive", "prod", "tive", "m", categoria="otro")
     assert descartes._perdidos == 1
     assert "saturado" in caplog.text
 
@@ -145,7 +147,7 @@ def test_el_endpoint_del_panel_los_devuelve():
     from app.api.routers import dashboard
     from app.core.auth import verify_dashboard_auth
 
-    descartes.registrar("tive", "prod", "tive", "motivo X", equipo="K1", envio="E1", alert_id="A1")
+    descartes.registrar("tive", "prod", "tive", "motivo X", categoria="otro", equipo="K1", envio="E1", alert_id="A1")
     app = FastAPI()
     app.include_router(dashboard.router)
     app.dependency_overrides[verify_dashboard_auth] = lambda: None

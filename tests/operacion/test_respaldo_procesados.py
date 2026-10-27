@@ -120,9 +120,11 @@ def test_respalda_el_modelo_canonico_entero(evento_completo):
     `chassis_number` se exceptúa: viaja con la clave histórica `chassis`.
     """
     registro = evento_a_registro_respaldo(evento_completo, "test")
+    # v1.9.10: los campos excluidos del modelo (detalle_velocidad) no viajan a
+    # RC; el detalle de la velocidad va al respaldo solo cuando existe (abajo).
     faltantes = [
-        campo for campo in RCCanonicalModel.model_fields
-        if campo not in registro and campo != "chassis_number"
+        campo for campo, info in RCCanonicalModel.model_fields.items()
+        if campo not in registro and campo != "chassis_number" and not info.exclude
     ]
     assert not faltantes, f"Campos canónicos ausentes del respaldo: {faltantes}"
     assert registro["chassis"] == "AB1234"
@@ -325,3 +327,14 @@ def _b20_tz_con_otra_fecha():
     """Un TZ (formato del CRT) en el que la fecha local de HOY no es la UTC."""
     from datetime import datetime, timezone
     return "ABC-13" if datetime.now(timezone.utc).hour >= 11 else "ABC+13"
+
+
+def test_el_detalle_de_la_velocidad_va_al_respaldo_solo_si_existe(evento_completo):
+    """v1.9.10: con velocidad estimada (Tive) el respaldo la trae; sin ella, el registro es el de v1.9.9."""
+    import json
+    sin = evento_a_registro_respaldo(evento_completo, "test")
+    assert "velocidad_detalle" not in sin
+    evento_completo.velocidad_detalle = json.dumps({"valor": 34, "motivo": "estimada"})
+    con = evento_a_registro_respaldo(evento_completo, "test")
+    assert con["velocidad_detalle"] == {"valor": 34, "motivo": "estimada"}
+    assert list(con)[:-1] == list(sin), "las claves de siempre conservan su orden"

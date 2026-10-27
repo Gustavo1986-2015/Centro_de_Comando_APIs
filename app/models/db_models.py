@@ -75,5 +75,8 @@ class NormalizedRCEvent(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
     rc_latency_sec = Column(Float, nullable=True)
+    # v1.9.10: detalle de la velocidad estimada de Tive (JSON). NULL para todo
+    # lo demás. No viaja a RC.
+    velocidad_detalle = Column(Text, nullable=True)
     retry_count = Column(Integer, default=0)
     next_retry_at = Column(DateTime(timezone=True), nullable=True)

@@ -37,10 +37,14 @@ def audit_event(provider: str, payload: dict):
         logger.warning(f"Excepción capturada en auditor: {e}")
         print(f"Error escribiendo auditoria para {provider}: {e}")
 
-def log_raw_payload(provider: str, env: str, payload: dict):
+def log_raw_payload(provider: str, env: str, payload: dict, ingest_id: str | None = None):
     """
     Guarda evento crudo PULL en audit/{provider}_{env}/{YYYY-MM}/crudos_{YYYY-MM-DD}.jsonl
     Variante de audit_event que incluye entorno (para flujos PULL como Protrack).
+
+    v1.9.10: `ingest_id` (solo el webhook genérico lo pasa) va al final del
+    registro y es lo que permite ver el crudo de un descarte desde el panel.
+    Sin él, el registro queda exactamente como antes (Schmitz, Protrack).
     """
     now = datetime.now()
     audit_record = {
@@ -49,6 +53,8 @@ def log_raw_payload(provider: str, env: str, payload: dict):
         "env": env,
         "payload": payload
     }
+    if ingest_id:
+        audit_record["ingest_id"] = ingest_id
     month_str = now.strftime("%Y-%m")
     day_str = now.strftime("%Y-%m-%d")
     provider_env = f"{provider}_{env}"
