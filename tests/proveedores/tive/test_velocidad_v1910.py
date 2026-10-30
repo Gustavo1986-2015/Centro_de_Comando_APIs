@@ -343,14 +343,19 @@ def test_cableado_el_panel_muestra_la_velocidad_con_el_metodo_js_real(app_tive, 
     assert sum(1 for f in filas if f.get("velocidad_detalle")) == 3
     r = _node({"globales": {"allRecentEvents": filas, "currentStatusFilter": "all", "currentProviderFilter": "all",
                             "currentLatencyFilter": "all", "currentSoloEventos": False, "expandedRows": []},
+               # v1.9.11: precargadas, para que el arnés no repita el dibujo.
+               "cargar": ["_contenidoEnviadoRC", "_escAttr", "_escapeHtml", "formatLatency",
+                          "_textoVelocidadEstimada", "_tituloVelocidadEstimada"],
                "llamadas": [{"fn": "renderRecentTable"}]}, tmp_path)
     html = " ".join(r["elementos"]["recent-table-body"]["hijos"])
     assert "120 km/h (estimada · cell→gps)" in html
     assert "0 (detenido · gps→wifi)" in html
     assert "1 (no calculada: sin posición previa)" in html
     assert "precisión 1500 m" in html and "precisión 8 m" in html, "falta la precisión de las lecturas"
-    # JSON RC: el detalle completo, marcado con "_" porque no viaja a RC.
-    assert "_velocidad_estimada" in html
+    # v1.9.11: el detalle va en su propio botón "Cálculo de velocidad", ya no
+    # mezclado en el JSON de lo enviado a RC (test_rc_payload_v1911).
+    assert "_velocidad_estimada" not in html
+    assert html.count("Cálculo de velocidad</button>") == 3
 
 
 def test_textos_de_cada_motivo_js_real(tmp_path):

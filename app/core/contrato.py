@@ -28,9 +28,29 @@ QUÉ NO VALIDA
 La velocidad: el contrato pide "0" cuando no hay dato, y eso lo resuelve
 rc_soap al armar el envío. Una coordenada que vale exactamente 0 es un dato
 real y pasa: vacío es None, no 0.0.
+
+EVENTOS SIN POSICIÓN (v1.9.11)
+
+Un módulo dedicado puede declarar que un evento admite ir SIN posición
+(`admite_sin_posicion` en el modelo canónico): Tive, cuando no puede ubicar el
+equipo, manda la ubicación vacía con datos válidos (temperatura, batería,
+alertas). El contrato no sabe de qué proveedor es: respeta la marca. Ese
+evento pasa sin latitud ni longitud (en la cola quedan NULL, a RC va "0"
+porque el campo es obligatorio) y queda marcado `sin_posicion`. Patente y
+fecha siguen siendo obligatorias. No se inventa ni se reutiliza ninguna
+coordenada.
+
+COORDENADAS 0,0 (v1.9.11)
+
+Latitud Y longitud exactamente 0 informadas por el proveedor: por integración
+se elige enviar (por defecto, como hasta v1.9.10, con aviso en consola) o
+filtrar (va a Descartes, categoría coordenadas_cero). Un evento sin posición
+no es un 0,0 informado: no lo alcanza esta opción.
 """
 import logging
 import math
+import threading
+import time
 
 logger = logging.getLogger(__name__)
 
@@ -144,6 +164,113 @@ def categoria_del_faltante(falta: list[str]) -> str:
     return "sin_coordenadas"
 
 
+# ─── Opción de coordenadas 0,0 por integración (v1.9.11) ─────────────────────
+
+CEROS_ENVIAR = "enviar"
+CEROS_FILTRAR = "filtrar"
+OPCIONES_CEROS = (CEROS_ENVIAR, CEROS_FILTRAR)
+_CACHE_CEROS_SEG = 30
+_cache_ceros: dict[tuple[str, str], tuple[float, str]] = {}
+_lock_ceros = threading.Lock()
+
+
+def opcion_coordenadas_cero(proveedor: str | None, env: str | None) -> str:
+    """
+    'enviar' o 'filtrar' para la integración. Sin valor guardado, o si la base
+    no responde, 'enviar': el comportamiento de siempre. Se cachea unos
+    segundos y solo se consulta cuando llega un 0,0.
+    """
+    clave = ((proveedor or "").strip().lower(), (env or "").strip().lower())
+    ahora = time.time()
+    with _lock_ceros:
+        guardado = _cache_ceros.get(clave)
+        if guardado and ahora - guardado[0] < _CACHE_CEROS_SEG:
+            return guardado[1]
+    valor = CEROS_ENVIAR
+    try:
+        from sqlalchemy import func
+        from app.database import get_session
+        from app.models.config_models import ProviderConfig
+        db = get_session("system_config", "global")
+        try:
+            # Igualdad en minúsculas, no ilike: en ilike "_" es comodín.
+            conf = db.query(ProviderConfig).filter(
+                func.lower(ProviderConfig.provider_name) == clave[0],
+                func.lower(ProviderConfig.env) == clave[1]).first()
+            if conf is not None and getattr(conf, "coordenadas_cero", None) in OPCIONES_CEROS:
+                valor = conf.coordenadas_cero
+        finally:
+            db.close()
+    except Exception as e:
+        logger.warning(f"No se pudo leer la opción de coordenadas 0,0 de {clave[0]}/{clave[1]}; se envían: {e}")
+    with _lock_ceros:
+        _cache_ceros[clave] = (ahora, valor)
+    return valor
+
+
+def invalidar_coordenadas_cero() -> None:
+    """Tras guardar la configuración: el cambio vale desde el próximo evento."""
+    with _lock_ceros:
+        _cache_ceros.clear()
+
+
+def _es_cero_cero(evento) -> bool:
+    return _es_cero(getattr(evento, "latitude", None)) and _es_cero(getattr(evento, "longitude", None))
+
+
+def texto_sin_posicion(proveedor: str | None) -> str:
+    """Lo que muestran panel, visor y JSON en lugar de las coordenadas."""
+    return f"Sin posición ({(proveedor or 'el proveedor').capitalize()} no pudo ubicar)"
+
+
+def es_sin_posicion(fila) -> bool:
+    """
+    Una fila de la cola sin latitud ni longitud. Desde la v1.9.2 el contrato
+    descarta todo evento sin coordenadas, así que solo puede ser uno aceptado
+    sin posición (la cola guarda NULL, no 0).
+    """
+    return getattr(fila, "latitude", None) is None and getattr(fila, "longitude", None) is None
+
+
+def _aceptar_sin_posicion(ev, proveedor, env) -> None:
+    """Marca el evento sin posición y lo informa con su propia línea (no la del 0,0)."""
+    ev.latitude = None
+    ev.longitude = None
+    ev.sin_posicion = True
+    fecha = getattr(ev, "date", None)
+    logger.info(
+        f"[{(proveedor or '?').upper()}-{env or '?'}] Evento sin posición ({(proveedor or '?').capitalize()} "
+        f"no pudo ubicar el equipo): se envía a RC con latitud y longitud 0 | "
+        f"patente={getattr(ev, 'chassis_number', None)} código={getattr(ev, 'code', None)} "
+        f"fecha={fecha.isoformat() if hasattr(fecha, 'isoformat') else fecha}"
+    )
+
+
+def _registrar_descarte(ev, proveedor, env, motivo, categoria) -> None:
+    from app.core import descartes
+    patente = getattr(ev, "chassis_number", None)
+    serie = getattr(ev, "serial_number", None)
+    latitud, longitud = getattr(ev, "latitude", None), getattr(ev, "longitude", None)
+    logger.warning(
+        f"[{(proveedor or '?').upper()}-{env or '?'}] Evento descartado, NO se envía a RC: "
+        f"{motivo} | patente={patente or 'sin patente'}"
+        f"{f' serie={serie}' if serie else ''} código={getattr(ev, 'code', None)}"
+        f"{descartes.texto_coordenadas(latitud, longitud)}"
+    )
+    # Además de la consola, al registro persistente que muestra el panel.
+    descartes.registrar(
+        proveedor, env, "contrato", motivo,
+        categoria=categoria,
+        equipo=patente or (f"serie {serie}" if serie else None),
+        envio=getattr(ev, "shipment", None),
+        detalle=f"código={getattr(ev, 'code', None)}",
+        latitud=latitud, longitud=longitud,
+    )
+
+
+MOTIVO_CEROS_FILTRADAS = "coordenadas 0,0 informadas por el proveedor, filtradas por configuración"
+
+
 def filtrar_validos(eventos, proveedor: str | None, env: str | None) -> list:
     """
     Devuelve solo los eventos que cumplen el contrato. Cada descarte queda en
@@ -153,7 +280,16 @@ def filtrar_validos(eventos, proveedor: str | None, env: str | None) -> list:
     validos = []
     for ev in eventos or []:
         falta = faltantes(ev)
+        sin_posicion = False
+        if falta and set(falta) <= {"latitud", "longitud"} and getattr(ev, "admite_sin_posicion", False):
+            # v1.9.11: el módulo declaró que este evento puede ir sin posición.
+            falta, sin_posicion = [], True
         if not falta:
+            if sin_posicion:
+                _aceptar_sin_posicion(ev, proveedor, env)
+            elif _es_cero_cero(ev) and opcion_coordenadas_cero(proveedor, env) == CEROS_FILTRAR:
+                _registrar_descarte(ev, proveedor, env, MOTIVO_CEROS_FILTRADAS, "coordenadas_cero")
+                continue
             # Mismo punto de paso para todos los caminos de ingreso: acá se
             # omiten también los valores imposibles (B-3). Sin aviso por
             # evento: con Protrack sería una línea por cada uno.
@@ -161,23 +297,5 @@ def filtrar_validos(eventos, proveedor: str | None, env: str | None) -> list:
             avisar_si_coordenadas_cero(ev, proveedor, env)
             validos.append(ev)
             continue
-        patente = getattr(ev, "chassis_number", None)
-        serie = getattr(ev, "serial_number", None)
-        from app.core import descartes
-        latitud, longitud = getattr(ev, "latitude", None), getattr(ev, "longitude", None)
-        logger.warning(
-            f"[{(proveedor or '?').upper()}-{env or '?'}] Evento descartado, NO se envía a RC: "
-            f"falta {', '.join(falta)} | patente={patente or 'sin patente'}"
-            f"{f' serie={serie}' if serie else ''} código={getattr(ev, 'code', None)}"
-            f"{descartes.texto_coordenadas(latitud, longitud)}"
-        )
-        # Además de la consola, al registro persistente que muestra el panel.
-        descartes.registrar(
-            proveedor, env, "contrato", f"falta {', '.join(falta)}",
-            categoria=categoria_del_faltante(falta),
-            equipo=patente or (f"serie {serie}" if serie else None),
-            envio=getattr(ev, "shipment", None),
-            detalle=f"código={getattr(ev, 'code', None)}",
-            latitud=latitud, longitud=longitud,
-        )
+        _registrar_descarte(ev, proveedor, env, f"falta {', '.join(falta)}", categoria_del_faltante(falta))
     return validos

@@ -11,7 +11,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 from app.database import get_session
-from app.models.db_models import ESTADOS_TERMINADOS, NormalizedRCEvent
+from app.models.db_models import ESTADO_SIMULADO, ESTADOS_TERMINADOS, NormalizedRCEvent
 from app.models.config_models import ProviderConfig, DailyStat
 from app.worker.processor import _rc_circuit_breaker
 from datetime import datetime, timezone, timedelta
@@ -166,6 +166,7 @@ def get_push_stats(provider_key: str | None = None) -> dict:
 
 
 from app.core.auth import verify_dashboard_auth
+from app.core import contrato
 from app.core.provider_health import get_health_snapshot
 from app.core.resync import request_resync
 from app.core.log_stream import read_recent, tail_log
@@ -190,6 +191,34 @@ def _formato_rc(ev) -> dict:
         return construir_evento_rc(ev)
     except Exception as e:
         return {"_error": f"No se pudo armar el evento RC: {e}"}
+
+
+# v1.9.11: lo que muestran "Enviado RC" y "RC Confirma" cuando no hay hora.
+_ETIQUETAS_SIN_HORA = {
+    "pending": "Pendiente",
+    "processing": "Procesando",
+    ESTADO_SIMULADO: "Simulado (no enviado)",
+    "failed": "Fallido",
+    "sent": "Enviado (sin hora registrada)",
+}
+
+
+def _hora_o_estado(ev, momento) -> str:
+    """La hora del envío o de la respuesta de RC (solo sent/failed), o el estado en palabras."""
+    if ev.status in ("sent", "failed") and momento:
+        return momento.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3] + " (UTC)"
+    return _ETIQUETAS_SIN_HORA.get(ev.status, f"Estado {ev.status or 'desconocido'}")
+
+
+def _payload_enviado(ev):
+    """v1.9.11: rc_payload tal como se guardó (JSON), o None."""
+    texto = getattr(ev, "rc_payload", None)
+    if not texto:
+        return None
+    try:
+        return json.loads(texto)
+    except (TypeError, ValueError):
+        return {"_error": "rc_payload ilegible", "texto": str(texto)[:500]}
 
 
 def _detalle_velocidad(ev) -> dict | None:
@@ -503,8 +532,9 @@ async def get_stats_data(
             "status": ev.status,
             "time": (ev.updated_at or ev.created_at).strftime("%Y-%m-%d %H:%M:%S.%f")[:-3] + " (UTC)",
             "time_received": time_received_local.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3] + (" (Local)" if tz_offset != 0 else " (UTC)"),
-            "time_sent": (time_sent_dt.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3] + " (UTC)") if ev.status in ('sent', 'failed') and time_sent_dt else "Procesando" if ev.status == 'processing' else "Pendiente" if ev.status == 'pending' else "Fallido",
-            "time_received_rc": (time_received_rc_dt.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3] + " (UTC)") if ev.status in ('sent', 'failed') and time_received_rc_dt else "Procesando" if ev.status == 'processing' else "Pendiente" if ev.status == 'pending' else "Fallido",
+            # v1.9.11: cada estado dice lo que pasó; antes un simulado decía "Fallido".
+            "time_sent": _hora_o_estado(ev, time_sent_dt),
+            "time_received_rc": _hora_o_estado(ev, time_received_rc_dt),
             "latency_sec": round(latency_sec, 3) if latency_sec is not None else None,
             "rc_latency_sec": round(rc_latency_val, 3) if rc_latency_val is not None else None,
             "transmission_latency_sec": transmission_latency_sec,
@@ -518,9 +548,13 @@ async def get_stats_data(
             # v1.9.10: cómo se estimó la velocidad (Tive, con su interruptor).
             "velocidad_detalle": _detalle_velocidad(ev),
             # "is not None": una latitud 0 es un dato real, no "Sin GPS".
+            # v1.9.11: sin latitud ni longitud = aceptado sin posición (Tive no
+            # pudo ubicar el equipo): a RC fue "0", en la cola quedó NULL.
             "coords": (f"{ev.latitude}, {ev.longitude}"
                        if getattr(ev, 'latitude', None) is not None and getattr(ev, 'longitude', None) is not None
-                       else "Sin GPS"),
+                       else contrato.texto_sin_posicion(getattr(ev, 'provider_name', None))
+                       if contrato.es_sin_posicion(ev) else "Sin GPS"),
+            "sin_posicion": contrato.es_sin_posicion(ev),
             # Tres estados: un dato que el proveedor no mide no es "apagado".
             "ignition": ("N/A" if getattr(ev, 'ignition', None) is None
                          else "ON" if ev.ignition else "OFF"),
@@ -543,6 +577,10 @@ async def get_stats_data(
             # real. Antes este bloque tenía su propia versión y mostraba datos
             # que RC nunca recibía. Ver rc_soap.construir_evento_rc.
             "rc_format": _formato_rc(ev),
+            # v1.9.11: lo que el cliente SOAP le ENTREGÓ a zeep, guardado al
+            # enviar (en simulado, lo que se habría enviado). None = el evento
+            # todavía no se intentó o es de antes de v1.9.11.
+            "rc_payload": _payload_enviado(ev),
             "raw_data": ev.raw_data
         })
 

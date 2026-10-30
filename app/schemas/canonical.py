@@ -47,3 +47,13 @@ class RCCanonicalModel(BaseModel):
     # No viaja a RC (a RC va solo `speed`) y no sale en model_dump: se guarda
     # en la cola para el panel, el visor y el JSON RC.
     detalle_velocidad: Optional[dict] = Field(None, exclude=True, description="Detalle de la velocidad estimada")
+    # v1.9.11: evento sin posición (Tive no pudo ubicar el equipo). El módulo
+    # que lo permite marca `admite_sin_posicion`; el contrato lo acepta sin
+    # latitud ni longitud y marca `sin_posicion`. En la cola quedan NULL; a RC
+    # va "0" porque el contrato exige el campo. Ninguno de los dos viaja.
+    admite_sin_posicion: bool = Field(False, exclude=True, description="El módulo admite enviarlo sin posición")
+    sin_posicion: bool = Field(False, exclude=True, description="Aceptado sin posición")
+    # v1.9.11: el diccionario EXACTO que el cliente SOAP le entregó a zeep para
+    # este evento (JSON), tomado en rc_soap al enviarlo. En simulado, el que se
+    # habría enviado. El worker lo guarda en la columna rc_payload.
+    rc_payload: Optional[str] = Field(None, exclude=True, description="Lo entregado a zeep (JSON)")

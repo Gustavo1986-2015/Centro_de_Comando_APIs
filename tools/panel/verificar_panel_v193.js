@@ -53,8 +53,12 @@ global.currentSoloEventos = false;
 global._fallidosAhora = 0;   // v1.9.10: lo usa _botonReintentoFallidos
 global.allRecentEvents = [];
 
+// v1.9.11: loadConfig dibuja el selector de 0,0 y el panel de opciones del módulo.
+global._opcionesModuloAbiertas = new Set();
+global._COLUMNAS_CONFIG = 15;
+global._contenidoEnviadoRC = () => ({ titulo: '', payload: null, nota: '' });
 for (const f of ['_escapeHtml', '_anchoUsuarioRc', '_escAttr', '_botonReintentoFallidos', '_selectorMotorCola', 'esPull', '_modoAuthWebhook', '_selectorAuthWebhook', '_opcionesDeModulo', '_credencialesDeModulo',
-                 '_celdaClaveWebhook', 'loadConfig', 'renderRecentTable']) {
+                 '_celdaClaveWebhook', '_selectorCeros', '_botonOpcionesDeModulo', 'loadConfig', 'renderRecentTable']) {
   const codigo = extraer(f);
   const asincrona = codigo.startsWith('async');
   eval(`global.${f} = ` + codigo.replace(asincrona ? `async function ${f}` : `function ${f}`,
@@ -64,8 +68,12 @@ for (const f of ['_escapeHtml', '_anchoUsuarioRc', '_escAttr', '_botonReintentoF
 (async () => {
   console.log('=== 1. Columna PUSH API Key (loadConfig real) ===');
   await loadConfig();
-  const filas = elemento('config-table-body').hijos.map(h => h.innerHTML);
+  // v1.9.11: las filas del panel "Opciones de <proveedor>" van aparte.
+  const todas = elemento('config-table-body').hijos.map(h => h.innerHTML);
+  const filas = todas.filter(h => !h.includes('panel-opciones-modulo'));
   ok(filas.length === CONFIGS.length, `una fila por integración (${filas.length})`);
+  const conModulo = CONFIGS.filter(c => c.modulo_dedicado).length;
+  ok(todas.length - filas.length === conModulo, `un panel de opciones por integración con módulo (${todas.length - filas.length})`);
   const fila = n => filas[CONFIGS.findIndex(c => c.provider_name === n)] || '';
   ok(fila('TIVE').includes('d0•••• cargada'), 'con clave: "d0•••• cargada"');
   ok(fila('TIVE').includes('btn-ver-clave'), 'con clave: el botón de revelar sigue');

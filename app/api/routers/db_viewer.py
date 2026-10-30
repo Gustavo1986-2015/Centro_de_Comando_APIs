@@ -20,9 +20,19 @@ Reglas comunes:
     esquema real de la base, no solo contra una expresión regular;
   · las rutas de respaldo se validan para que queden dentro de
     db/backups_diarios/.
+
+v1.9.11:
+  · orden en el servidor por cualquier columna del esquema real (no por las
+    cifradas: el orden diría algo de su contenido);
+  · celdas JSON con resumen en la grilla y el JSON formateado al hacer clic;
+  · total y conteo por estado de la consulta (tablas de cola);
+  · exportación CSV y Excel de lo filtrado y ordenado, con tope de filas;
+  · la cola (normalized_rc_events) es de solo lectura; se editan solo las
+    tablas de configuración de system_config_global.db.
 """
 import csv
 import glob
+import heapq
 import io
 import json
 import logging
@@ -31,12 +41,16 @@ import re
 import secrets
 import sqlite3
 from datetime import date, datetime, timedelta
+from itertools import islice
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel
+
+from sqlalchemy.exc import IntegrityError as IntegrityErrorSQLA
 
 from app.core.auth import verify_dashboard_auth, get_dashboard_password
 
@@ -59,6 +73,21 @@ TEXTO_CIFRADO = "(cifrado)"
 LIMITE_MAXIMO = 1000
 
 ESTADOS_DE_EVENTO = ("pending", "processing", "sent", "failed", "simulado")
+
+# v1.9.11 (Bloque 5). Bases de cola: solo lectura, con conteo por estado.
+# Editar la cola a mano puede mandar a RC algo que nadie midió.
+TABLAS_COLA = {"normalized_rc_events"}
+# Las tablas editables viven en la base de configuración; en otra base son
+# residuos de un esquema viejo (ver _tabla_es_huerfana) y no se editan.
+BASE_EDITABLE = "system_config_global.db"
+# Columnas con JSON: la grilla muestra un resumen y el clic, el JSON entero.
+# También cuenta toda columna declarada JSON en la base.
+COLUMNAS_JSON = {"raw_data", "rc_response", "rc_payload", "velocidad_detalle", "detalle", "response"}
+SENTIDOS = ("asc", "desc")
+# Tope de la exportación del visor, el mismo que el de descartes. Si la vista
+# tiene más, se exportan las primeras en el orden elegido y el archivo lo dice.
+TOPE_EXPORTACION = 100_000
+FORMATOS_EXPORTACION = ("csv", "xlsx")
 
 # Filtros del visor → columnas donde aplican, en orden de preferencia. Un
 # filtro sobre una tabla que no tiene ninguna de sus columnas no se aplica, y
@@ -188,6 +217,95 @@ def _ocultar(columnas: list[str], fila) -> list:
         (TEXTO_CIFRADO if valor is not None else None) if _es_cifrada(col) else valor
         for col, valor in zip(columnas, fila)
     ]
+
+
+def _es_editable(db_name: str, tabla: str) -> bool:
+    return tabla in EDITABLE_TABLES and db_name.replace("\\", "/") == BASE_EDITABLE
+
+
+def _columnas_json(columnas: list[str], tipos: dict | None = None) -> list[str]:
+    tipos = tipos or {}
+    return [c for c in columnas
+            if not _es_cifrada(c) and (c in COLUMNAS_JSON or "JSON" in (tipos.get(c) or "").upper())]
+
+
+def _orden_pedido(orden: str | None, sentido: str | None, columnas: list[str]) -> tuple[str, str] | None:
+    """
+    (columna, sentido) validados contra las columnas reales, o None (el orden
+    por defecto: lo más reciente primero).
+    """
+    if not orden:
+        return None
+    if orden not in columnas:
+        raise HTTPException(status_code=400, detail=f"No se puede ordenar por '{orden}': no es una columna de esta vista.")
+    if _es_cifrada(orden):
+        raise HTTPException(status_code=400, detail=f"'{orden}' está cifrada: no se ordena por ella.")
+    sentido = (sentido or "asc").lower()
+    if sentido not in SENTIDOS:
+        raise HTTPException(status_code=400, detail="El sentido del orden es 'asc' o 'desc'.")
+    return orden, sentido
+
+
+def _order_by(orden: tuple[str, str] | None) -> str:
+    # A igualdad de valor, lo más reciente primero (rowid descendente).
+    if orden is None:
+        return " ORDER BY rowid DESC"
+    return f" ORDER BY {_q(orden[0])} {'ASC' if orden[1] == 'asc' else 'DESC'}, rowid DESC"
+
+
+def _clave_de_orden(valor):
+    """
+    Orden de los valores del respaldo, el mismo que usa SQLite en la base:
+    NULL, después números y después texto.
+    """
+    if valor is None:
+        return (0, 0)
+    if isinstance(valor, bool):
+        return (1, int(valor))
+    if isinstance(valor, (int, float)):
+        return (1, valor)
+    if isinstance(valor, (dict, list)):
+        return (2, json.dumps(valor, ensure_ascii=False))
+    return (2, str(valor))
+
+
+def _proveedor_de_base(db_name: str) -> str | None:
+    """db/tive/prod.db → 'tive' (para el texto de "Sin posición")."""
+    partes = db_name.replace("\\", "/").split("/")
+    return partes[0] if len(partes) == 2 else None
+
+
+def _sin_posicion(columnas: list[str], filas: list, proveedor: str | None) -> dict | None:
+    """
+    Filas de cola sin latitud ni longitud: el visor muestra el mismo texto que
+    el panel (contrato.texto_sin_posicion), no NULL.
+    """
+    from app.core import contrato
+    if "latitude" not in columnas or "longitude" not in columnas:
+        return None
+    i_lat, i_lon = columnas.index("latitude"), columnas.index("longitude")
+    indices = [n for n, f in enumerate(filas)
+               if contrato.es_sin_posicion(SimpleNamespace(latitude=f[i_lat], longitude=f[i_lon]))]
+    return {"texto": contrato.texto_sin_posicion(proveedor), "filas": indices}
+
+
+def _seleccionar_proyeccion(texto: str | None, columnas: list[str]) -> list[int]:
+    """
+    Índices de las columnas pedidas para exportar ("a,b,c"), validadas contra
+    las de la vista. Vacío = todas.
+    """
+    if not texto:
+        return list(range(len(columnas)))
+    indices = []
+    for nombre in (n.strip() for n in texto.split(",")):
+        if not nombre:
+            continue
+        if nombre not in columnas:
+            raise HTTPException(status_code=400, detail=f"La columna '{nombre}' no es de esta vista.")
+        indices.append(columnas.index(nombre))
+    if not indices:
+        raise HTTPException(status_code=400, detail="Elegí al menos una columna para exportar.")
+    return indices
 
 
 @router.get("/api/db-viewer/databases")
@@ -386,11 +504,14 @@ def execute_query(
     envio: str = Query(None),
     desde: str = Query(None),
     hasta: str = Query(None),
+    orden: str = Query(None),
+    sentido: str = Query(None),
     _: None = Depends(verify_dashboard_auth)
 ):
     """
-    Filas de una tabla, lo más reciente primero (rowid descendente). Incluye
-    rowid para la edición. Las columnas *_enc salen como "(cifrado)".
+    Filas de una tabla, lo más reciente primero (rowid descendente) o en el
+    orden pedido. Incluye rowid para la edición. Las columnas *_enc salen
+    como "(cifrado)".
     """
     db_path = _ruta_de_base(db_name)
     _validar_pagina(limit, offset)
@@ -400,16 +521,24 @@ def execute_query(
     try:
         tabla = _validar_tabla(conn, table)
         columnas = _columnas_reales(conn, tabla)
+        orden_ok = _orden_pedido(orden, sentido, columnas)
         clausula, parametros, no_aplicados = _where(columnas, filtros, search)
 
         # Antes no había ORDER BY: la primera página eran las filas MÁS VIEJAS
         # de la tabla, justo lo que el operador no busca (v1.9.8).
         cursor = conn.execute(
-            f"SELECT rowid, * FROM {_q(tabla)}{clausula} ORDER BY rowid DESC LIMIT ? OFFSET ?",
+            f"SELECT rowid, * FROM {_q(tabla)}{clausula}{_order_by(orden_ok)} LIMIT ? OFFSET ?",
             parametros + [limit, offset],
         )
         filas = [[fila[0]] + _ocultar(columnas, fila[1:]) for fila in cursor.fetchall()]
         total = conn.execute(f"SELECT COUNT(*) FROM {_q(tabla)}{clausula}", parametros).fetchone()[0]
+        tipos = {c[1]: (c[2] or "") for c in conn.execute(f"PRAGMA table_info({_q(tabla)})")}
+        es_cola = tabla in TABLAS_COLA
+
+        conteo = None
+        if es_cola and "status" in columnas:
+            conteo = {str(e): n for e, n in conn.execute(
+                f"SELECT {_q('status')}, COUNT(*) FROM {_q(tabla)}{clausula} GROUP BY {_q('status')}", parametros)}
 
         return {
             "origen": "base",
@@ -421,8 +550,15 @@ def execute_query(
             "filtros_no_aplicados": no_aplicados,
             "cifradas": [c for c in columnas if _es_cifrada(c)],
             # Tipo declarado de cada columna: el editor lo muestra (v1.9.9).
-            "tipos": {c[1]: (c[2] or "") for c in conn.execute(f"PRAGMA table_info({_q(tabla)})")},
-            "editable": tabla in EDITABLE_TABLES  # El frontend muestra el modo edición solo si es True
+            "tipos": tipos,
+            "editable": _es_editable(db_name, tabla),  # El frontend muestra el modo edición solo si es True
+            # v1.9.11
+            "cola": es_cola,
+            "orden": {"columna": orden_ok[0], "sentido": orden_ok[1]} if orden_ok else None,
+            "columnas_json": _columnas_json(columnas, tipos),
+            "conteo_por_estado": conteo,
+            "sin_posicion": _sin_posicion(columnas, [f[1:] for f in filas], _proveedor_de_base(db_name)) if es_cola else None,
+            "tope_exportacion": TOPE_EXPORTACION,
         }
     except HTTPException:
         raise
@@ -546,6 +682,42 @@ def _registros_de_respaldo(integracion: str, desde: str, hasta: str, filtros: di
     return columnas, filas
 
 
+def _recorrer_respaldo(filas, columnas: list[str], orden: tuple[str, str] | None, desde: int, cuantas: int):
+    """
+    (filas desde..desde+cuantas, total, conteo por estado) en una sola pasada.
+    Sin orden pedido, en el orden del respaldo (lo más reciente primero). Con
+    orden, en memoria quedan como mucho desde+cuantas filas (heapq), nunca el
+    respaldo entero. A igualdad de valor se respeta el orden del respaldo,
+    como el rowid en la base.
+    """
+    i_estado = columnas.index("status")
+    conteo: dict[str, int] = {}
+    total = 0
+
+    def contadas():
+        nonlocal total
+        for fila in filas():
+            total += 1
+            e = str(fila[i_estado])
+            conteo[e] = conteo.get(e, 0) + 1
+            yield fila
+
+    if orden is None:
+        it = contadas()
+        elegidas = list(islice(it, desde, desde + cuantas))
+        for _ in it:
+            pass
+    else:
+        i = columnas.index(orden[0])
+        elegir = heapq.nsmallest if orden[1] == "asc" else heapq.nlargest
+        elegidas = elegir(desde + cuantas, contadas(), key=lambda f: _clave_de_orden(f[i]))[desde:]
+    return elegidas, total, conteo
+
+
+def _proveedor_de_integracion(integracion: str) -> str:
+    return integracion.rsplit("_", 1)[0]
+
+
 @router.get("/api/db-viewer/respaldos")
 def listar_respaldos(_: None = Depends(verify_dashboard_auth)):
     """Integraciones con respaldo de procesados y el tope de días por consulta."""
@@ -581,21 +753,21 @@ def consultar_respaldo(
     estado: str = Query(None),
     patente: str = Query(None),
     envio: str = Query(None),
+    orden: str = Query(None),
+    sentido: str = Query(None),
     _: None = Depends(verify_dashboard_auth),
 ):
     """
-    Una página del respaldo de procesados, lo más reciente primero. Se recorre
-    en streaming: en memoria solo queda la página pedida.
+    Una página del respaldo de procesados, lo más reciente primero o en el
+    orden pedido. Se recorre en streaming: en memoria solo queda la página
+    pedida (con orden, hasta offset+limit filas).
     """
     _validar_pagina(limit, offset)
     filtros = _filtros_pedidos(estado, patente, envio, None, None)
     columnas, filas = _registros_de_respaldo(integracion, desde, hasta, filtros)
+    orden_ok = _orden_pedido(orden, sentido, columnas)
 
-    pagina, total = [], 0
-    for fila in filas():
-        if offset <= total < offset + limit:
-            pagina.append(fila)
-        total += 1
+    pagina, total, conteo = _recorrer_respaldo(filas, columnas, orden_ok, offset, limit)
     return {
         "origen": "respaldo",
         "columns": columnas,
@@ -606,6 +778,13 @@ def consultar_respaldo(
         "filtros_no_aplicados": [],
         "cifradas": [],
         "editable": False,
+        # v1.9.11
+        "cola": True,
+        "orden": {"columna": orden_ok[0], "sentido": orden_ok[1]} if orden_ok else None,
+        "columnas_json": _columnas_json(columnas),
+        "conteo_por_estado": conteo,
+        "sin_posicion": _sin_posicion(columnas, pagina, _proveedor_de_integracion(integracion)),
+        "tope_exportacion": TOPE_EXPORTACION,
     }
 
 
@@ -625,6 +804,20 @@ def _nombre_seguro(texto: str) -> str:
     return re.sub(r"[^A-Za-z0-9_.-]+", "_", texto).strip("_") or "vista"
 
 
+def _celda_xlsx(valor):
+    """Números como número; el resto como el CSV (JSON, bytes, booleanos)."""
+    if isinstance(valor, (int, float)) and not isinstance(valor, bool):
+        return valor
+    if isinstance(valor, (dict, list)):
+        return json.dumps(valor, ensure_ascii=False)
+    return _celda_csv(valor)
+
+
+def _aviso_de_recorte(exportadas: int, total: int) -> str:
+    return (f"AVISO: la vista tiene {total:,} filas y se exportan las primeras {exportadas:,} "
+            f"en el orden elegido. Acotá los filtros para exportar el resto.")
+
+
 @router.get("/api/db-viewer/descargar")
 def descargar_vista(
     request: Request,
@@ -638,15 +831,25 @@ def descargar_vista(
     envio: str = Query(None),
     desde: str = Query(None),
     hasta: str = Query(None),
+    orden: str = Query(None),
+    sentido: str = Query(None),
+    columnas: str = Query(None),
+    formato: str = Query("csv"),
     _auth=Depends(verify_dashboard_auth),
 ):
     """
-    CSV de lo que muestra el visor, con los mismos filtros y el mismo orden,
-    TODAS las páginas. Las columnas *_enc salen como "(cifrado)". Se arma en
-    streaming: no carga la tabla ni el respaldo en memoria.
+    CSV o Excel de lo que muestra el visor: los mismos filtros, el mismo orden
+    y las columnas elegidas, todas las páginas hasta TOPE_EXPORTACION filas.
+    Si se recorta, lo dicen la primera línea del archivo y los encabezados
+    X-Visor-Filas / X-Visor-Recortado. Las columnas *_enc salen como
+    "(cifrado)". El CSV de la base va en streaming.
     """
+    from app.api.routers.exports import csv_para_excel, xlsx_desde_filas
     from app.core.auditor import log_admin_action
 
+    formato = (formato or "").lower()
+    if formato not in FORMATOS_EXPORTACION:
+        raise HTTPException(status_code=400, detail="'formato' tiene que ser csv o xlsx.")
     filtros_web = {"estado": estado, "patente": patente, "envio": envio, "desde": desde, "hasta": hasta}
     if origen == "base":
         db_path = _ruta_de_base(db_name)
@@ -654,8 +857,11 @@ def descargar_vista(
         conn = _conectar_lectura(db_path)
         try:
             tabla = _validar_tabla(conn, table)
-            columnas = _columnas_reales(conn, tabla)
-            clausula, parametros, _ = _where(columnas, filtros, search)
+            todas = _columnas_reales(conn, tabla)
+            orden_ok = _orden_pedido(orden, sentido, todas)
+            proyeccion = _seleccionar_proyeccion(columnas, todas)
+            clausula, parametros, _ = _where(todas, filtros, search)
+            total = conn.execute(f"SELECT COUNT(*) FROM {_q(tabla)}{clausula}", parametros).fetchone()[0]
         except Exception:
             conn.close()
             raise
@@ -663,51 +869,65 @@ def descargar_vista(
         def filas():
             try:
                 cursor = conn.execute(
-                    f"SELECT * FROM {_q(tabla)}{clausula} ORDER BY rowid DESC", parametros)
+                    f"SELECT * FROM {_q(tabla)}{clausula}{_order_by(orden_ok)} LIMIT ?",
+                    parametros + [TOPE_EXPORTACION])
                 while True:
                     lote = cursor.fetchmany(500)
                     if not lote:
                         break
                     for fila in lote:
-                        yield _ocultar(columnas, fila)
+                        yield _ocultar(todas, fila)
             finally:
                 conn.close()
 
-        nombre = f"visor_{_nombre_seguro(db_name)}_{_nombre_seguro(tabla)}.csv"
+        base_nombre = f"visor_{_nombre_seguro(db_name)}_{_nombre_seguro(tabla)}"
         detalle = {"origen": origen, "db": db_name, "tabla": tabla, "search": search, **filtros_web}
     elif origen == "respaldo":
         filtros = _filtros_pedidos(estado, patente, envio, None, None)
-        columnas, filas = _registros_de_respaldo(integracion, desde, hasta, filtros)
-        nombre = f"visor_respaldo_{_nombre_seguro(integracion)}_{desde}_a_{hasta}.csv"
+        todas, generador = _registros_de_respaldo(integracion, desde, hasta, filtros)
+        orden_ok = _orden_pedido(orden, sentido, todas)
+        proyeccion = _seleccionar_proyeccion(columnas, todas)
+        if orden_ok is None:
+            # Sin orden: una pasada para contar y otra que se escribe en
+            # streaming. Con orden, las primeras TOPE en memoria (heapq).
+            total = sum(1 for _ in generador())
+
+            def filas():
+                return islice(generador(), TOPE_EXPORTACION)
+        else:
+            elegidas, total, _ = _recorrer_respaldo(generador, todas, orden_ok, 0, TOPE_EXPORTACION)
+
+            def filas():
+                return iter(elegidas)
+
+        base_nombre = f"visor_respaldo_{_nombre_seguro(integracion)}_{desde}_a_{hasta}"
         detalle = {"origen": origen, "integracion": integracion, **filtros_web}
     else:
         raise HTTPException(status_code=400, detail="Origen desconocido: 'base' o 'respaldo'.")
 
+    exportadas = min(total, TOPE_EXPORTACION)
+    recortado = total > TOPE_EXPORTACION
+    nombres = [todas[i] for i in proyeccion]
+    detalle.update({"formato": formato, "orden": orden_ok and list(orden_ok), "columnas": nombres,
+                    "filas": exportadas, "recortado": recortado})
     log_admin_action("descarga_visor_bd", detalle, request, getattr(_auth, "username", "desconocido"))
 
-    def generar():
-        buffer = io.StringIO()
-        escritor = csv.writer(buffer, delimiter=";", lineterminator="\n")
+    convertir = _celda_csv if formato == "csv" else _celda_xlsx
 
-        def volcar():
-            datos = buffer.getvalue()
-            buffer.seek(0)
-            buffer.truncate(0)
-            return datos
-
-        # BOM para que Excel abra el CSV en UTF-8, igual que las exportaciones.
-        yield "﻿"
-        escritor.writerow(columnas)
-        yield volcar()
+    def datos():
+        if recortado:
+            yield [_aviso_de_recorte(exportadas, total)] + [""] * (len(nombres) - 1)
         for fila in filas():
-            escritor.writerow([_celda_csv(v) for v in fila])
-            yield volcar()
+            yield [convertir(fila[i]) for i in proyeccion]
 
-    return StreamingResponse(
-        generar(),
-        media_type="text/csv; charset=utf-8",
-        headers={"Content-Disposition": f'attachment; filename="{nombre}"'},
-    )
+    cabeceras = {"Content-Disposition": f'attachment; filename="{base_nombre}.{formato}"',
+                 "X-Visor-Filas": str(exportadas), "X-Visor-Recortado": "true" if recortado else "false"}
+    if formato == "csv":
+        # Mismo CSV que las exportaciones (exports.csv_para_excel): BOM y ';'.
+        return StreamingResponse(csv_para_excel(nombres, datos()),
+                                 media_type="text/csv; charset=utf-8", headers=cabeceras)
+    return Response(xlsx_desde_filas(nombres, list(datos()), "Visor"), headers=cabeceras,
+                    media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 
 # ─── Edición de celdas (v1.9.9, 3.1) ────────────────────────────────────────
@@ -753,9 +973,15 @@ def _convertir(valor, info: dict, columna: str):
         if "JSON" in tipo:
             objeto = json.loads(texto)
             return json.dumps(objeto, ensure_ascii=False), objeto
-        if "DATE" in tipo or "TIME" in tipo:
+        if "TIME" in tipo:
             fecha = datetime.fromisoformat(texto.replace("Z", "+00:00"))
             return fecha.isoformat(sep=" "), fecha
+        if "DATE" in tipo:
+            # v1.9.11: una columna DATE guarda AAAA-MM-DD, como la escribe
+            # SQLAlchemy. Antes quedaba "AAAA-MM-DD 00:00:00": otro texto para
+            # el mismo día, que el índice único de daily_stats no veía repetido.
+            dia = date.fromisoformat(texto)
+            return dia.isoformat(), dia
     except (ValueError, TypeError) as e:
         raise HTTPException(
             status_code=400,
@@ -771,7 +997,8 @@ def update_cell(body: CellUpdateRequest, request: Request, cred=Depends(verify_d
     operador (v1.9.9: antes se mandaba el valor original y no cambiaba nada).
 
     - Revalida DASHBOARD_PASSWORD.
-    - Solo las tablas de EDITABLE_TABLES; las columnas *_enc nunca (403).
+    - Solo las tablas de EDITABLE_TABLES de system_config_global.db; la cola
+      (normalized_rc_events) nunca, ni las columnas *_enc (403).
     - El valor se valida contra el tipo declarado de la columna en la base.
     - provider_config se escribe por la sesión de SQLAlchemy: un cambio de
       use_mock o is_active sale con el MISMO aviso que el panel de
@@ -786,6 +1013,14 @@ def update_cell(body: CellUpdateRequest, request: Request, cred=Depends(verify_d
     if not correct_pass or not secrets.compare_digest(body.password.encode(), correct_pass.encode()):
         raise HTTPException(status_code=403, detail="Contraseña de administrador incorrecta")
 
+    # v1.9.11: la cola, con su motivo. Editarla a mano puede mandar a RC algo
+    # que nadie midió (ni el contrato ni el diferencial).
+    if body.table in TABLAS_COLA:
+        raise HTTPException(
+            status_code=403,
+            detail=f"La cola ({body.table}) es de solo lectura: editarla a mano puede mandar a RC "
+                   "algo que nadie midió."
+        )
     # Whitelist estricta — rechazo explícito de tablas operativas
     if body.table not in EDITABLE_TABLES:
         raise HTTPException(
@@ -808,6 +1043,11 @@ def update_cell(body: CellUpdateRequest, request: Request, cred=Depends(verify_d
     safe_db_path = _resolve_db_path(body.db_name)
     if not safe_db_path or not os.path.exists(safe_db_path):
         raise HTTPException(status_code=400, detail="Ruta de base de datos inválida")
+    if not _es_editable(body.db_name, body.table):
+        raise HTTPException(
+            status_code=403,
+            detail=f"En '{body.db_name}' no se edita: las tablas de configuración se editan en {BASE_EDITABLE}."
+        )
 
     conn = sqlite3.connect(safe_db_path)
     try:
@@ -848,14 +1088,19 @@ def update_cell(body: CellUpdateRequest, request: Request, cred=Depends(verify_d
             conn.commit()
         config_cache.invalidate()
 
+        # v1.9.11: usuario e id también dentro del detalle, además de user=.
         log_admin_action("edicion_celda_visor", {
-            "base": body.db_name, "tabla": body.table, "fila": body.rowid, "columna": body.column_name,
-            "antes": anterior, "despues": valor_sql,
+            "usuario": usuario, "base": body.db_name, "tabla": body.table, "id": body.rowid,
+            "fila": body.rowid, "columna": body.column_name, "antes": anterior, "despues": valor_sql,
         }, request, usuario)
         return {"status": "success", "message": "Celda actualizada correctamente",
                 "antes": anterior, "despues": valor_sql}
     except HTTPException:
         raise
+    except (sqlite3.IntegrityError, IntegrityErrorSQLA) as e:
+        # p. ej. el índice único de daily_stats (v1.9.11): el valor nuevo
+        # repetiría otra fila. Nada se escribió.
+        raise HTTPException(status_code=409, detail=f"El valor choca con otra fila de la tabla: {e}")
     except Exception as e:
         logger.error(f"Error al actualizar celda: {e}")
         raise HTTPException(status_code=500, detail=f"Error interno: {str(e)}")

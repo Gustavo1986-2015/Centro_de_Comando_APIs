@@ -62,7 +62,8 @@ const OPERADORES = src.match(/const _OPERADORES_SIN_VALOR = \[[^\]]*\];/);
 if (!OPERADORES) throw new Error('No encontré _OPERADORES_SIN_VALOR');
 eval(OPERADORES[0].replace('const ', 'global.'));
 for (const f of ['_escapeHtml', '_escAttr', '_botonReintentoFallidos', '_inputValorRegla', 'renderTriggerRules', 'updateRule',
-                 'renderRecentTable', '_opcionesDeModulo', '_credencialesDeModulo', '_leerOpcionesDeModulo']) {
+                 'renderRecentTable', '_opcionesDeModulo', '_credencialesDeModulo', '_leerOpcionesDeModulo',
+                 '_contenidoEnviadoRC']) {   // v1.9.11: lo usa renderRecentTable
   eval(`global.${f} = ` + extraer(f).replace(`function ${f}`, 'function'));
 }
 

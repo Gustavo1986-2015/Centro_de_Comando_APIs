@@ -120,9 +120,12 @@ global.prompt = () => { pidioContrasena = true; return 'clave-del-test'; };
 global.alert = () => {};
 global.currentConfigs = [];
 
+// v1.9.11: selector de coordenadas 0,0 y panel "Opciones de <proveedor>".
+global._opcionesModuloAbiertas = new Set();
+global._COLUMNAS_CONFIG = 15;
 for (const n of ['_escapeHtml', '_anchoUsuarioRc', '_escAttr', '_selectorMotorCola', 'esPull', '_celdaClaveWebhook', '_modoAuthWebhook', '_selectorAuthWebhook',
                  '_leerAuthWebhook', '_opcionesDeModulo', '_credencialesDeModulo', '_leerCredencialesDeModulo',
-                 '_leerOpcionesDeModulo', 'loadConfig', 'saveConfig']) {
+                 '_leerOpcionesDeModulo', '_selectorCeros', '_botonOpcionesDeModulo', 'loadConfig', 'saveConfig']) {
   cargar(n);
 }
 
