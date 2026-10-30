@@ -89,6 +89,11 @@ def check_and_migrate_db():
             if "module_options" not in columns:
                 cursor.execute("ALTER TABLE provider_config ADD COLUMN module_options JSON")
                 conn.commit()
+            # v1.9.11: opción de coordenadas 0,0 por integración. NULL = enviar,
+            # como hasta ahora: ninguna integración cambia al migrar.
+            if "coordenadas_cero" not in columns:
+                cursor.execute("ALTER TABLE provider_config ADD COLUMN coordenadas_cero TEXT")
+                conn.commit()
 
             # Techo de peticiones por minuto configurable por proveedor desde el panel
             if "rate_limit_per_min" not in columns:
@@ -272,7 +277,15 @@ def check_and_migrate_db():
                 # v1.9.10: recuperados con el reintento manual. 0 en las filas viejas.
                 cursor.execute("ALTER TABLE daily_stats ADD COLUMN recovered_count INTEGER DEFAULT 0")
                 conn.commit()
-                
+            # v1.9.11: fusiona los duplicados del mismo día y recién después
+            # crea el índice único. Idempotente; informa en consola qué fusionó.
+            try:
+                from app.core.estadisticas_diarias import fusionar_duplicados
+                fusionar_duplicados(conn)
+            except Exception as e:
+                logger.warning(f"Migración daily_stats: no se pudieron fusionar los duplicados "
+                               f"ni crear el índice único ({e}). Se reintenta al escribir.")
+
         # 3. Migración para system_settings
         cursor.execute("PRAGMA table_info(system_settings)")
         columns_sys = [row[1] for row in cursor.fetchall()]
@@ -330,6 +343,11 @@ def check_and_migrate_provider_db(provider: str, env: str):
                 # v1.9.10: detalle de la velocidad estimada de Tive. NULL en las
                 # filas existentes y en todo proveedor que no la estime.
                 cursor.execute("ALTER TABLE normalized_rc_events ADD COLUMN velocidad_detalle TEXT")
+                conn.commit()
+            if "rc_payload" not in columns:
+                # v1.9.11: lo entregado a zeep al enviar. Solo agrega: las filas
+                # existentes quedan en NULL ("evento anterior a v1.9.11").
+                cursor.execute("ALTER TABLE normalized_rc_events ADD COLUMN rc_payload TEXT")
                 conn.commit()
             if "ingest_id" not in columns:
                 # Sin backfill: las filas viejas quedan en NULL y SQLite admite

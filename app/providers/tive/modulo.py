@@ -20,6 +20,15 @@ de los trackers. El hub solo manda lo que RC no tiene:
 
 Mientras RC directo siga activo, las posiciones de los equipos no se envían.
 
+SIN POSICIÓN (v1.9.11)
+
+Cuando Tive no puede ubicar el equipo manda Location vacía con datos válidos
+(medido: Connectivity de K1153407, 02/10). Con "enviar_sin_posicion"
+(encendido por defecto) el módulo marca sus eventos `admite_sin_posicion` y
+el contrato común los acepta sin latitud ni longitud: NULL en la cola, "0" a
+RC. Nunca se copia una posición anterior. Con la velocidad encendida llevan
+1, motivo "sin posición", y no entran al historial. Apagado: v1.9.10.
+
 TODO SE MIDIÓ CONTRA LOS CRUDOS REALES (audit/tive_prod/2026-10/)
 
   - Tramo de tercero: Location.LocationMethod "container", DeviceId,
@@ -77,6 +86,11 @@ INTERRUPTORES = {
     # le llega "0"). Encendido: velocidad estimada de trackers y beacons,
     # para SIMON, el día que se apague el webhook directo de Tive a RC.
     "velocidad_equipos": False,
+    # v1.9.11. ENCENDIDO (decisión del usuario): cuando Tive no puede ubicar el
+    # equipo manda la ubicación vacía con datos válidos; se envía a RC con
+    # latitud y longitud 0 (en la cola quedan NULL). Apagado: v1.9.10, se
+    # descarta por falta de coordenadas.
+    "enviar_sin_posicion": True,
 }
 
 DESCRIPCION_INTERRUPTORES = {
@@ -86,11 +100,64 @@ DESCRIPCION_INTERRUPTORES = {
     "resolver_nombres_api": "Resolver nombres con la API de Tive",
     "posiciones_equipos": "Posiciones de equipos (duplica RC si no se pidió la baja)",
     "velocidad_equipos": "Velocidad estimada de equipos",
+    "enviar_sin_posicion": "Enviar eventos sin posición",
+}
+
+# v1.9.11: cómo se ve cada interruptor en Configuración (contrato en
+# app/providers/registry.py). El panel lo dibuja sin saber nada de Tive.
+GRUPO_ENVIO = "Qué se envía a RC"
+GRUPO_CALCULOS = "Cálculos"
+GRUPOS_INTERRUPTORES = [GRUPO_ENVIO, GRUPO_CALCULOS]
+DETALLE_INTERRUPTORES = {
+    "posiciones_terceros": {
+        "grupo": GRUPO_ENVIO, "duplica_rc": False,
+        "titulo": "Enviar posiciones de contenedores y tramos aéreos",
+        "ayuda": "Encendido: coordenadas del contenedor en altamar o en vuelo, con la patente del tracker "
+                 "del envío. Apagado: esos tramos no se envían.",
+    },
+    "posiciones_equipos": {
+        "grupo": GRUPO_ENVIO, "duplica_rc": True,
+        "titulo": "Enviar posiciones de trackers y sellos",
+        "ayuda": "RC ya las recibe por el webhook directo de Tive: encender solo cuando se dé de baja, si no "
+                 "llegan duplicadas a SIMON. Apagado: van solo por el webhook directo.",
+    },
+    "alertas_beacons": {
+        "grupo": GRUPO_ENVIO, "duplica_rc": False,
+        "titulo": "Enviar alertas de sellos (beacons)",
+        "ayuda": "Encendido: aperturas y alertas de los sellos A2A2A2…, con el número del sello como patente. "
+                 "Apagado: no se envían.",
+    },
+    "alertas_trackers": {
+        "grupo": GRUPO_ENVIO, "duplica_rc": True,
+        "titulo": "Enviar alertas de trackers",
+        "ayuda": "RC ya las recibe por el webhook directo de Tive: encender solo cuando se dé de baja. "
+                 "Apagado: van solo por el webhook directo.",
+    },
+    "enviar_sin_posicion": {
+        "grupo": GRUPO_ENVIO, "duplica_rc": False,
+        "titulo": "Enviar eventos sin posición",
+        "ayuda": "Cuando Tive no puede ubicar el equipo manda la ubicación vacía con temperatura u otros datos. "
+                 "Encendido: se envían a RC con latitud y longitud 0. Apagado: se descartan.",
+    },
+    "velocidad_equipos": {
+        "grupo": GRUPO_CALCULOS, "duplica_rc": False,
+        "titulo": "Calcular velocidad estimada de los equipos",
+        "ayuda": "Velocidad entre dos lecturas del mismo equipo (umbral 5 m). Encender junto con «Enviar "
+                 "posiciones de trackers y sellos». Apagado: a RC va 0.",
+    },
+    "resolver_nombres_api": {
+        "grupo": GRUPO_CALCULOS, "duplica_rc": False,
+        "titulo": "Resolver nombres de trackers con la API de Tive",
+        "ayuda": "Si un tramo de contenedor llega sin el nombre del tracker, se consulta a Tive. Requiere "
+                 "usuario y secreto de la API. Apagado: ese tramo se descarta.",
+    },
 }
 
 # El panel muestra el formulario de credenciales de la API solo para módulos
 # que lo declaren (ver app/api/routers/admin_config.py).
 USA_CREDENCIALES_API = True
+# v1.9.11: título de la sección de credenciales en Configuración.
+GRUPO_CREDENCIALES = "API de Tive"
 
 # LocationMethod vistos en los crudos del 01 y 02/10. Cualquier otro se avisa:
 # es la forma de detectar el primer tramo aéreo sin inventar su literal.
@@ -445,6 +512,12 @@ def _velocidad_medida(payload) -> float | None:
     return None
 
 
+def _sin_posicion(payload) -> bool:
+    """v1.9.11: Tive no pudo ubicar el equipo (Location vacía o sin latitud/longitud)."""
+    return (_numero(_g(payload, "Location", "Latitude")) is None
+            or _numero(_g(payload, "Location", "Longitude")) is None)
+
+
 def _lectura(payload) -> "velocidad.Lectura | None":
     """La lectura del evento (posición o alerta), o None si no sirve para el cálculo."""
     lat = _numero(_g(payload, "Location", "Latitude"))
@@ -473,6 +546,13 @@ def _calcular_velocidad(env: str, payload) -> "velocidad.Resultado | None":
     """
     metodo = _texto(_g(payload, "Location", "LocationMethod"))
     lectura = _lectura(payload)
+    if _sin_posicion(payload) and (_es_alerta(payload) or _texto(payload.get("DeviceName"))):
+        # v1.9.11: alerta o posición de equipo sin posición. El marcador 1,
+        # motivo "sin posición", y el historial no se toca.
+        resultado = velocidad.sin_posicion()
+        logger.debug(f"[TIVE-{env}] Velocidad {_equipo_de(env, payload) or '-'}: {resultado.valor} "
+                     f"({velocidad.MOTIVOS[resultado.motivo]}) | {_identidad(payload)}")
+        return resultado
     if metodo and metodo.lower() == METODO_MARITIMO:
         # Posición marítima del contenedor: siempre 0, y no entra al historial
         # del tracker (velocidad.maritimo la marca para no guardarse).
@@ -653,7 +733,7 @@ def _candidatos_posicion(env: str, payload, opciones: dict, ingest_id: str | Non
 
     lat = _numero(_g(payload, "Location", "Latitude"))
     lon = _numero(_g(payload, "Location", "Longitude"))
-    if lat is None or lon is None:
+    if (lat is None or lon is None) and not opciones["enviar_sin_posicion"]:
         _descartar(env, "sin_coordenadas", "evento sin nombre de equipo y sin coordenadas en Location: no es un "
                         "tramo de tercero utilizable", payload, logging.WARNING)
         return []
@@ -732,6 +812,12 @@ def _procesar(payload, env: str, module_options, ingest_id: str) -> list[RCCanon
         candidatos = _candidatos_posicion(env, payload, opciones, ingest_id)
     if not candidatos:
         return []
+
+    # v1.9.11: con "enviar_sin_posicion" el módulo declara que sus eventos
+    # pueden ir sin posición; el contrato común lo respeta.
+    if opciones["enviar_sin_posicion"]:
+        for evento, *_ in candidatos:
+            evento.admite_sin_posicion = True
 
     # Validación del contrato ANTES de registrar las claves: un evento
     # descartado por falta de datos no tiene que contar como "ya visto".
