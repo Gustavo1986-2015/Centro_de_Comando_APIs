@@ -116,7 +116,7 @@ def test_la_version_es_la_del_hub_y_se_ve_en_el_pie_del_panel(config_aislada):
     # versión lo dejaba en rojo. El número exacto lo fija este test.
     from app.api.routers import dashboard
     from app.version import __version__
-    assert __version__ == "1.9.10"
+    assert __version__ == "1.9.11"
     r = _app(dashboard.router).get("/dashboard", auth=_auth())
     assert r.status_code == 200
     assert f'id="version-hub" title="Versión del hub en ejecución">v{__version__}</span>' in r.text

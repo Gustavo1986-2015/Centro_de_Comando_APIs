@@ -55,6 +55,9 @@ MUESTRA_PRUEBA = "2026-10-01:49"             # AccountId -1
 POSICION_TRACKER = "2026-10-01:1"
 
 TRACKERS_ON = {"alertas_trackers": True}
+# v1.9.11: "enviar_sin_posicion" arranca encendido. Los conteos medidos en la
+# v1.9.2 (decisión 6: lo sin posición no sale) son los de este interruptor apagado.
+TRACKERS_ON_V1910 = {"alertas_trackers": True, "enviar_sin_posicion": False}
 
 
 @pytest.fixture(autouse=True)
@@ -92,16 +95,27 @@ def test_con_los_valores_por_defecto_no_sale_nada_de_estos_crudos():
 def test_con_alertas_de_trackers_salen_las_20_que_mide_el_informe():
     """
     41 alertas reales → 22 únicas (doble clave) → 20 con coordenadas.
-    Las dos Connectivity de K1153407 no traen posición (decisión 6).
+    Las dos Connectivity de K1153407 no traen posición (decisión 6): con
+    "enviar_sin_posicion" apagado, como hasta v1.9.10, no salen.
     """
     salida = [e for i, r in enumerate(CRUDOS_V192)
-              for e in _procesar(r["payload"], TRACKERS_ON, ingest_id=f"r{i}")]
+              for e in _procesar(r["payload"], TRACKERS_ON_V1910, ingest_id=f"r{i}")]
     assert len(salida) == 20
     codigos = sorted((e.chassis_number, e.code) for e in salida)
     assert ("K393478", "ShockEvents") in codigos
     assert codigos.count(("K393478", "ShockEvents")) == 2, "dos golpes distintos, no cuatro"
     assert not any(c.startswith("Connectivity") for _, c in codigos)
     assert sum(1 for p, c in codigos if p == "J392825") == 1, "9 actualizaciones → 1 apertura"
+
+
+def test_con_enviar_sin_posicion_salen_tambien_las_dos_connectivity():
+    """v1.9.11 (por defecto): las 22 únicas; las dos Connectivity sin posición."""
+    salida = [e for i, r in enumerate(CRUDOS_V192)
+              for e in _procesar(r["payload"], TRACKERS_ON, ingest_id=f"r{i}")]
+    assert len(salida) == 22
+    sin_posicion = [(e.chassis_number, e.code) for e in salida if e.sin_posicion]
+    assert sorted(sin_posicion) == [("K1153407", "Connectivity"), ("K1153407", "Connectivity-FIN")]
+    assert all(e.latitude is None and e.longitude is None for e in salida if e.sin_posicion)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -264,8 +278,9 @@ def test_alert_shipmentid_solo_como_ultimo_recurso_y_avisando(caplog):
 
 
 def test_la_alerta_sin_posicion_no_se_envia():
-    """Decisión 6: Connectivity de K1153407, sin coordenadas."""
-    assert _procesar(_por_origen(CONNECTIVITY), TRACKERS_ON) == []
+    """Decisión 6: Connectivity de K1153407, sin coordenadas. Desde v1.9.11,
+    con "enviar_sin_posicion" apagado (encendido sale: test_sin_posicion_v1911)."""
+    assert _procesar(_por_origen(CONNECTIVITY), TRACKERS_ON_V1910) == []
 
 
 def test_alerta_con_datos_de_sensores():
@@ -281,10 +296,12 @@ def test_alerta_con_datos_de_sensores():
 
 def test_los_valores_por_defecto():
     # v1.9.4 suma "resolver_nombres_api", v1.9.5 "posiciones_equipos" y
-    # v1.9.10 "velocidad_equipos", los tres apagados por defecto.
+    # v1.9.10 "velocidad_equipos", los tres apagados por defecto. v1.9.11
+    # "enviar_sin_posicion", ENCENDIDO por defecto (decisión del usuario).
     assert modulo.opciones_efectivas(None) == {
         "posiciones_terceros": True, "alertas_beacons": True, "alertas_trackers": False,
         "resolver_nombres_api": False, "posiciones_equipos": False, "velocidad_equipos": False,
+        "enviar_sin_posicion": True,
     }
 
 
@@ -416,8 +433,10 @@ def test_un_evento_descartado_por_el_contrato_no_cuenta_como_visto():
     sin_fecha["EntryTimeUtc"] = None
     sin_fecha["EntryTimeEpoch"] = payload["EntryTimeEpoch"]
     sin_fecha["Location"]["Latitude"] = None
-    assert _procesar(sin_fecha, TRACKERS_ON) == []
-    assert len(_procesar(payload, TRACKERS_ON)) == 1
+    # v1.9.11: con "enviar_sin_posicion" encendido este evento sale (le queda
+    # la fecha del epoch): el caso se prueba con el interruptor apagado.
+    assert _procesar(sin_fecha, TRACKERS_ON_V1910) == []
+    assert len(_procesar(payload, TRACKERS_ON_V1910)) == 1
 
 
 def test_cada_descarte_dice_motivo_e_identidad(caplog):
@@ -662,7 +681,8 @@ def test_los_interruptores_se_ven_y_se_guardan_desde_el_panel(app_tive):
     assert tive["modulo_dedicado"] is True
     assert tive["module_options"] == {"posiciones_terceros": True, "alertas_beacons": True,
                                       "alertas_trackers": False, "resolver_nombres_api": False,
-                                      "posiciones_equipos": False, "velocidad_equipos": False}
+                                      "posiciones_equipos": False, "velocidad_equipos": False,
+                                      "enviar_sin_posicion": True}   # v1.9.11
     assert set(tive["module_options_labels"]) == set(tive["module_options"])
     protrack = next(c for c in configs if c["provider_name"] == "PROTRACK")
     assert protrack["modulo_dedicado"] is False and "module_options" not in protrack
@@ -678,7 +698,8 @@ def test_los_interruptores_se_ven_y_se_guardan_desde_el_panel(app_tive):
     tive = next(c for c in app_tive.get("/api/config").json() if c["provider_name"] == "TIVE")
     assert tive["module_options"] == {"posiciones_terceros": True, "alertas_beacons": False,
                                       "alertas_trackers": True, "resolver_nombres_api": False,
-                                      "posiciones_equipos": False, "velocidad_equipos": False}
+                                      "posiciones_equipos": False, "velocidad_equipos": False,
+                                      "enviar_sin_posicion": True}   # v1.9.11
 
     r = app_tive.post("/api/config", json=[_actualizacion(tive, {"inventado": True})])
     assert r.status_code == 400

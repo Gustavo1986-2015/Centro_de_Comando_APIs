@@ -17,6 +17,7 @@ from app.core import config_cache
 from app.core.auditor import log_admin_action
 from app.core import webhook_auth
 from app.core import modo_simulado
+from app.core import contrato
 from app.core.crypto import decrypt, cifrar_credencial, CredencialSinCifrar
 from app.core.secretos import cifrar_diccionario, diccionario_para_el_panel
 from app.providers import registry
@@ -48,6 +49,8 @@ class ConfigUpdate(BaseModel):
     rate_limit_per_min: int | None = None
     # Interruptores de un módulo dedicado (Tive). None = no tocar lo guardado.
     module_options: dict | None = None
+    # v1.9.11: "enviar" | "filtrar" para coordenadas 0,0. None = no tocar.
+    coordenadas_cero: str | None = None
     # Credenciales de la API del proveedor de un módulo dedicado (Tive):
     # {"client_id": "...", "client_secret": "..."}. None o vacío = no tocar.
     module_credentials: dict | None = None
@@ -254,12 +257,18 @@ def _opciones_de_modulo(c) -> dict:
     if modulo is None:
         return {"modulo_dedicado": False}
     efectivas = modulo.opciones_efectivas(getattr(c, "module_options", None))
+    # v1.9.11: grupo, título, ayuda y "duplica RC" de cada interruptor, para el
+    # panel "Opciones de <proveedor>" (ver app/providers/registry.py).
+    detalle, grupos = registry.detalle_para_panel(modulo)
     salida = {
         "modulo_dedicado": True,
         "module_options": efectivas,
         "module_options_labels": dict(modulo.DESCRIPCION_INTERRUPTORES),
+        "module_options_detalle": detalle,
+        "module_options_grupos": grupos,
     }
     if getattr(modulo, "USA_CREDENCIALES_API", False):
+        salida["module_credentials_grupo"] = getattr(modulo, "GRUPO_CREDENCIALES", None) or "API del proveedor"
         # El client_id se muestra (es un nombre, ej. "Envios Assistcargo");
         # del secreto solo se informa si está cargado. Nunca sale del servidor.
         datos = _bloque_fetch(c)
@@ -415,6 +424,8 @@ def get_all_configs(_: None = Depends(verify_dashboard_auth)):
             # NULL = usar el límite global; solo aplica a proveedores PUSH
             "rate_limit_per_min": getattr(c, 'rate_limit_per_min', None),
             "enable_state_dedup": bool(getattr(c, 'enable_state_dedup', True)),
+            # v1.9.11: sin valor guardado rige "enviar", como siempre.
+            "coordenadas_cero": getattr(c, "coordenadas_cero", None) or contrato.CEROS_ENVIAR,
             **_opciones_de_modulo(c),
         } for c in configs]
     finally:
@@ -531,6 +542,18 @@ def _aplicar_configs(updates: List[ConfigUpdate]):
                 if u.module_credentials is not None:
                     _guardar_credenciales_de_modulo(conf, u.module_credentials)
 
+                if u.coordenadas_cero is not None:
+                    if u.coordenadas_cero not in contrato.OPCIONES_CEROS:
+                        raise HTTPException(
+                            status_code=400,
+                            detail=f"{conf.provider_name}/{conf.env}: 'coordenadas_cero' tiene que ser "
+                                   f"{' o '.join(contrato.OPCIONES_CEROS)}.")
+                    anterior = getattr(conf, "coordenadas_cero", None) or contrato.CEROS_ENVIAR
+                    if u.coordenadas_cero != anterior:
+                        logger.warning(f"Coordenadas 0,0 de {conf.provider_name}/{conf.env}: "
+                                       f"{anterior} -> {u.coordenadas_cero}.")
+                        conf.coordenadas_cero = u.coordenadas_cero
+
                 conf.use_mock = u.use_mock
                 conf.purge_interval_min = u.purge_interval_min
                 conf.run_interval_sec = u.run_interval_sec
@@ -539,6 +562,7 @@ def _aplicar_configs(updates: List[ConfigUpdate]):
                 if hasattr(conf, 'enable_state_dedup'):
                     conf.enable_state_dedup = u.enable_state_dedup
         db.commit()
+        contrato.invalidar_coordenadas_cero()
         # B-29 (v1.9.9): la clave nueva de Schmitz vale desde ya. Antes la caché
         # de su autenticación tardaba hasta 30 s en releerla.
         if claves_de_webhook_cambiadas:

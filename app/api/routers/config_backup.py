@@ -43,10 +43,12 @@ from pydantic import BaseModel
 from app.core import webhook_auth
 from app.core.auditor import log_admin_action
 from app.core.auth import verify_dashboard_auth
-from app.core import config_cache, modo_simulado
+from app.core import config_cache, contrato, modo_simulado
 from app.core.crypto import decrypt, encrypt
 from app.database import get_session
 from app.models.config_models import ProviderConfig, SystemSettings, RC_VALORES_POR_DEFECTO
+from app.core.descartes import DIAS_RETENCION as DESCARTES_DIAS_POR_DEFECTO, MAX_FILAS as DESCARTES_FILAS_POR_DEFECTO
+from app.providers import registry
 from app.version import __version__
 
 logger = logging.getLogger(__name__)
@@ -211,6 +213,14 @@ def _credenciales_faltantes(conf: ProviderConfig, fetch: dict, enrich: dict) -> 
     return faltantes
 
 
+def _opciones_de_modulo_efectivas(conf: ProviderConfig):
+    modulo = registry.modulo_dedicado(conf.provider_name)
+    guardadas = getattr(conf, "module_options", None)
+    if modulo is None:
+        return guardadas
+    return modulo.opciones_efectivas(guardadas)
+
+
 def _proveedor_a_dict(conf: ProviderConfig) -> dict:
     """Un proveedor en la forma que va al YAML: legible y sin credenciales."""
     fetch = _leer_json_config(conf.fetch_config_enc, conf.fetch_config)
@@ -242,7 +252,12 @@ def _proveedor_a_dict(conf: ProviderConfig) -> dict:
         "webhook_autenticacion": getattr(conf, "webhook_auth_config", None),
         "rc_usuario": conf.rc_user,
         # Interruptores de un módulo dedicado (Tive). No son secretos.
-        "opciones_modulo": getattr(conf, "module_options", None),
+        # v1.9.11: los EFECTIVOS (los guardados completados con los valores
+        # por defecto del módulo): una fila que nunca se tocó desde el panel
+        # tenía NULL y el respaldo no los llevaba.
+        "opciones_modulo": _opciones_de_modulo_efectivas(conf),
+        # v1.9.11: coordenadas 0,0 informadas por el proveedor (enviar/filtrar).
+        "coordenadas_cero": getattr(conf, "coordenadas_cero", None) or contrato.CEROS_ENVIAR,
     }
     for clave, valor in opcionales.items():
         if valor is None:
@@ -330,6 +345,10 @@ _CLAVES_SETTINGS = {
     "retencion_horas_db": ("retencion_base_horas", 2),
     "export_max_days": ("tope_dias_por_descarga", 7),
     **{clave: (clave, defecto) for clave, defecto in RC_VALORES_POR_DEFECTO.items()},
+    # v1.9.10: retención de descartes. Sin valor guardado rige la de siempre
+    # (7 días, 50.000 filas), y eso es lo que se exporta.
+    "descartes_retencion_dias": ("descartes_retencion_dias", DESCARTES_DIAS_POR_DEFECTO),
+    "descartes_max_filas": ("descartes_max_filas", DESCARTES_FILAS_POR_DEFECTO),
 }
 
 # Claves de 'configuracion_general' de respaldos viejos que ya no se usan. Se
@@ -569,6 +588,7 @@ CAMPOS_SIMPLES = {
     "webhook_autenticacion": "webhook_auth_config",
     "rc_usuario": "rc_user",
     "opciones_modulo": "module_options",
+    "coordenadas_cero": "coordenadas_cero",
 }
 
 
@@ -679,6 +699,14 @@ def _validar_proveedor(prov: dict, posicion: int):
                 detail=f"En {etiqueta}, 'opciones_modulo' {no_booleanas} tienen que ser true o false.",
             )
 
+    ceros = prov.get("coordenadas_cero")
+    if ceros is not None and ceros not in contrato.OPCIONES_CEROS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"En {etiqueta}, 'coordenadas_cero' solo admite {' o '.join(contrato.OPCIONES_CEROS)}, "
+                   f"y vino {ceros!r}.",
+        )
+
     tipo = prov.get("tipo")
     if tipo is not None and str(tipo).lower() not in ("push", "pull"):
         raise HTTPException(
@@ -749,6 +777,18 @@ def _parsear_yaml(texto: str) -> dict:
             status_code=400,
             detail="'configuracion_general' tiene que ser un bloque de configuración.",
         )
+    # v1.9.11: la retención de descartes, con los mismos límites que el panel.
+    from app.core import descartes
+    for clave, (minimo, maximo) in (("descartes_retencion_dias", descartes.LIMITES_DIAS),
+                                    ("descartes_max_filas", descartes.LIMITES_FILAS)):
+        valor = (general or {}).get(clave)
+        if valor is not None and (isinstance(valor, bool) or not isinstance(valor, int)
+                                  or not minimo <= valor <= maximo):
+            raise HTTPException(
+                status_code=400,
+                detail=f"En configuracion_general, '{clave}' tiene que ser un entero entre {minimo} y "
+                       f"{maximo} (o null para el valor por defecto), y vino {valor!r}.",
+            )
 
     return datos
 
@@ -769,6 +809,14 @@ def _diferencias_proveedor(deseado: dict, actual: ProviderConfig) -> list[dict]:
         if nuevo is None and clave not in CAMPOS_ANULABLES:
             continue
         viejo = getattr(actual, columna, None)
+        # v1.9.11: lo que rige, no lo guardado. Sin valor, coordenadas_cero es
+        # "enviar"; los interruptores de un módulo se completan con sus valores
+        # por defecto (de los dos lados: un YAML viejo puede no traerlos todos).
+        if clave == "coordenadas_cero":
+            viejo = viejo or contrato.CEROS_ENVIAR
+        elif clave == "opciones_modulo" and registry.modulo_dedicado(actual.provider_name) is not None:
+            efectivas = registry.modulo_dedicado(actual.provider_name).opciones_efectivas
+            viejo, nuevo = efectivas(viejo), efectivas(nuevo)
         # Los booleanos llegan como bool del YAML y como 0/1 desde SQLite.
         if isinstance(nuevo, bool) or isinstance(viejo, bool):
             iguales = bool(nuevo) == bool(viejo)

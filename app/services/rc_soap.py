@@ -49,6 +49,18 @@ def _nombre_cache_seguro(username: str) -> str:
     return f"rc_token_cache_{limpio}_{firma}.json"
 
 
+def _registrar_payload(event, evento_rc: dict) -> None:
+    """
+    v1.9.11: deja en el evento (rc_payload) el diccionario que se le entrega
+    a zeep, serializado en ese momento. No se reconstruye después: es lo que
+    salió. Nunca frena el envío.
+    """
+    try:
+        event.rc_payload = json.dumps(evento_rc, ensure_ascii=False)
+    except Exception as e:
+        logger.warning(f"No se pudo guardar el payload enviado a RC: {e}")
+
+
 def construir_evento_rc(event) -> dict:
     """
     El evento EXACTO que se manda a Recurso Confiable. Única fuente de verdad.
@@ -420,7 +432,10 @@ class RCSOAPClient:
         
         event_dicts = []
         for event in events:
-            event_dicts.append(construir_evento_rc(event))
+            evento_rc = construir_evento_rc(event)
+            # v1.9.11: el mismo diccionario que recibe zeep, para rc_payload.
+            _registrar_payload(event, evento_rc)
+            event_dicts.append(evento_rc)
         
         # Enviar (Zeep requiere mapear explícitamente el array a la llave 'Event' del esquema XML)
         res = client.service.GPSAssetTracking(token, {'Event': event_dicts})
@@ -611,6 +626,9 @@ class RCSOAPClient:
                 results = []
                 import random
                 for ev in events:
+                    # v1.9.11: en simulado, el que se habría enviado (la misma
+                    # función que arma el envío real).
+                    _registrar_payload(ev, construir_evento_rc(ev))
                     mock_job_id = f"job_mock_{int(datetime.now().timestamp())}_{random.randint(100, 999)}"
                     mock_json_response = f'{{"timestamp": "{datetime.now(timezone.utc).isoformat()}", "level": "INFO", "event_type": "batch_sent", "status": "success", "job_id": "{mock_job_id}"}}'
                     results.append((True, mock_job_id, mock_json_response, RCResponseCategory.SIMULADO))

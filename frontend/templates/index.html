@@ -244,7 +244,8 @@
                             <th title="Frecuencia en segundos en que el worker escanea y procesa datos nuevos.">Ejecución (seg)</th>
                             <th title="Peticiones por minuto que acepta el webhook de este proveedor. Vacío = usar el límite global del sistema. No aplica a proveedores PULL.">Límite Push (req/min)</th>
                             <th title="Motor de base de datos usado para la cola interna de procesamiento.">Motor Cola</th>
-                            <th title="Qué envía una integración con módulo dedicado (Tive). No aplica a las integraciones del Integration Studio.">Opciones del Módulo</th>
+                            <th title="Latitud Y longitud exactamente 0 informadas por el proveedor: enviar (como siempre, con aviso) o filtrar (a Descartes). Una sola coordenada en 0 siempre sale.">Coordenadas 0,0</th>
+                            <th title="Qué envía una integración con módulo dedicado (Tive): se abre un panel debajo de la fila. No aplica a las integraciones del Integration Studio.">Opciones del Módulo</th>
 
                         </tr>
                     </thead>
@@ -847,14 +848,22 @@
                 </div>
                 <div style="display: flex; gap: 0.5rem; align-items: flex-end; margin-bottom: 1rem;">
                     <button class="btn-save" onclick="loadQueryData()" style="height: 42px;">Consultar Datos</button>
-                    <button class="btn-save" onclick="descargarVistaBd()" style="height: 42px;" title="CSV de la vista actual: los mismos filtros, todas las páginas. Las columnas cifradas salen como (cifrado).">⬇ Descargar CSV</button>
+                    <button class="btn-save" onclick="descargarVistaBd()" style="height: 42px;" title="CSV de la vista actual: los mismos filtros, el mismo orden y las columnas visibles, todas las páginas hasta el tope. Las columnas cifradas salen como (cifrado).">⬇ CSV</button>
+                    <button class="btn-save" onclick="descargarVistaBd('xlsx')" style="height: 42px;" title="Excel de la vista actual: lo mismo que el CSV.">⬇ Excel</button>
+                    <button class="btn-save" onclick="alternarSelectorColumnasBd()" style="height: 42px;" title="Elegir qué columnas se muestran (se recuerda en este navegador)">Columnas ▾</button>
                 </div>
             </div>
 
             <div id="db-search-container"></div>
 
-            <!-- Celda completa (v1.9.8): clic en una celda de la grilla. -->
-            <div id="db-detalle" style="display: none; border: 1px solid var(--card-border); border-radius: 8px; padding: 0.75rem 1rem; margin-bottom: 1rem; background: var(--level-1);">
+            <!-- v1.9.11: columnas visibles, total y conteo por estado, aviso de recorte. -->
+            <div id="db-columnas-panel" class="db-columnas-panel" style="display: none;"></div>
+            <div id="db-resumen" class="db-resumen"></div>
+            <div id="db-export-aviso" class="db-export-aviso"></div>
+
+            <!-- Celda completa (v1.9.8): clic en una celda de la grilla.
+                 v1.9.11: panel lateral, con el JSON formateado. -->
+            <div id="db-detalle" class="db-detalle-lateral" style="display: none;">
                 <div style="display: flex; justify-content: space-between; align-items: center; gap: 0.5rem; flex-wrap: wrap;">
                     <strong id="db-detalle-titulo" style="font-size: 0.85rem;"></strong>
                     <div style="display: flex; gap: 0.5rem; align-items: center;">
@@ -864,7 +873,7 @@
                         <button class="db-page-btn" onclick="cerrarDetalleBd()" title="Cerrar">&times;</button>
                     </div>
                 </div>
-                <pre id="db-detalle-valor" style="margin: 0.5rem 0 0; max-height: 320px; overflow: auto; white-space: pre-wrap; word-break: break-all; font-size: 0.78rem; user-select: text;"></pre>
+                <pre id="db-detalle-valor" class="db-detalle-valor"></pre>
             </div>
 
             <div class="table-container">

@@ -433,7 +433,8 @@ def _respuestas_reales():
     }
 
 
-CARGAR = ["_escapeHtml", "_escAttr", "_fechaLocalInput", "_textoFechaDescarte", "_categoriaDescarte",
+# v1.9.11: _fechaHora es el formato de fecha compartido (6.1).
+CARGAR = ["_escapeHtml", "_escAttr", "_fechaHora", "_fechaLocalInput", "_textoFechaDescarte", "_categoriaDescarte",
           "_paramsDescartes", "_renderTarjetasDescartes", "_renderTablaDescartes", "_renderPorEquipoDescartes",
           "_renderPaginacionDescartes", "_enlaceMapa"]
 

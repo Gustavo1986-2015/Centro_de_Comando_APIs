@@ -78,5 +78,9 @@ class NormalizedRCEvent(Base):
     # v1.9.10: detalle de la velocidad estimada de Tive (JSON). NULL para todo
     # lo demás. No viaja a RC.
     velocidad_detalle = Column(Text, nullable=True)
+    # v1.9.11: el diccionario EXACTO que el cliente SOAP le entregó a zeep (JSON),
+    # guardado al enviar; en simulado, el que se habría enviado. NULL en las
+    # filas de antes de v1.9.11 y en las que todavía no se intentaron.
+    rc_payload = Column(Text, nullable=True)
     retry_count = Column(Integer, default=0)
     next_retry_at = Column(DateTime(timezone=True), nullable=True)

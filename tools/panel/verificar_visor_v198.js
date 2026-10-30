@@ -73,8 +73,14 @@ for (const n of ['_escapeHtml', '_escAttr', '_origenBd', '_parametrosVisorBd', '
                  '_asegurarBuscadorBd', '_textoCeldaBd', '_textoCompletoBd', 'renderVisorBd',
                  'verCeldaBd', 'cerrarDetalleBd', '_copiarTexto', 'copiarCeldaBd', '_filaComoJsonBd',
                  'copiarFilaBd', 'descargarVistaBd', '_renderPagination', 'goToPage',
-                 '_coordDescarte', '_horaDescarte', '_renderDescartes', '_anchoUsuarioRc']) cargar(n);
+                 '_coordDescarte', '_fechaHora', '_horaDescarte', '_renderDescartes', '_anchoUsuarioRc',
+                 // v1.9.11: orden, columnas visibles, resumen JSON y conteo.
+                 '_claveVistaBd', '_columnasOcultasBd', '_resumenJsonBd', '_resumenConsultaBd',
+                 '_selectorColumnasBd']) cargar(n);
 global._dbPage = { size: 50, offset: 0, total: 0 };
+global._dbOrden = null;
+global._dbUltimaRespuesta = null;
+global._dbOcultas = {};
 global._dbEditorState = { db: null, table: null, editable: false, pendingEdit: null };
 global._dbVista = null;
 global._dbSeleccion = null;

@@ -174,11 +174,18 @@ class SQLiteQueue(MessageQueueInterface):
             self._recuperar_estancados_sync, provider, env, umbral_seg
         )
 
+    @staticmethod
+    def _con_payload(u: dict, fila: dict) -> dict:
+        """v1.9.11: rc_payload solo si hubo intento; None no pisa lo guardado."""
+        if u.get("rc_payload") is not None:
+            fila["rc_payload"] = u["rc_payload"]
+        return fila
+
     def _mark_batch_as_sent_sync(self, provider: str, env: str, updates: List[dict]) -> None:
         with session_context(provider, env) as db:
             if updates:
                 now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
-                mappings = [{
+                mappings = [self._con_payload(u, {
                     "id": u['event_id'],
                     # 'simulado' cuando la integración está en modo simulado
                     # (v1.9.7); sin indicación, 'sent' como siempre.
@@ -189,7 +196,7 @@ class SQLiteQueue(MessageQueueInterface):
                     "retry_count": 0,
                     "next_retry_at": None,
                     "updated_at": now_utc
-                } for u in updates]
+                }) for u in updates]
                 db.bulk_update_mappings(NormalizedRCEvent, mappings)
 
     async def mark_batch_as_sent(self, provider: str, env: str, updates: List[dict]) -> None:
@@ -199,14 +206,14 @@ class SQLiteQueue(MessageQueueInterface):
         with session_context(provider, env) as db:
             if updates:
                 now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
-                mappings = [{
+                mappings = [self._con_payload(u, {
                     "id": u['event_id'],
                     "status": "failed",
                     "rc_response": u['rc_response'],
                     "job_id": u['job_id'],
                     "rc_latency_sec": u['elapsed_sec'],
                     "updated_at": now_utc
-                } for u in updates]
+                }) for u in updates]
                 db.bulk_update_mappings(NormalizedRCEvent, mappings)
 
     async def mark_batch_as_failed(self, provider: str, env: str, updates: List[dict]) -> None:
@@ -216,7 +223,7 @@ class SQLiteQueue(MessageQueueInterface):
         with session_context(provider, env) as db:
             if updates:
                 now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
-                mappings = [{
+                mappings = [self._con_payload(u, {
                     "id": u['event_id'],
                     "status": "pending",
                     "rc_response": u['rc_response'],
@@ -225,7 +232,7 @@ class SQLiteQueue(MessageQueueInterface):
                     "retry_count": u['retry_count'],
                     "next_retry_at": u['next_retry_at'],
                     "updated_at": now_utc
-                } for u in updates]
+                }) for u in updates]
                 db.bulk_update_mappings(NormalizedRCEvent, mappings)
 
     async def schedule_batch_retry(self, provider: str, env: str, updates: List[dict]) -> None:
