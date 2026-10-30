@@ -64,6 +64,7 @@ MISMA_HORA_COORDENADAS_DISTINTAS = "misma_hora_coordenadas_distintas"
 DETENIDO_INFORMADO = "detenido_informado"     # el proveedor lo afirma (ShipmentStopped en Tive)
 MARITIMO = "maritimo"
 MEDIDA = "medida"                             # preparado: el proveedor mandó una velocidad medida
+SIN_POSICION = "sin_posicion"                 # v1.9.11: el proveedor no pudo ubicar el equipo
 
 MOTIVOS = {
     DETENIDO_UMBRAL: "detenido por umbral",
@@ -73,6 +74,7 @@ MOTIVOS = {
     DETENIDO_INFORMADO: "detenido informado por el proveedor",
     MARITIMO: "marítimo",
     MEDIDA: "medida por el proveedor",
+    SIN_POSICION: "sin posición",
 }
 
 
@@ -197,3 +199,12 @@ def detenido_informado(actual: Lectura) -> Resultado:
 def maritimo(actual: Lectura | None = None) -> Resultado:
     """Posición marítima del contenedor: siempre 0 y no entra al historial."""
     return Resultado(VELOCIDAD_DETENIDO, MARITIMO, actual=actual, guardar=False)
+
+
+def sin_posicion() -> Resultado:
+    """
+    v1.9.11: el evento llegó sin posición (el proveedor no pudo ubicar el
+    equipo). No se puede calcular: el marcador, y la lectura no entra al
+    historial.
+    """
+    return Resultado(VELOCIDAD_NO_CALCULADA, SIN_POSICION, guardar=False)

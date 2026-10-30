@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Boolean, Date, Float, JSON
+from sqlalchemy import Column, Integer, String, Boolean, Date, Float, JSON, Index
 from app.database import Base
 
 # Valores por defecto del comportamiento ante fallas de Recurso Confiable.
@@ -56,6 +56,11 @@ class ProviderConfig(Base):
     # defecto del módulo. Las integraciones del Integration Studio no lo usan.
     module_options = Column(JSON, nullable=True)
 
+    # v1.9.11: qué hacer con latitud Y longitud exactamente 0 informadas por el
+    # proveedor: "enviar" (como siempre, con aviso) o "filtrar" (a Descartes,
+    # categoría coordenadas_cero). NULL = "enviar". Ver app/core/contrato.py.
+    coordenadas_cero = Column(String, nullable=True)
+
 class ProviderDictionary(Base):
     """Almacena pares Key-Value del diccionario de metadatos (Ej. IMEI -> Placa)."""
     __tablename__ = "provider_dictionary"
@@ -81,6 +86,11 @@ class DailyStat(Base):
     # v1.9.10: fallidos que ese día se volvieron a la cola con el reintento
     # manual del panel (la tarjeta "Fallidos" los muestra como recuperados).
     recovered_count = Column(Integer, default=0)
+
+    # v1.9.11: una fila por día, integración y entorno. Las bases existentes lo
+    # reciben al arrancar, después de fusionar sus duplicados
+    # (app/core/estadisticas_diarias.py); una base nueva, con la tabla.
+    __table_args__ = (Index("ux_daily_stats_dia", "date", "provider", "env", unique=True),)
 
 class SystemSettings(Base):
     """Modelo para configuración global e infraestructura del Hub."""

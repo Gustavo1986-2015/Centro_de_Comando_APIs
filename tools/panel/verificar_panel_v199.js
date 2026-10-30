@@ -38,8 +38,13 @@ const escapar = t => String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;').repl
 const elementos = {};
 function nodo(id) {
   let texto = '';
+  let html = '';
   return {
-    id, value: '', innerHTML: '', style: {}, dataset: {}, options: [], children: [],
+    id, value: '', style: {}, dataset: {}, options: [], children: [],
+    // v1.9.11: como en el navegador, asignar innerHTML reemplaza los hijos
+    // (si no, una llamada que el arnés repite acumulaba filas).
+    get innerHTML() { return html; },
+    set innerHTML(v) { html = String(v); this.children = []; },
     get textContent() { return texto; },
     set textContent(v) { texto = String(v); if (id === '_div') this.innerHTML = escapar(v); },
     classList: { add() {}, remove() {}, toggle() {}, contains: () => false },
@@ -67,9 +72,18 @@ function consultar(sel) {
 global.document = {
   getElementById: id => (elementos[id] = elementos[id] || nodo(id)),
   createElement: t => nodo('_' + t),
-  querySelectorAll: consultar, querySelector: () => null, body: nodo('body'),
+  // v1.9.11: body queda en la salida (los modales se cuelgan de ahí).
+  querySelectorAll: consultar, querySelector: () => null, body: (elementos.body = nodo('body')),
 };
 global.window = { location: { href: '' } };
+// v1.9.11: localStorage de juguete. "almacen" en la entrada es lo que ya tenía
+// el navegador; "sin_almacen": true simula una ventana privada (lanza).
+const almacen = Object.assign({}, datos.almacen || {});
+global.localStorage = {
+  getItem: k => { if (datos.sin_almacen) throw new Error('SecurityError'); return k in almacen ? almacen[k] : null; },
+  setItem: (k, v) => { if (datos.sin_almacen) throw new Error('SecurityError'); almacen[k] = String(v); },
+  removeItem: k => { delete almacen[k]; },
+};
 const consola = [];
 console.error = (...a) => consola.push(['error', a.map(String).join(' ')]);
 console.warn = (...a) => consola.push(['warn', a.map(String).join(' ')]);
@@ -117,6 +131,10 @@ async function llamar(fn, args) {
   throw new Error('demasiados reintentos');
 }
 
+function anidado(n) {
+  return (n.children || []).map(h => (h.innerHTML || '') + anidado(h)).join(' ');
+}
+
 (async () => {
   const resultados = [];
   for (const paso of datos.llamadas) {
@@ -129,7 +147,9 @@ async function llamar(fn, args) {
     }
     resultados.push(await llamar(paso.fn, paso.args || []));
   }
-  fs.writeFileSync(salida, JSON.stringify({ resultados, fetch: pedidos, consola, ubicacion: window.location.href,
+  fs.writeFileSync(salida, JSON.stringify({ resultados, fetch: pedidos, consola, ubicacion: window.location.href, almacen,
     elementos: Object.fromEntries(Object.entries(elementos).map(([k, v]) => [k, { innerHTML: v.innerHTML, value: v.value, textContent: v.textContent, style: v.style,
-      hijos: v.children.map(h => h.innerHTML) }])) }, null, 1));
+      hijos: v.children.map(h => h.innerHTML),
+      // v1.9.11: el HTML de todo lo colgado debajo (p. ej. overlay → modal).
+      anidado: anidado(v) }])) }, null, 1));
 })().catch(e => { process.stderr.write(String(e.stack || e)); process.exit(1); });

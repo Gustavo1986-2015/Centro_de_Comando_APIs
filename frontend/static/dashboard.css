@@ -1902,9 +1902,28 @@ body.compact-mode .mock-banner { padding: 0.5rem 0.9rem; font-size: 0.78rem; }
 }
 
 /* Interruptores de un módulo dedicado (Tive) en la tabla de configuración. */
-.opciones-modulo { display: flex; flex-direction: column; gap: 4px; min-width: 230px; }
-.opciones-modulo label { display: flex; align-items: center; gap: 6px; font-size: 0.78rem; cursor: pointer; }
-.opciones-modulo input { width: 15px; height: 15px; accent-color: var(--color-green-vibrant); cursor: pointer; }
+/* v1.9.11: panel "Opciones de <proveedor>" debajo de la fila, en grilla. */
+.btn-opciones-modulo { background: var(--level-1); color: var(--color-text); border: 1px solid var(--card-border);
+    border-radius: 6px; padding: 4px 10px; font-size: 0.75rem; cursor: pointer; white-space: nowrap; }
+.btn-opciones-modulo[aria-expanded="true"] { border-color: var(--color-green-vibrant); }
+.fila-opciones-modulo > td { background: var(--level-0); padding: 0 !important; }
+.panel-opciones-modulo { position: sticky; left: 0; box-sizing: border-box; width: min(1100px, calc(100vw - 80px));
+    padding: 12px 16px; }
+.titulo-panel-opciones { font-weight: 700; font-size: 0.85rem; margin-bottom: 8px; }
+.opciones-modulo { display: flex; flex-direction: column; gap: 12px; }
+.grupo-opciones-modulo h4 { margin: 0 0 6px; font-size: 0.78rem; color: var(--color-gray); text-transform: uppercase;
+    letter-spacing: 0.03em; }
+.grilla-opciones-modulo { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px 16px; }
+@media (max-width: 900px) { .grilla-opciones-modulo { grid-template-columns: 1fr; } }
+.opciones-modulo label.opcion-modulo { display: flex; align-items: flex-start; gap: 8px; cursor: pointer;
+    white-space: normal; padding: 6px 8px; border: 1px solid var(--card-border); border-radius: 6px; }
+.opciones-modulo label.opcion-modulo.duplica-rc { border-color: rgba(251, 191, 36, 0.45); }
+.opciones-modulo input { width: 15px; height: 15px; accent-color: var(--color-green-vibrant); cursor: pointer;
+    flex: 0 0 auto; margin-top: 2px; }
+.opcion-texto { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.opcion-titulo { font-size: 0.8rem; font-weight: 600; }
+.opcion-ayuda { font-size: 0.72rem; color: var(--color-gray); line-height: 1.35; }
+.marca-duplica-rc { color: var(--color-yellow); }
 
 /* Columna PUSH API Key: ancha, y con el inicio de la clave cuando hay una
    cargada. Antes era angosta y se veía vacía aunque la clave estuviera. */
@@ -1918,3 +1937,27 @@ body.compact-mode .mock-banner { padding: 0.5rem 0.9rem; font-size: 0.78rem; }
 /* Credenciales de la API de un módulo dedicado (Tive, v1.9.4). */
 .credenciales-modulo { display: flex; flex-direction: column; gap: 4px; margin-top: 4px; }
 .credenciales-modulo input { min-width: 220px; font-size: 0.75rem; }
+
+/* v1.9.11 (Bloque 5) — Visor de BD: orden, columnas, JSON y panel lateral */
+.db-th-orden { cursor: pointer; user-select: none; white-space: nowrap; }
+.db-th-orden:hover { color: var(--color-green-vibrant); }
+.db-celda-json { cursor: pointer; }
+.db-json-resumen { font-family: monospace; font-size: 0.75rem; color: #93c5fd; }
+.db-sin-posicion { color: #fbbf24; white-space: nowrap; }
+.db-resumen { font-size: 0.82rem; color: var(--color-gray); margin: 0 0 0.5rem; }
+.db-export-aviso { font-size: 0.8rem; color: #fbbf24; margin: 0 0 0.5rem; }
+.db-export-aviso:empty, .db-resumen:empty { display: none; }
+.db-columnas-panel {
+    flex-wrap: wrap; gap: 0.4rem 1rem; align-items: center; margin-bottom: 0.75rem;
+    padding: 0.6rem 0.8rem; border: 1px solid var(--card-border); border-radius: 8px; background: var(--level-1);
+}
+.db-columna-opcion { display: inline-flex; gap: 0.35rem; align-items: center; font-size: 0.78rem; cursor: pointer; }
+.db-detalle-lateral {
+    position: fixed; top: 0; right: 0; bottom: 0; width: min(560px, 100vw); z-index: 950;
+    padding: 1rem; background: var(--level-1); border-left: 1px solid var(--card-border);
+    box-shadow: -8px 0 24px rgba(0, 0, 0, 0.45); box-sizing: border-box; overflow: hidden;
+}
+.db-detalle-valor {
+    margin: 0.75rem 0 0; height: calc(100% - 3.5rem); overflow: auto; white-space: pre-wrap;
+    word-break: break-all; font-size: 0.78rem; user-select: text;
+}

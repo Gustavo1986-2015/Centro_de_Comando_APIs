@@ -146,6 +146,7 @@ from app.services.rc_soap import (
 # de RC; más allá de eso el evento pierde vigencia operativa.
 MAX_REINTENTOS = 4
 from app.models.config_models import ProviderConfig, DailyStat
+from app.core import estadisticas_diarias
 from app.core.config_cache import get_settings
 
 logger = logging.getLogger(__name__)
@@ -583,6 +584,14 @@ async def process_provider_events(provider: str, env: str):
                             "job_id": f"worker_err_{int(datetime.now().timestamp())}"
                         })
                         
+            # v1.9.11: lo que el cliente SOAP le entregó a zeep para cada evento
+            # (rc_soap lo deja en el modelo al enviar). Sin intento, queda None
+            # y la cola no lo pisa.
+            payload_por_evento = {db_event.id: getattr(ce, "rc_payload", None)
+                                  for db_event, ce in zip(batch, canonical_events)}
+            for u in updates_to_retry + updates_to_fail + updates_to_sent:
+                u["rc_payload"] = payload_por_evento.get(u["event_id"])
+
             metrics["retry"] = len(updates_to_retry)
             metrics["failed"] = len(updates_to_fail)
             metrics["simulado"] = sum(1 for u in updates_to_sent if u.get("estado") == ESTADO_SIMULADO)
@@ -786,82 +795,29 @@ def update_daily_stats(provider: str, env: str):
         logger.error(f"Error al contar estadísticas de hoy para {provider}_{env}: {e}")
         return
         
-    db_global = get_session("system_config", "global")
+    # v1.9.11: una sola sentencia "crear o actualizar" contra el índice único
+    # (app/core/estadisticas_diarias.py). Antes buscaba la fila y, si no
+    # estaba, la creaba: en paralelo con increment_daily_stats, el primer lote
+    # del día dejaba dos filas.
     try:
-        from sqlalchemy import text
-        try:
-            db_global.execute(text("ALTER TABLE daily_stats ADD COLUMN avg_push_latency_ms REAL DEFAULT NULL"))
-            db_global.commit()
-        except Exception as e:
-            logger.debug(f"Migración idempotente omitida o error esperado BD: {e}")
-            db_global.rollback()
-
-        today_date = datetime.now().date()
-        stat = db_global.query(DailyStat).filter(
-            DailyStat.date == today_date,
-            DailyStat.provider == provider,
-            DailyStat.env == env
-        ).first()
-        
-        if not stat:
-            stat = DailyStat(
-                date=today_date,
-                provider=provider,
-                env=env,
-                sent_count=0,
-                failed_count=0,
-                avg_transmission_latency_sec=avg_transmission,
-                avg_hub_latency_sec=avg_hub,
-                avg_rc_latency_sec=avg_rc,
-                avg_push_latency_ms=avg_push_ms
-            )
-            db_global.add(stat)
-        else:
-            if avg_transmission is not None: stat.avg_transmission_latency_sec = avg_transmission
-            if avg_hub is not None: stat.avg_hub_latency_sec = avg_hub
-            if avg_rc is not None: stat.avg_rc_latency_sec = avg_rc
-            if avg_push_ms is not None: stat.avg_push_latency_ms = avg_push_ms
-            
-        db_global.commit()
+        estadisticas_diarias.fijar_latencias(
+            provider, env,
+            avg_transmission_latency_sec=avg_transmission,
+            avg_hub_latency_sec=avg_hub,
+            avg_rc_latency_sec=avg_rc,
+            avg_push_latency_ms=avg_push_ms,
+        )
     except Exception as e:
         logger.error(f"Error al guardar DailyStat en system_config para {provider}_{env}: {e}")
-        db_global.rollback()
-    finally:
-        db_global.close()
 
 def increment_daily_stats(provider: str, env: str, sent_added: int, failed_added: int):
     """Incrementa atómicamente los contadores de estadísticas del día."""
     if sent_added == 0 and failed_added == 0:
         return
-    from datetime import datetime
-    db_global = get_session("system_config", "global")
     try:
-        today_date = datetime.now().date()
-        stat = db_global.query(DailyStat).filter(
-            DailyStat.date == today_date,
-            DailyStat.provider == provider,
-            DailyStat.env == env
-        ).first()
-        
-        if not stat:
-            stat = DailyStat(
-                date=today_date,
-                provider=provider,
-                env=env,
-                sent_count=sent_added,
-                failed_count=failed_added
-            )
-            db_global.add(stat)
-        else:
-            stat.sent_count += sent_added
-            stat.failed_count += failed_added
-            
-        db_global.commit()
+        estadisticas_diarias.sumar(provider, env, enviados=sent_added, fallidos=failed_added)
     except Exception as e:
         logger.error(f"Error incrementando DailyStat para {provider}_{env}: {e}")
-        db_global.rollback()
-    finally:
-        db_global.close()
 
 def sumar_recuperados(provider: str, env: str, cantidad: int) -> None:
     """
@@ -870,24 +826,10 @@ def sumar_recuperados(provider: str, env: str, cantidad: int) -> None:
     """
     if cantidad <= 0:
         return
-    from datetime import datetime
-    db_global = get_session("system_config", "global")
     try:
-        hoy = datetime.now().date()
-        stat = db_global.query(DailyStat).filter(
-            DailyStat.date == hoy, DailyStat.provider == provider, DailyStat.env == env
-        ).first()
-        if not stat:
-            stat = DailyStat(date=hoy, provider=provider, env=env, sent_count=0, failed_count=0,
-                             recovered_count=0)
-            db_global.add(stat)
-        stat.recovered_count = (stat.recovered_count or 0) + cantidad
-        db_global.commit()
+        estadisticas_diarias.sumar(provider, env, recuperados=cantidad)
     except Exception as e:
         logger.error(f"Error sumando recuperados del día para {provider}_{env}: {e}")
-        db_global.rollback()
-    finally:
-        db_global.close()
 
 
 def evento_a_registro_respaldo(r: NormalizedRCEvent, env: str) -> dict:
@@ -972,6 +914,15 @@ def evento_a_registro_respaldo(r: NormalizedRCEvent, env: str) -> dict:
             registro["velocidad_detalle"] = json.loads(detalle)
         except (TypeError, ValueError):
             registro["velocidad_detalle"] = detalle
+    # v1.9.11: lo que se le entregó a zeep, tal cual se guardó al enviar. Solo
+    # si existe (filas anteriores a v1.9.11 no lo tienen).
+    enviado = getattr(r, "rc_payload", None)
+    if enviado:
+        import json
+        try:
+            registro["rc_payload"] = json.loads(enviado)
+        except (TypeError, ValueError):
+            registro["rc_payload"] = enviado
     return registro
 
 

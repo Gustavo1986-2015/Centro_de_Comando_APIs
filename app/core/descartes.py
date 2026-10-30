@@ -104,6 +104,12 @@ CATEGORIAS = {
         "Tive: posición duplicada",
         "Misma posición (envío, equipo y lectura) ya recibida.",
         ESPERADO),
+    # v1.9.11: decisión de configuración de la integración, no un dato roto.
+    "coordenadas_cero": Categoria(
+        "Coordenadas 0,0 filtradas",
+        "El proveedor informó latitud y longitud exactamente 0 y la integración tiene la opción "
+        "\"Coordenadas 0,0 informadas por el proveedor\" en filtrar.",
+        ESPERADO),
     # ── A revisar: falta un dato o algo está mal configurado ─────────────────
     "sin_patente": Categoria(
         "Sin patente",

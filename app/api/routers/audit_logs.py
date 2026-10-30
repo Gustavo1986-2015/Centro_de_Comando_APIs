@@ -5,8 +5,7 @@ import logging
 from fastapi import APIRouter, Depends
 
 from app.core.auth import verify_dashboard_auth
-from app.database import get_session
-from app.models.config_models import DailyStat
+from app.core import estadisticas_diarias
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["Audit Logs"])
@@ -62,20 +61,18 @@ def clear_audit_logs(_: None = Depends(verify_dashboard_auth)):
 @router.get("/api/history")
 def get_daily_history(_: None = Depends(verify_dashboard_auth)):
     """Devuelve los registros históricos de estadísticas diarias consolidando los últimos 30 días."""
-    db = get_session("system_config", "global")
-    try:
-        stats = db.query(DailyStat).order_by(DailyStat.date.desc()).limit(200).all()
-        return [{
-            "id": s.id,
-            "date": s.date.strftime("%Y-%m-%d") if s.date else "",
-            "provider": s.provider.upper(),
-            "env": s.env.upper(),
-            "sent_count": s.sent_count,
-            "failed_count": s.failed_count,
-            "avg_transmission_latency_sec": round(max(0.0, s.avg_transmission_latency_sec), 2) if s.avg_transmission_latency_sec is not None and s.avg_transmission_latency_sec >= 0 else None,
-            "avg_hub_latency_sec": round(max(0.0, s.avg_hub_latency_sec), 2) if s.avg_hub_latency_sec is not None and s.avg_hub_latency_sec >= 0 else None,
-            "avg_rc_latency_sec": round(s.avg_rc_latency_sec, 2) if s.avg_rc_latency_sec is not None else None,
-            "avg_push_latency_ms": round(s.avg_push_latency_ms, 3) if s.avg_push_latency_ms is not None else None
-        } for s in stats]
-    finally:
-        db.close()
+    # v1.9.11: una fila por (día, integración, entorno) aunque la base tuviera
+    # un duplicado (se fusionan con la misma regla que la migración).
+    stats = estadisticas_diarias.leer_historial(200)
+    return [{
+        "id": s["id"],
+        "date": estadisticas_diarias.fecha(s["date"]),
+        "provider": s["provider"].upper(),
+        "env": s["env"].upper(),
+        "sent_count": s["sent_count"],
+        "failed_count": s["failed_count"],
+        "avg_transmission_latency_sec": round(max(0.0, s["avg_transmission_latency_sec"]), 2) if s["avg_transmission_latency_sec"] is not None and s["avg_transmission_latency_sec"] >= 0 else None,
+        "avg_hub_latency_sec": round(max(0.0, s["avg_hub_latency_sec"]), 2) if s["avg_hub_latency_sec"] is not None and s["avg_hub_latency_sec"] >= 0 else None,
+        "avg_rc_latency_sec": round(s["avg_rc_latency_sec"], 2) if s["avg_rc_latency_sec"] is not None else None,
+        "avg_push_latency_ms": round(s["avg_push_latency_ms"], 3) if s["avg_push_latency_ms"] is not None else None
+    } for s in stats]

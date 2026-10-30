@@ -153,6 +153,19 @@
             _providerHealth = Array.isArray(list) ? list : [];
         }
 
+        // v1.9.11 (6.1): LA forma de mostrar una fecha en el panel. Hora local
+        // del navegador en 24 h, AAAA-MM-DD HH:MM:SS. Con algunos idiomas del
+        // navegador (es-419) toLocaleString() da 12 h sin "a. m./p. m." y 19:31
+        // se lee 07:31. Acepta un Date, segundos epoch o un texto ISO; vacío o
+        // inválido → "—".
+        function _fechaHora(valor) {
+            if (valor === null || valor === undefined || valor === '') return '—';
+            const d = valor instanceof Date ? valor : new Date(typeof valor === 'number' ? valor * 1000 : valor);
+            if (isNaN(d.getTime())) return '—';
+            const p = n => String(n).padStart(2, '0');
+            return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+        }
+
         function _fmtAge(sec) {
             if (sec === null || sec === undefined) return 'nunca';
             if (sec < 60)    return `hace ${sec}s`;
@@ -1559,17 +1572,11 @@
                 }
                 rcHtml += `<div>RC Confirma: ${rcStatusHtml}${latencyBadge}</div>`;
                 
-                let rcFormatFinal = ev.rc_format || {};
-                if (ev.job_id && typeof rcFormatFinal === 'object') {
-                    rcFormatFinal = { ...rcFormatFinal, _rc_assigned_job_id: ev.job_id };
-                }
-                // v1.9.10: el cálculo de la velocidad. Con "_" como el job_id: no viaja a RC.
-                if (ev.velocidad_detalle && typeof rcFormatFinal === 'object') {
-                    rcFormatFinal = { ...rcFormatFinal, _velocidad_estimada: ev.velocidad_detalle };
-                }
-                const jsonPayload = encodeURIComponent(JSON.stringify(rcFormatFinal, null, 2));
+                // v1.9.11: lo enviado a RC (rc_payload, guardado al enviar), el
+                // cálculo de la velocidad y la trazabilidad, cada uno en su botón:
+                // antes el "JSON RC" mezclaba campos internos con lo enviado.
                 const safeTime = fallbackTime.replace(/[: ()]/g, '');
-                
+
                 // Texto plano para copiar
                 const plainTransmission = transmissionHtml ? `(Demora Transmisión: ${ev.transmission_latency_sec.toFixed(1)}s)` : '';
                 const plainText = `Job ID: ${ev.job_id || 'N/A'}
@@ -1577,13 +1584,22 @@ Recibido AC: ${ev.time_received || 'N/A'} ${plainTransmission}
 Enviado RC: ${ev.time_sent || 'N/A'} (Hub: ${displayLat || '0.000s'})
 RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency_sec.toFixed(3) + 's' : '0.000s'}`;
                 const plainTextEncoded = encodeURIComponent(plainText);
-                
+                const enviado = _contenidoEnviadoRC(ev);
+
                 rcHtml += `<div style="margin-top: 8px; display: flex; gap: 5px; flex-wrap: wrap; align-items: center;">`;
                 rcHtml += `${statusHtml}`;
-                rcHtml += `<button onclick='viewRawJson(${JSON.stringify(rcFormatFinal).replace(/'/g, "&#39;")}, "Payload Procesado (Hacia SOAP RC)")' style="background: #047857; color: white; border: none; padding: 2px 6px; border-radius: 4px; font-size: 0.7em; cursor: pointer;">
-                                🚀 JSON RC
+                // Un simulado no dice "Enviado" en ningún lado (garantía de v1.9.7).
+                rcHtml += `<button class="btn-enviado-rc" onclick="verEnviadoRC(${Number(ev.id)})" title="${_escAttr(enviado.titulo)}" style="background: #047857; color: white; border: none; padding: 2px 6px; border-radius: 4px; font-size: 0.7em; cursor: pointer;">
+                                🚀 ${ev.status === 'simulado' ? 'Se habría enviado a RC' : 'Enviado a RC'}
                             </button>`;
-                rcHtml += `<a href="data:text/json;charset=utf-8,${jsonPayload}" download="evento_RC_${ev.chassis}_${safeTime}.json" style="color: var(--color-green-bright); text-decoration: none; font-size: 0.7rem; border: 1px solid var(--color-green-bright); padding: 2px 6px; border-radius: 4px; display: inline-block;">📥 Bajar</a>`;
+                if (enviado.payload) {
+                    const jsonPayload = encodeURIComponent(JSON.stringify(enviado.payload, null, 2));
+                    rcHtml += `<a href="data:text/json;charset=utf-8,${jsonPayload}" download="evento_RC_${_escAttr(ev.chassis)}_${safeTime}.json" style="color: var(--color-green-bright); text-decoration: none; font-size: 0.7rem; border: 1px solid var(--color-green-bright); padding: 2px 6px; border-radius: 4px; display: inline-block;" title="Descargar lo enviado a RC">📥 Bajar</a>`;
+                }
+                if (ev.velocidad_detalle) {
+                    rcHtml += `<button class="btn-calculo-velocidad" onclick="verCalculoVelocidad(${Number(ev.id)})" style="background: #4B5563; color: white; border: none; padding: 2px 6px; border-radius: 4px; font-size: 0.7em; cursor: pointer;" title="Cómo se estimó la velocidad (no viaja a RC)">🧮 Cálculo de velocidad</button>`;
+                }
+                rcHtml += `<button class="btn-trazabilidad" onclick="verTrazabilidad(${Number(ev.id)})" style="background: #374151; color: white; border: none; padding: 2px 6px; border-radius: 4px; font-size: 0.7em; cursor: pointer;" title="Job ID, respuesta de RC y latencias (no viaja a RC)">🔎 Trazabilidad</button>`;
                 rcHtml += `<button onclick="navigator.clipboard.writeText(decodeURIComponent('${plainTextEncoded}')); this.innerText='✅ Copiado!'; setTimeout(()=>this.innerText='📋 Copiar Info', 2000)" style="background: #2563EB; color: white; border: none; padding: 2px 6px; border-radius: 4px; font-size: 0.7em; cursor: pointer;" title="Copiar bloque de Trazabilidad">📋 Copiar Info</button>`;
                 
                 if (ev.status === 'failed' && ev.rc_response) {
@@ -1782,15 +1798,72 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
                                           title="Peticiones por minuto que acepta este webhook. Vacío o 0 = usar el límite global del sistema.">`}
                             </td>
                             <td>${_selectorMotorCola(c)}</td>
-                            <td>${_opcionesDeModulo(c)}</td>
+                            <td>${_selectorCeros(c)}</td>
+                            <td>${_botonOpcionesDeModulo(c)}</td>
 
                         `;
                         tbody.appendChild(tr);
+                    });
+                    // v1.9.11: debajo de las filas del proveedor, el panel
+                    // desplegable "Opciones de <proveedor>" de cada entorno
+                    // con módulo dedicado. La fila queda como las demás.
+                    envs.filter(c => c.modulo_dedicado).forEach(c => {
+                        const fila = document.createElement('tr');
+                        fila.id = `fila_modopts_${c._originalIdx}`;
+                        fila.className = 'fila-opciones-modulo';
+                        fila.style.display = _opcionesModuloAbiertas.has(c.id) ? '' : 'none';
+                        fila.innerHTML = `<td colspan="${_COLUMNAS_CONFIG}">
+                            <div class="panel-opciones-modulo">
+                                <div class="titulo-panel-opciones">Opciones de ${_escapeHtml(c.provider_name)} · ${_escapeHtml(c.env)}</div>
+                                ${_opcionesDeModulo(c)}
+                            </div></td>`;
+                        tbody.appendChild(fila);
                     });
                 });
             } catch(e) {
                 console.error("Error al cargar config", e);
             }
+        }
+
+        // v1.9.11: columnas de la tabla de Configuración (el panel de opciones
+        // del módulo ocupa el ancho entero) y paneles abiertos, que siguen
+        // abiertos al recargar después de guardar.
+        const _COLUMNAS_CONFIG = 15;
+        let _opcionesModuloAbiertas = new Set();
+
+        function _botonOpcionesDeModulo(c) {
+            if (!c.modulo_dedicado) {
+                return '<span style="color: var(--color-gray); font-size: 0.75rem;" title="Las integraciones del Integration Studio no tienen interruptores">—</span>';
+            }
+            const abierto = _opcionesModuloAbiertas.has(c.id);
+            return `<button type="button" class="btn-opciones-modulo" id="btn_modopts_${c._originalIdx}"
+                        aria-expanded="${abierto}" onclick="alternarOpcionesDeModulo(${c._originalIdx}, ${Number(c.id)})">
+                        ⚙ Opciones de ${_escapeHtml(c.provider_name)} ${abierto ? '▴' : '▾'}</button>`;
+        }
+
+        function alternarOpcionesDeModulo(idx, id) {
+            const fila = document.getElementById(`fila_modopts_${idx}`);
+            if (!fila) return;
+            const abrir = fila.style.display === 'none';
+            fila.style.display = abrir ? '' : 'none';
+            if (abrir) _opcionesModuloAbiertas.add(id); else _opcionesModuloAbiertas.delete(id);
+            const boton = document.getElementById(`btn_modopts_${idx}`);
+            if (boton) {
+                boton.setAttribute('aria-expanded', String(abrir));
+                boton.textContent = boton.textContent.replace(/[▾▴]\s*$/, abrir ? '▴' : '▾');
+            }
+        }
+
+        // v1.9.11 (2b): coordenadas 0,0 informadas por el proveedor, por
+        // integración. Enviar = como siempre (con aviso en consola).
+        function _selectorCeros(c) {
+            const actual = c.coordenadas_cero === 'filtrar' ? 'filtrar' : 'enviar';
+            return `<select id="ceros_${c._originalIdx}" class="form-control selector-ceros"
+                        style="width: 110px; background-color: var(--level-0); color: var(--color-text); cursor: pointer;"
+                        title="Latitud Y longitud exactamente 0 informadas por el proveedor. Enviar: salen a RC como hasta ahora, con aviso en consola. Filtrar: no salen y quedan en Descartes (coordenadas 0,0 filtradas). Una sola coordenada en 0 siempre sale. No alcanza a los eventos sin posición de Tive.">
+                        <option value="enviar" ${actual === 'enviar' ? 'selected' : ''}>Enviar</option>
+                        <option value="filtrar" ${actual === 'filtrar' ? 'selected' : ''}>Filtrar</option>
+                    </select>`;
         }
 
         // Motor de cola (v1.9.9, B-18): solo SQLite, que es el único
@@ -1820,17 +1893,39 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
         // Interruptores de una integración con módulo dedicado (Tive): qué se
         // envía a RC y qué no. Se guardan en la configuración de la
         // integración, sin tocar código.
+        // v1.9.11: genérico. Grilla por sección con título, ayuda y ⚠ en los
+        // que duplican lo que RC ya recibe, todo según lo que declara el
+        // módulo (app/providers/registry.py). Sin detalle declarado, el
+        // interruptor va a "Opciones" con su descripción corta.
         function _opcionesDeModulo(c) {
             if (!c.modulo_dedicado) {
                 return '<span style="color: var(--color-gray); font-size: 0.75rem;" title="Las integraciones del Integration Studio no tienen interruptores">—</span>';
             }
             const etiquetas = c.module_options_labels || {};
-            return '<div class="opciones-modulo">' + Object.keys(c.module_options || {}).map(clave => `
-                <label title="${_escAttr(etiquetas[clave] || clave)}">
-                    <input type="checkbox" id="modopt_${c._originalIdx}_${clave}" data-clave="${clave}"
-                           ${c.module_options[clave] ? 'checked' : ''}>
-                    ${_escapeHtml(etiquetas[clave] || clave)}
-                </label>`).join('') + _credencialesDeModulo(c) + '</div>';
+            const opciones = c.module_options || {};
+            const declarados = (c.module_options_detalle || []).filter(d => d.clave in opciones);
+            const claves = declarados.map(d => d.clave).concat(Object.keys(opciones).filter(k => !declarados.some(d => d.clave === k)));
+            const detalle = clave => declarados.find(d => d.clave === clave)
+                || { clave, grupo: 'Opciones', titulo: etiquetas[clave] || clave, ayuda: '', duplica_rc: false };
+            const grupos = (c.module_options_grupos || []).slice();
+            claves.forEach(k => { if (!grupos.includes(detalle(k).grupo)) grupos.push(detalle(k).grupo); });
+            const secciones = grupos.map(grupo => {
+                const items = claves.filter(k => detalle(k).grupo === grupo).map(clave => {
+                    const d = detalle(clave);
+                    return `<label class="opcion-modulo${d.duplica_rc ? ' duplica-rc' : ''}" title="${_escAttr(d.ayuda || d.titulo)}">
+                    <input type="checkbox" id="modopt_${c._originalIdx}_${clave}" data-clave="${clave}" ${opciones[clave] ? 'checked' : ''}>
+                    <span class="opcion-texto">
+                        <span class="opcion-titulo">${d.duplica_rc ? '<span class="marca-duplica-rc" title="Duplica lo que RC ya recibe por otro camino">⚠</span> ' : ''}${_escapeHtml(d.titulo)}</span>
+                        ${d.ayuda ? `<span class="opcion-ayuda">${_escapeHtml(d.ayuda)}</span>` : ''}
+                    </span>
+                </label>`;
+                }).join('');
+                return items ? `<section class="grupo-opciones-modulo"><h4>${_escapeHtml(grupo)}</h4>
+                    <div class="grilla-opciones-modulo">${items}</div></section>` : '';
+            }).join('');
+            const credenciales = _credencialesDeModulo(c);
+            return '<div class="opciones-modulo">' + secciones
+                + (credenciales ? `<section class="grupo-opciones-modulo">${credenciales}</section>` : '') + '</div>';
         }
 
         // Credenciales de la API del proveedor (Tive, v1.9.4). El client_id es
@@ -1844,12 +1939,14 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
             const estado = cred.secreto_cargado && cred.client_id
                 ? '<span class="clave-estado cargada">credenciales cargadas</span>'
                 : '<span class="clave-estado sin-clave">sin credenciales: el resolutor no consulta</span>';
+            // v1.9.11: el título de la sección lo declara el módulo.
+            const titulo = c.module_credentials_grupo || 'API del proveedor';
             return `<div class="credenciales-modulo">
-                <div style="font-size:0.72rem;font-weight:700;margin-top:6px;">API de Tive</div>
+                <h4>${_escapeHtml(titulo)}</h4>
                 <input class="form-control" type="text" id="modcred_${idx}_client_id"
                        value="${cred.client_id ? _escAttr(cred.client_id) : ''}"
                        placeholder="Client ID (ej: Envios Assistcargo)" autocomplete="off"
-                       title="Client ID de la API de Tive. Texto libre: puede tener espacios.">
+                       title="${_escAttr('Client ID de la ' + titulo + '. Texto libre: puede tener espacios.')}">
                 <input class="form-control" type="password" id="modcred_${idx}_client_secret"
                        placeholder="${cred.secreto_cargado ? 'Secreto cargado (vacío = mantener)' : 'Client secret'}"
                        autocomplete="new-password" title="Dejar vacío para mantener el guardado">
@@ -1896,7 +1993,9 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
                 enable_state_dedup: document.getElementById(`dedup_${idx}`) ? document.getElementById(`dedup_${idx}`).checked : c.enable_state_dedup,
                 webhook_auth_config: _leerAuthWebhook(c, idx),
                 module_options: _leerOpcionesDeModulo(c, idx),
-                module_credentials: _leerCredencialesDeModulo(c, idx)
+                module_credentials: _leerCredencialesDeModulo(c, idx),
+                // v1.9.11: coordenadas 0,0 por integración.
+                coordenadas_cero: document.getElementById(`ceros_${idx}`) ? document.getElementById(`ceros_${idx}`).value : null
             }));
 
             // Activar el modo simulado exige revalidar la contraseña de administrador:
@@ -2205,12 +2304,8 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
         }
 
         function _textoFechaDescarte(ts) {
-            // Hora local en 24 h, explícita: con algunos idiomas del navegador
-            // (es-419) toLocaleString() da 12 h sin "a. m./p. m." y 19:31 se lee 07:31.
-            if (!ts) return '—';
-            const d = new Date(ts * 1000);
-            const p = n => String(n).padStart(2, '0');
-            return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+            // v1.9.11: el formato compartido del panel (_fechaHora).
+            return ts ? _fechaHora(ts) : '—';
         }
 
         function _categoriaDescarte(codigo) {
@@ -2462,6 +2557,69 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
                 ? `${d.distancia_m} m en ${d.segundos} s (umbral ${d.umbral_m} m)` : '';
             return [`Velocidad ${d.texto || d.motivo}${d.lectura_repetida ? ' (lectura repetida)' : ''}`,
                     lectura('anterior', d.anterior), lectura('actual', d.actual), tramo].filter(Boolean).join(' · ');
+        }
+
+        // ─── Lo enviado a RC, cálculo de velocidad y trazabilidad (v1.9.11) ──
+        // "Enviado a RC" muestra rc_payload TAL CUAL se le entregó a zeep (solo
+        // campos del contrato, con su formato: "speed": "44.0"). Nada interno.
+        function _contenidoEnviadoRC(ev) {
+            const nota = ev.sin_posicion
+                ? `${ev.coords}: latitud y longitud van en "0" porque el contrato exige el campo.`
+                : '';
+            if (!ev.rc_payload) {
+                const titulo = (ev.status === 'pending' || ev.status === 'processing')
+                    ? 'Todavía no se envió a RC'
+                    : 'No disponible (evento anterior a v1.9.11)';
+                return { titulo, payload: null, nota };
+            }
+            const titulos = {
+                sent: 'Enviado a RC',
+                simulado: 'Simulado: esto se habría enviado',
+                failed: 'Intento de envío a RC que falló (motivo en Trazabilidad)',
+                pending: 'Último intento enviado a RC (se va a reintentar)',
+                processing: 'Último intento enviado a RC (enviándose de nuevo)',
+            };
+            return { titulo: titulos[ev.status] || 'Enviado a RC', payload: ev.rc_payload, nota };
+        }
+
+        // Lo interno del despacho: nunca mezclado con lo enviado.
+        function _contenidoTrazabilidad(ev) {
+            return {
+                estado: ev.status,
+                job_id: ev.job_id || null,
+                respuesta_rc: ev.rc_response || null,
+                recibido_ac: ev.time_received || null,
+                enviado_rc: ev.time_sent || null,
+                rc_confirma: ev.time_received_rc || null,
+                latencia_hub_seg: ev.latency_sec ?? null,
+                latencia_rc_seg: ev.rc_latency_sec ?? null,
+                demora_transmision_seg: ev.transmission_latency_sec ?? null,
+                reintentos: ev.retry_count || 0,
+            };
+        }
+
+        function _eventoReciente(id) {
+            return (allRecentEvents || []).find(e => Number(e.id) === Number(id));
+        }
+
+        function verEnviadoRC(id) {
+            const ev = _eventoReciente(id);
+            if (!ev) return;
+            const c = _contenidoEnviadoRC(ev);
+            viewRawJson(c.payload, c.titulo, c.payload ? c.nota : [c.titulo + '.', c.nota].filter(Boolean).join(' '));
+        }
+
+        function verCalculoVelocidad(id) {
+            const ev = _eventoReciente(id);
+            if (!ev || !ev.velocidad_detalle) return;
+            viewRawJson(ev.velocidad_detalle, `Cálculo de velocidad: ${_textoVelocidadEstimada(ev.velocidad_detalle)}`,
+                        'No viaja a RC: a RC va solo "speed".');
+        }
+
+        function verTrazabilidad(id) {
+            const ev = _eventoReciente(id);
+            if (!ev) return;
+            viewRawJson(_contenidoTrazabilidad(ev), 'Trazabilidad (no viaja a RC)');
         }
 
         // ─── Reintento manual de fallidos (v1.9.9, 3.8) ──────────────────────
@@ -2912,6 +3070,11 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
         let _dbSeleccion = null;          // { fila, col }
         let _dbUltimaConsulta = null;     // parámetros de lo que se está viendo
         let _dbRespaldosCargados = false;
+        // v1.9.11 (Bloque 5): orden en el servidor, columnas elegidas (se
+        // recuerdan en este navegador), resumen de las celdas JSON y conteo.
+        let _dbOrden = null;              // { vista, columna, sentido }
+        let _dbUltimaRespuesta = null;    // { data, etiqueta }: para redibujar sin volver a pedir
+        const _dbOcultas = {};            // vista → Set de columnas ocultas
 
         function _origenBd() {
             const sel = document.getElementById('db-origen');
@@ -2976,7 +3139,103 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
                 const valor = el && el.value ? String(el.value).trim() : '';
                 if (valor) p.set(clave, valor);
             }
+            // El orden elegido vale solo para la vista donde se eligió.
+            if (_dbOrden && _dbOrden.vista === _claveVistaBd()) {
+                p.set('orden', _dbOrden.columna);
+                p.set('sentido', _dbOrden.sentido);
+            }
             return { origen, params: p };
+        }
+
+        // Qué se está mirando: origen y base/tabla o integración.
+        function _claveVistaBd() {
+            if (_origenBd() === 'respaldo') return 'respaldo|' + document.getElementById('db-respaldo-integracion').value;
+            return 'base|' + document.getElementById('db-select').value + '|' + document.getElementById('table-select').value;
+        }
+
+        // Columnas ocultas de una vista. Se recuerdan en este navegador; sin
+        // almacenamiento (ventana privada) duran hasta recargar la página.
+        function _columnasOcultasBd(vista) {
+            if (!_dbOcultas[vista]) {
+                let lista = [];
+                try { lista = JSON.parse(localStorage.getItem('visorBd.ocultas.' + vista) || '[]'); } catch (_) { lista = []; }
+                _dbOcultas[vista] = new Set(Array.isArray(lista) ? lista : []);
+            }
+            return _dbOcultas[vista];
+        }
+
+        function _guardarOcultasBd(vista) {
+            try { localStorage.setItem('visorBd.ocultas.' + vista, JSON.stringify([..._columnasOcultasBd(vista)])); }
+            catch (_) { /* sin almacenamiento: queda en memoria */ }
+        }
+
+        function alternarColumnaBd(c) {
+            if (!_dbVista || !_dbUltimaRespuesta) return;
+            const col = _dbVista.columns[c];
+            const ocultas = _columnasOcultasBd(_dbVista.vista);
+            if (ocultas.has(col)) ocultas.delete(col);
+            else if (_dbVista.columns.filter(x => !ocultas.has(x)).length > 1) ocultas.add(col);   // al menos una visible
+            _guardarOcultasBd(_dbVista.vista);
+            renderVisorBd(_dbUltimaRespuesta.data, _dbUltimaRespuesta.etiqueta);
+        }
+
+        function mostrarTodasColumnasBd() {
+            if (!_dbVista || !_dbUltimaRespuesta) return;
+            _columnasOcultasBd(_dbVista.vista).clear();
+            _guardarOcultasBd(_dbVista.vista);
+            renderVisorBd(_dbUltimaRespuesta.data, _dbUltimaRespuesta.etiqueta);
+        }
+
+        function alternarSelectorColumnasBd() {
+            const panel = document.getElementById('db-columnas-panel');
+            panel.style.display = panel.style.display === 'flex' ? 'none' : 'flex';
+        }
+
+        function _selectorColumnasBd(columnas, ocultas) {
+            return columnas.map((col, c) => `<label class="db-columna-opcion"><input type="checkbox" ${ocultas.has(col) ? '' : 'checked'} onchange="alternarColumnaBd(${c})"> ${_escapeHtml(col)}</label>`).join('')
+                + '<button class="db-page-btn" onclick="mostrarTodasColumnasBd()">Mostrar todas</button>';
+        }
+
+        // Clic en un encabezado: ascendente → descendente → sin orden (lo más
+        // reciente primero). Ordena el servidor, sobre todas las páginas.
+        function ordenarBd(c) {
+            if (!_dbVista) return;
+            const columna = _dbVista.columns[c];
+            if (_dbVista.cifradas.has(columna)) return;
+            const vista = _claveVistaBd();
+            const actual = _dbOrden && _dbOrden.vista === vista && _dbOrden.columna === columna ? _dbOrden.sentido : null;
+            _dbOrden = actual === null ? { vista, columna, sentido: 'asc' }
+                     : actual === 'asc' ? { vista, columna, sentido: 'desc' } : null;
+            _dbPage.offset = 0;
+            return loadQueryData();
+        }
+
+        // Resumen de una celda JSON en la grilla; null si no es JSON.
+        function _resumenJsonBd(valor) {
+            let objeto = valor;
+            if (typeof valor === 'string') {
+                // Solo se llama para columnas JSON: un texto que no parsea, o que
+                // es un número o un booleano, se muestra tal cual.
+                try { objeto = JSON.parse(valor); } catch (_) { return null; }
+            }
+            if (objeto === null || typeof objeto !== 'object') return null;
+            const cuantos = Array.isArray(objeto) ? `[${objeto.length}]` : `{${Object.keys(objeto).length}}`;
+            const compacto = JSON.stringify(objeto);
+            return `${cuantos} ${compacto.length > 60 ? compacto.slice(0, 60) + '…' : compacto}`;
+        }
+
+        // Encima de la grilla: total de la consulta y, en las colas, por estado.
+        function _resumenConsultaBd(data) {
+            const n = v => Number(v || 0).toLocaleString('es');
+            let texto = `Total de la consulta: ${n(data.total)}`;
+            const conteo = data.conteo_por_estado;
+            if (conteo) {
+                const orden = ['pending', 'processing', 'sent', 'failed', 'simulado'];
+                const claves = [...orden.filter(e => e in conteo), ...Object.keys(conteo).filter(e => !orden.includes(e)).sort()];
+                if (claves.length) texto += ' · ' + claves.map(e => `${e}: ${n(conteo[e])}`).join(' · ');
+            }
+            if (data.orden) texto += ` · Orden: ${data.orden.columna} ${data.orden.sentido === 'asc' ? 'ascendente' : 'descendente'}`;
+            return texto;
         }
 
         async function loadQueryData() {
@@ -3075,6 +3334,7 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
             const conRowid = data.columns[0] === '__rowid__';
             const columnas = conRowid ? data.columns.slice(1) : data.columns.slice();
             const cifradas = new Set(data.cifradas || []);
+            _dbUltimaRespuesta = { data, etiqueta };
             _dbVista = {
                 columns: columnas,
                 rows: data.rows.map(r => conRowid ? r.slice(1) : r),
@@ -3082,7 +3342,13 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
                 editable: !!data.editable,
                 cifradas,
                 tipos: data.tipos || {},
+                vista: _claveVistaBd(),
             };
+            const ocultas = _columnasOcultasBd(_dbVista.vista);
+            let visibles = columnas.map((_, c) => c).filter(c => !ocultas.has(columnas[c]));
+            if (!visibles.length) visibles = columnas.map((_, c) => c);
+            const jsonCols = new Set(data.columnas_json || []);
+            const sinPosicion = data.sin_posicion && data.sin_posicion.filas ? new Set(data.sin_posicion.filas) : new Set();
 
             if (data.editable) {
                 badge.textContent = '✏️ Edición habilitada — doble clic en celda para editar';
@@ -3090,32 +3356,63 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
             } else {
                 badge.textContent = data.origen === 'respaldo'
                     ? '🔒 Solo lectura — respaldo de procesados'
-                    : '🔒 Solo lectura — tabla operativa protegida';
+                    : (data.cola ? '🔒 Solo lectura — cola: editarla a mano puede mandar a RC algo que nadie midió'
+                                 : '🔒 Solo lectura — tabla operativa protegida');
                 badge.style.cssText = 'display:inline-block; font-size:0.78rem; padding:0.3rem 0.8rem; border-radius:20px; font-weight:700; background:rgba(248,113,113,0.1); color:#f87171; border:1px solid rgba(248,113,113,0.25);';
             }
 
-            thead.innerHTML = '<tr>' + columnas.map(c => `<th>${_escapeHtml(c)}</th>`).join('') + '</tr>';
+            // Encabezados: clic ordena en el servidor (las cifradas no se ordenan).
+            const orden = data.orden || null;
+            const flecha = col => orden && orden.columna === col ? (orden.sentido === 'asc' ? ' ▲' : ' ▼') : '';
+            thead.innerHTML = '<tr>' + visibles.map(c => {
+                const col = columnas[c];
+                if (cifradas.has(col)) return `<th title="Cifrada: no se muestra ni se ordena">${_escapeHtml(col)}</th>`;
+                return `<th class="db-th-orden" onclick="ordenarBd(${c})" title="Ordenar por ${_escAttr(col)}">${_escapeHtml(col)}${flecha(col)}</th>`;
+            }).join('') + '</tr>';
 
             if (_dbVista.rows.length === 0) {
-                tbody.innerHTML = `<tr><td colspan="${Math.max(columnas.length, 1)}" style="text-align:center;">No hay datos con estos filtros.</td></tr>`;
+                tbody.innerHTML = `<tr><td colspan="${Math.max(visibles.length, 1)}" style="text-align:center;">No hay datos con estos filtros.</td></tr>`;
             } else {
-                tbody.innerHTML = _dbVista.rows.map((fila, f) => '<tr>' + fila.map((valor, c) => {
+                tbody.innerHTML = _dbVista.rows.map((fila, f) => '<tr>' + visibles.map(c => {
+                    const valor = fila[c];
                     const col = columnas[c];
                     const texto = _textoCeldaBd(valor);
                     const editar = _dbVista.editable && !cifradas.has(col)
                         ? ` ondblclick="openEditModal(${Number(_dbVista.rowids[f])}, '${_escAttr(col)}', this, ${f}, ${c})"` : '';
-                    const contenido = texto === null ? '<em>NULL</em>'
-                        : (cifradas.has(col) ? `<em>${_escapeHtml(texto)}</em>` : _escapeHtml(texto));
-                    return `<td class="db-celda" data-f="${f}" data-c="${c}" onclick="verCeldaBd(${f}, ${c})"${editar}>${contenido}</td>`;
+                    const resumen = jsonCols.has(col) && texto !== null ? _resumenJsonBd(valor) : null;
+                    let contenido;
+                    let clase = 'db-celda';
+                    if (texto === null) {
+                        // Fila de cola sin posición: el mismo texto que el panel, no NULL.
+                        contenido = sinPosicion.has(f) && (col === 'latitude' || col === 'longitude')
+                            ? `<em class="db-sin-posicion">${_escapeHtml(data.sin_posicion.texto)}</em>` : '<em>NULL</em>';
+                    } else if (cifradas.has(col)) {
+                        contenido = `<em>${_escapeHtml(texto)}</em>`;
+                    } else if (resumen !== null) {
+                        contenido = `<span class="db-json-resumen">${_escapeHtml(resumen)}</span>`;
+                        clase += ' db-celda-json';
+                    } else {
+                        contenido = _escapeHtml(texto);
+                    }
+                    const ayuda = resumen !== null ? ' title="Clic: el JSON completo, con formato"' : '';
+                    return `<td class="${clase}" data-f="${f}" data-c="${c}" onclick="verCeldaBd(${f}, ${c})"${editar}${ayuda}>${contenido}</td>`;
                 }).join('') + '</tr>').join('');
             }
+
+            document.getElementById('db-resumen').textContent = _resumenConsultaBd(data);
+            document.getElementById('db-columnas-panel').innerHTML = _selectorColumnasBd(columnas, ocultas);
+            document.getElementById('db-export-aviso').textContent = '';
 
             _dbPage.total = data.total || 0;
             const desde = _dbVista.rows.length ? _dbPage.offset + 1 : 0;
             const hasta = _dbPage.offset + _dbVista.rows.length;
             const noAplican = (data.filtros_no_aplicados || []).length
                 ? ` Filtros que esta tabla no tiene: ${data.filtros_no_aplicados.join(', ')}.` : '';
-            info.textContent = `Mostrando ${desde}-${hasta} de ${data.total} registros en ${etiqueta}, lo más reciente primero. Clic en una celda para verla completa.${noAplican}`;
+            const como = orden ? `ordenado por ${orden.columna} (${orden.sentido === 'asc' ? 'ascendente' : 'descendente'})`
+                               : 'lo más reciente primero';
+            const sinVer = columnas.length - visibles.length;
+            const ocultasTexto = sinVer ? ` ${sinVer} columna${sinVer === 1 ? '' : 's'} oculta${sinVer === 1 ? '' : 's'}.` : '';
+            info.textContent = `Mostrando ${desde}-${hasta} de ${data.total} registros en ${etiqueta}, ${como}. Clic en una celda para verla completa.${ocultasTexto}${noAplican}`;
             _renderPagination();
         }
 
@@ -3181,15 +3478,27 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
             document.getElementById('db-detalle-aviso').textContent = ok ? 'Fila completa copiada (JSON).' : 'No se pudo copiar.';
         }
 
-        // CSV de la vista actual: la última consulta mostrada, con sus filtros,
-        // todas las páginas y en el mismo orden.
-        function descargarVistaBd() {
+        // CSV o Excel de la vista actual: la última consulta mostrada, con sus
+        // filtros, su orden y las columnas visibles, todas las páginas hasta el
+        // tope del servidor (si recorta, se avisa acá y en el archivo).
+        function descargarVistaBd(formato) {
             if (!_dbUltimaConsulta) {
                 alert('Consultá primero: la descarga es de lo que se está viendo.');
                 return;
             }
             const params = new URLSearchParams(_dbUltimaConsulta.params);
             params.set('origen', _dbUltimaConsulta.origen);
+            if (formato === 'xlsx') params.set('formato', 'xlsx');
+            if (_dbVista) {
+                const ocultas = _columnasOcultasBd(_dbVista.vista);
+                const visibles = _dbVista.columns.filter(c => !ocultas.has(c));
+                if (visibles.length && visibles.length < _dbVista.columns.length) params.set('columnas', visibles.join(','));
+            }
+            const tope = _dbUltimaRespuesta && _dbUltimaRespuesta.data.tope_exportacion;
+            const aviso = document.getElementById('db-export-aviso');
+            aviso.textContent = tope && _dbPage.total > tope
+                ? `La vista tiene ${Number(_dbPage.total).toLocaleString('es')} filas: se exportan las primeras ${Number(tope).toLocaleString('es')} en el orden elegido (la primera línea del archivo lo avisa).`
+                : '';
             window.location.href = `/api/db-viewer/descargar?${params.toString()}`;
         }
 
@@ -3997,11 +4306,14 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
             }
         }
 
-        function viewRawJson(rawJsonStr, title = "Payload Original") {
+        function viewRawJson(rawJsonStr, title = "Payload Original", nota = '') {
             try {
                 // El raw_data llega como string desde la DB (sqlite lo guarda como text)
+                // v1.9.11: null = no hay JSON que mostrar; se muestra solo la nota.
                 const parsed = typeof rawJsonStr === 'string' ? JSON.parse(rawJsonStr) : rawJsonStr;
-                const pretty = JSON.stringify(parsed, null, 4);
+                const sinJson = parsed === null || parsed === undefined;
+                const pretty = sinJson ? nota : JSON.stringify(parsed, null, 4);
+                if (sinJson) nota = '';
                 
                 // Crear modal on the fly
                 const overlay = document.createElement('div');
@@ -4022,8 +4334,9 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
                 modal.style.maxWidth = '90vw';
                 
                 modal.innerHTML = `
-                    <h3 style="margin-top:0; color: white;">${title}</h3>
-                    <textarea id="json-copy-area" readonly style="width: 100%; height: 300px; background: #111; color: #0f0; font-family: monospace; border: none; padding: 10px; margin-bottom: 10px;">${pretty}</textarea>
+                    <h3 style="margin-top:0; color: white;">${_escapeHtml(title)}</h3>
+                    ${nota ? `<p class="json-nota" style="color: var(--color-yellow); font-size: 0.85rem; margin: 0 0 8px;">${_escapeHtml(nota)}</p>` : ''}
+                    <textarea id="json-copy-area" readonly style="width: 100%; height: 300px; background: #111; color: #0f0; font-family: monospace; border: none; padding: 10px; margin-bottom: 10px;">${_escapeHtml(pretty)}</textarea>
                     <div style="display: flex; justify-content: flex-end; gap: 10px;">
                         <button id="btn-copy-json" style="background: var(--color-green-bright); color: black; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer; font-weight: bold;">Copiar</button>
                         <button id="btn-close-json" style="background: #ef4444; color: white; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer; font-weight: bold;">Cerrar</button>
@@ -4421,10 +4734,8 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
         // Lo que no se envió a RC y por qué. El render está separado de la
         // carga para poder ejecutarlo tal cual en los tests.
         function _horaDescarte(ts) {
-            if (!ts) return '—';
-            const d = new Date(ts * 1000);
-            const dos = n => String(n).padStart(2, '0');
-            return `${dos(d.getDate())}/${dos(d.getMonth() + 1)} ${dos(d.getHours())}:${dos(d.getMinutes())}:${dos(d.getSeconds())}`;
+            // v1.9.11: antes DD/MM HH:MM:SS; ahora el formato compartido del panel.
+            return ts ? _fechaHora(ts) : '—';
         }
 
         // Coordenadas del descarte (v1.9.8): "lat, lon" o "—" si no vinieron.
@@ -5092,7 +5403,7 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
                     alert(`Purgados ${data.deleted_files} archivos, ${mbytes} MB liberados`);
                     
                     const auditLog = document.getElementById('purge-audit-log');
-                    const now = new Date().toLocaleString();
+                    const now = _fechaHora(new Date());
                     auditLog.innerHTML = `Última purga: ${now} | Categoría: ${category} | Archivos: ${data.deleted_files} | Liberado: ${mbytes} MB`;
                     auditLog.style.display = 'block';
                     
