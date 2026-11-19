@@ -169,7 +169,9 @@ Por requerimiento estricto y no negociable del proveedor, Schmitz debe apuntar a
 | Endpoint | Protección |
 |----------|------------|
 | Webhooks PUSH | API key (fail-closed, secrets.compare_digest) — sin key configurada → 401 |
-| Dashboard / Admin / DB Viewer / Vehicles / Audit Logs / Inspector | HTTP Basic Auth (secrets.compare_digest) |
+| Dashboard / Admin / DB Viewer / Vehicles / Audit Logs / Inspector | HTTP Basic Auth (secrets.compare_digest). Desde v1.9.12, opcionalmente, verificación en dos pasos (TOTP) |
+| Documentación de la API (`/docs`, `/redoc`, `/openapi.json`) | El mismo acceso que el panel (v1.9.12; antes era pública) |
+| Escrituras del panel (POST/PUT/PATCH/DELETE) | 403 si el navegador marca la petición como `Sec-Fetch-Site: cross-site` (CSRF, v1.9.12) |
 | DB Viewer update_cell | Revalidación de DASHBOARD_PASSWORD en el body + whitelist de tablas editables |
 | Inspector /fetch y /fetch-token | Anti-SSRF (bloquea loopback/privadas/metadata cloud) + DNS rebinding mitigation (pin IP + Host header) + TLS verification configurable |
 | Health | Sin auth (público, para load balancers) |
@@ -181,8 +183,8 @@ Por requerimiento estricto y no negociable del proveedor, Schmitz debe apuntar a
 Suite de 25 tests que protege contra regresiones al integrar nuevas APIs.
 
 ```bash
-# Instalar dependencias de test (si no están instaladas)
-pip install pytest pytest-asyncio
+# Instalar las dependencias de producción y las de test (versiones exactas)
+pip install -r requirements-dev.txt
 
 # Ejecutar suite completa
 pytest tests/

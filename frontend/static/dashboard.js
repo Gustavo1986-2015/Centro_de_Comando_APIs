@@ -1,3 +1,40 @@
+        // ─── v1.9.12: sesión verificada (verificación en dos pasos) ──────────
+        // Manejo central de las respuestas: si una petición vuelve con
+        // 403 {"detail": "verificacion_requerida"}, la sesión del panel venció
+        // o se cerró desde otro lado, y se vuelve a /dashboard, que pide el
+        // código. Con la verificación apagada esa respuesta no existe: el
+        // envoltorio solo mira los 403 y devuelve la respuesta intacta.
+        (function () {
+            const fetchOriginal = window.fetch.bind(window);
+            let redirigiendo = false;
+            window.fetch = async function (...args) {
+                const resp = await fetchOriginal(...args);
+                if (resp.status === 403 && !redirigiendo) {
+                    try {
+                        const datos = await resp.clone().json();
+                        if (datos && datos.detail === 'verificacion_requerida') {
+                            redirigiendo = true;
+                            window.location.href = '/dashboard';
+                        }
+                    } catch (e) { /* no era JSON: un 403 cualquiera */ }
+                }
+                return resp;
+            };
+        })();
+
+        // Al cortarse un stream (EventSource no informa el código HTTP) se
+        // hace una consulta liviana para distinguir un corte de red de una
+        // sesión vencida; si venció, el envoltorio de arriba redirige. Solo con
+        // la verificación activa y como mucho cada 15 s.
+        let _ultimoSondeoSesion = 0;
+        function _sondearSesionTrasCorte() {
+            if (document.body?.dataset?.dosPasos !== '1') return;
+            const ahora = Date.now();
+            if (ahora - _ultimoSondeoSesion < 15000) return;
+            _ultimoSondeoSesion = ahora;
+            fetch('/api/seguridad/sesion', { cache: 'no-store' }).catch(() => { /* sin red: el banner ya avisa */ });
+        }
+
         function formatLatency(totalSeconds, decimals = 1) {
             if (totalSeconds === null || totalSeconds === undefined) return 'N/A';
             const val = parseFloat(totalSeconds);
@@ -340,6 +377,7 @@
                 document.getElementById('sync-status').textContent = 'Pérdida de Conexión';
                 document.querySelector('.pulse').style.backgroundColor = '#EF4444';
                 showDisconnectBanner('Conexión SSE interrumpida — reconectando...');
+                _sondearSesionTrasCorte();
             };
         }
 
@@ -910,6 +948,7 @@
                 cargarInventarioDeDatos();
                 cargarPrecedencia();
                 cargarRetencionDescartes();
+                cargarSeguridad();
             } else if (view === 'descartes') {
                 cargarSeccionDescartes();
             } else if (view === 'diagnostico') {
@@ -1212,6 +1251,7 @@
                     document.getElementById('sync-status').textContent = 'Pérdida de Conexión';
                     document.querySelector('.pulse').style.backgroundColor = '#EF4444';
                     showDisconnectBanner('Conexión SSE interrumpida — reconectando...');
+                    _sondearSesionTrasCorte();
                 };
             }
         }
@@ -2934,6 +2974,7 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
             };
             _consoleSource.onerror = () => {
                 _consoleStatus('disconnected');
+                _sondearSesionTrasCorte();
                 // EventSource reintenta solo; no se cierra manualmente
             };
         }
@@ -5416,5 +5457,247 @@ RC Confirma: ${ev.time_received_rc || 'N/A'} ${ev.rc_latency_sec ? ev.rc_latency
                 }
             } catch(e) {
                 alert('Error de conexión en purga');
+            }
+        }
+
+        // ─── Seguridad del panel: verificación en dos pasos (v1.9.12) ──────
+
+        const _SEG_INPUT = 'padding:0.5rem; border-radius:4px; background:var(--color-gray); color:white; border:none;';
+
+        async function _segPedir(url, metodo, cuerpo) {
+            const opciones = { method: metodo, headers: { 'Content-Type': 'application/json' }, cache: 'no-store' };
+            if (cuerpo !== undefined) opciones.body = JSON.stringify(cuerpo);
+            const res = await fetch(url, opciones);
+            let datos = {};
+            try { datos = await res.json(); } catch (e) { /* sin cuerpo */ }
+            if (!res.ok) {
+                const detalle = typeof datos.detail === 'string' ? datos.detail : `Error ${res.status}`;
+                throw new Error(detalle);
+            }
+            return datos;
+        }
+
+        function _segMensaje(id, tipo, texto) {
+            const el = document.getElementById(id);
+            if (el) el.innerHTML = texto ? _cajaImport(tipo, _escapeHtml(texto)) : '';
+        }
+
+        async function cargarSeguridad() {
+            const cont = document.getElementById('seguridad-contenedor');
+            if (!cont) return;
+            try {
+                const d = await _segPedir('/api/seguridad/dos-pasos/estado', 'GET');
+                cont.innerHTML = d.activo ? _segHtmlActiva(d) : _segHtmlInactiva(d);
+            } catch (e) {
+                cont.innerHTML = _cajaImport('error', 'No se pudo consultar el estado: ' + _escapeHtml(e.message));
+            }
+        }
+
+        function _segHtmlInactiva(d) {
+            let html = `<div style="font-size:0.9rem; margin-bottom:0.75rem;">Estado:
+                <strong style="color:#a1a1aa;">desactivada</strong> — el panel pide solo la contraseña.</div>`;
+            if (!d.puede_activar) {
+                return html + _cajaImport('aviso', _escapeHtml(d.motivo_no_puede || 'No se puede activar.'));
+            }
+            return html + `
+                <div style="display:flex; flex-wrap:wrap; gap:0.75rem; align-items:flex-end;">
+                    <label style="font-size:0.8rem;">Tu contraseña del panel<br>
+                        <input type="password" id="seg-pass-alta" autocomplete="current-password" style="${_SEG_INPUT} width:220px;"></label>
+                    <button class="btn-save" onclick="seguridadIniciar()" style="background:#10B981; color:white;">
+                        Activar verificación en dos pasos</button>
+                </div>
+                <div id="seg-msg" style="margin-top:0.75rem;"></div>`;
+        }
+
+        function _segHtmlActiva(d) {
+            const pocos = d.codigos_restantes <= 3;
+            const bloqueo = d.bloqueado_seg
+                ? `<br><span style="color:#EF4444;">Verificación bloqueada por códigos incorrectos (faltan ${Math.ceil(d.bloqueado_seg / 60)} min).</span>`
+                : '';
+            return `
+                <div style="font-size:0.9rem; line-height:1.7;">
+                    Estado: <strong style="color:#10B981;">activa</strong> desde ${_escapeHtml(_fechaHora(d.activado_en))}<br>
+                    Códigos de recuperación sin usar:
+                    <strong style="color:${pocos ? 'var(--color-yellow)' : 'inherit'};">${d.codigos_restantes} de 10</strong>
+                    ${pocos ? ' — generá códigos nuevos antes de quedarte sin ninguno.' : ''}
+                    ${bloqueo}
+                </div>
+
+                <div style="display:flex; flex-wrap:wrap; gap:0.75rem; align-items:flex-end; margin-top:1rem;">
+                    <label style="font-size:0.8rem;">Duración de la sesión (horas, ${d.duracion_min} a ${d.duracion_max})<br>
+                        <input type="number" id="seg-duracion" min="${d.duracion_min}" max="${d.duracion_max}" value="${d.duracion_horas}" style="${_SEG_INPUT} width:100px;"></label>
+                    <button class="btn-save" onclick="seguridadGuardarDuracion()">Guardar duración</button>
+                    <span style="font-size:0.75rem; color:#a1a1aa;">Vale para las sesiones que se abran desde ahora.</span>
+                </div>
+
+                <div style="display:flex; flex-wrap:wrap; gap:0.75rem; margin-top:1rem;">
+                    <button class="btn-save" onclick="seguridadCerrarEsta()">Cerrar esta sesión</button>
+                    <button class="btn-save" onclick="seguridadCerrarTodas()" style="background:var(--color-yellow); color:#111;">
+                        Cerrar todas las sesiones</button>
+                </div>
+
+                <div style="display:flex; flex-wrap:wrap; gap:0.75rem; align-items:flex-end; margin-top:1.25rem;">
+                    <label style="font-size:0.8rem;">Código actual de la aplicación<br>
+                        <input type="text" id="seg-codigo-recuperacion" inputmode="numeric" autocomplete="one-time-code" maxlength="6" style="${_SEG_INPUT} width:120px;"></label>
+                    <button class="btn-save" onclick="seguridadNuevosCodigos()" style="background:#6366F1; color:white;">
+                        Generar nuevos códigos de recuperación</button>
+                </div>
+
+                <div style="border:1px solid var(--color-red); border-radius:8px; padding:1rem; margin-top:1.25rem;">
+                    <div style="font-weight:600; margin-bottom:0.5rem;">Desactivar la verificación en dos pasos</div>
+                    <div style="display:flex; flex-wrap:wrap; gap:0.75rem; align-items:flex-end;">
+                        <label style="font-size:0.8rem;">Contraseña del panel<br>
+                            <input type="password" id="seg-pass-baja" autocomplete="current-password" style="${_SEG_INPUT} width:200px;"></label>
+                        <label style="font-size:0.8rem;">Código actual o de recuperación<br>
+                            <input type="text" id="seg-codigo-baja" autocomplete="one-time-code" maxlength="12" style="${_SEG_INPUT} width:160px;"></label>
+                        <button class="btn-save" onclick="seguridadDesactivar()" style="background:var(--color-red); color:white;">Desactivar</button>
+                    </div>
+                </div>
+                <div id="seg-msg" style="margin-top:0.75rem;"></div>`;
+        }
+
+        async function seguridadIniciar() {
+            const alta = document.getElementById('seguridad-alta');
+            const pass = document.getElementById('seg-pass-alta');
+            try {
+                const d = await _segPedir('/api/seguridad/dos-pasos/iniciar', 'POST', { password: pass ? pass.value : '' });
+                if (pass) pass.value = '';
+                _segMensaje('seg-msg', '', '');
+                const secretoLegible = d.secreto.replace(/(.{4})/g, '$1 ').trim();
+                alta.innerHTML = `
+                    <div class="donde-card" style="max-width:640px;">
+                        <h3 style="margin-top:0;">1. Escaneá el código con la aplicación</h3>
+                        <div style="display:flex; flex-wrap:wrap; gap:1.25rem; align-items:flex-start;">
+                            <div style="background:#fff; padding:6px; border-radius:6px; line-height:0;">${d.qr_svg}</div>
+                            <div style="font-size:0.82rem; line-height:1.6; flex:1; min-width:220px;">
+                                ¿No podés escanear? Cargalo a mano en la aplicación:<br>
+                                <code id="seg-secreto" style="font-size:0.9rem; word-break:break-all;">${_escapeHtml(secretoLegible)}</code><br>
+                                Tipo: basado en tiempo · 6 dígitos · 30 segundos.<br>
+                                <span style="color:#a1a1aa;">Este alta vence en ${Math.round(d.vence_en_seg / 60)} minutos.</span>
+                            </div>
+                        </div>
+                        <h3>2. Escribí el código que muestra la aplicación</h3>
+                        <div style="display:flex; gap:0.75rem; align-items:center; flex-wrap:wrap;">
+                            <input type="text" id="seg-codigo-alta" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="123456" style="${_SEG_INPUT} width:140px; font-size:1.1rem; letter-spacing:0.2em;">
+                            <button class="btn-save" onclick="seguridadConfirmar()" style="background:#10B981; color:white;">Confirmar y activar</button>
+                        </div>
+                        <div id="seg-msg-alta" style="margin-top:0.75rem;"></div>
+                        <div style="font-size:0.75rem; color:#a1a1aa; margin-top:0.75rem;">
+                            Hasta que confirmes, la verificación sigue apagada: no cambia nada.</div>
+                    </div>`;
+                document.getElementById('seg-codigo-alta').focus();
+            } catch (e) {
+                _segMensaje('seg-msg', 'error', e.message);
+            }
+        }
+
+        async function seguridadConfirmar() {
+            const campo = document.getElementById('seg-codigo-alta');
+            try {
+                const d = await _segPedir('/api/seguridad/dos-pasos/confirmar', 'POST', { codigo: campo.value });
+                document.getElementById('seguridad-alta').innerHTML = '';
+                document.body.dataset.dosPasos = '1';
+                _segMostrarCodigos(d.codigos_recuperacion,
+                    'Verificación en dos pasos ACTIVADA. Guardá estos códigos de recuperación');
+                cargarSeguridad();
+            } catch (e) {
+                _segMensaje('seg-msg-alta', 'error', e.message);
+            }
+        }
+
+        let _segUltimosCodigos = [];
+
+        function _segMostrarCodigos(codigos, titulo) {
+            _segUltimosCodigos = codigos.slice();
+            const lista = codigos.map(c => `<code style="font-size:1rem; padding:0.2rem 0.4rem;">${_escapeHtml(c)}</code>`).join('');
+            document.getElementById('seguridad-codigos').innerHTML = `
+                <div class="donde-aviso">
+                    <strong>${_escapeHtml(titulo)}.</strong><br>
+                    Se muestran <em>una sola vez</em>. Cada uno sirve para entrar una vez sin el teléfono
+                    (por ejemplo, si lo perdés o lo cambiás). Guardalos fuera de esta computadora.
+                    <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(120px, 1fr)); gap:0.5rem; margin:0.9rem 0;">${lista}</div>
+                    <div style="display:flex; gap:0.75rem; flex-wrap:wrap;">
+                        <button class="btn-save" onclick="seguridadDescargarCodigos()">Descargar como .txt</button>
+                        <button class="btn-save" onclick="seguridadOcultarCodigos()" style="background:#374151; color:white;">Ya los guardé</button>
+                    </div>
+                </div>`;
+        }
+
+        function seguridadDescargarCodigos() {
+            if (!_segUltimosCodigos.length) return;
+            const texto = 'Códigos de recuperación — Hub Assistcargo\r\n'
+                + 'Generados: ' + _fechaHora(new Date()) + '\r\n'
+                + 'Cada código sirve UNA sola vez. Los anteriores ya no valen.\r\n\r\n'
+                + _segUltimosCodigos.join('\r\n') + '\r\n';
+            const url = URL.createObjectURL(new Blob([texto], { type: 'text/plain;charset=utf-8' }));
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'codigos-recuperacion-hub.txt';
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            setTimeout(() => URL.revokeObjectURL(url), 1000);
+        }
+
+        function seguridadOcultarCodigos() {
+            _segUltimosCodigos = [];
+            document.getElementById('seguridad-codigos').innerHTML = '';
+        }
+
+        async function seguridadGuardarDuracion() {
+            const horas = parseInt(document.getElementById('seg-duracion').value, 10);
+            try {
+                const d = await _segPedir('/api/seguridad/dos-pasos/duracion', 'PUT', { horas });
+                _segMensaje('seg-msg', 'ok', `Listo: las sesiones nuevas duran ${d.duracion_horas} h.`);
+            } catch (e) {
+                _segMensaje('seg-msg', 'error', e.message);
+            }
+        }
+
+        async function seguridadCerrarEsta() {
+            try {
+                await _segPedir('/auth/salir', 'POST');
+                window.location.href = '/dashboard';
+            } catch (e) {
+                _segMensaje('seg-msg', 'error', e.message);
+            }
+        }
+
+        async function seguridadCerrarTodas() {
+            if (!confirm('Se cierran TODAS las sesiones del panel, también esta. Cada navegador va a tener '
+                       + 'que escribir un código de nuevo. ¿Seguir?')) return;
+            try {
+                await _segPedir('/api/seguridad/dos-pasos/cerrar-todas', 'POST');
+                window.location.href = '/dashboard';
+            } catch (e) {
+                _segMensaje('seg-msg', 'error', e.message);
+            }
+        }
+
+        async function seguridadNuevosCodigos() {
+            const campo = document.getElementById('seg-codigo-recuperacion');
+            if (!confirm('Los códigos de recuperación actuales dejan de valer. ¿Generar nuevos?')) return;
+            try {
+                const d = await _segPedir('/api/seguridad/dos-pasos/recuperacion', 'POST', { codigo: campo.value });
+                campo.value = '';
+                _segMostrarCodigos(d.codigos_recuperacion, 'Códigos de recuperación NUEVOS (los anteriores ya no valen)');
+                cargarSeguridad();
+            } catch (e) {
+                _segMensaje('seg-msg', 'error', e.message);
+            }
+        }
+
+        async function seguridadDesactivar() {
+            const pass = document.getElementById('seg-pass-baja');
+            const codigo = document.getElementById('seg-codigo-baja');
+            if (!confirm('El panel vuelve a pedir solo la contraseña. ¿Desactivar la verificación en dos pasos?')) return;
+            try {
+                await _segPedir('/api/seguridad/dos-pasos/desactivar', 'POST', { password: pass.value, codigo: codigo.value });
+                document.body.dataset.dosPasos = '0';
+                seguridadOcultarCodigos();
+                cargarSeguridad();
+            } catch (e) {
+                if (pass) pass.value = '';
+                _segMensaje('seg-msg', 'error', e.message);
             }
         }

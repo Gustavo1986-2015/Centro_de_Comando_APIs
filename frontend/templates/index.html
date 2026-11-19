@@ -18,7 +18,7 @@
         })();
     </script>
 </head>
-<body>
+<body data-dos-pasos="{{ '1' if dos_pasos_activo else '0' }}">
 
     <div id="disconnect-banner" class="disconnect-banner" style="display:none;">
         <span class="disconnect-icon">⚠</span>
@@ -669,6 +669,22 @@
             <div id="precedencia-contenedor" style="margin-top: 1rem;">
                 <div style="color:#a1a1aa; font-size:0.85rem;">Consultando…</div>
             </div>
+        </div>
+
+        <div class="recent-section" style="margin-top: 2rem;" id="seccion-seguridad">
+            <h2>Seguridad del panel</h2>
+            <div class="donde-intro">
+                <strong>Verificación en dos pasos.</strong> Además de la contraseña, el panel pide un
+                código de 6 dígitos que genera una aplicación del teléfono (Google Authenticator,
+                Microsoft Authenticator, Authy, 1Password, Bitwarden…). Si alguien consigue la
+                contraseña, sin el teléfono no entra. La recepción de datos de los proveedores
+                no cambia: los webhooks y el PULL no usan esta verificación.
+            </div>
+            <div id="seguridad-contenedor" style="margin-top: 1rem;">
+                <div style="color:#a1a1aa; font-size:0.85rem;">Consultando…</div>
+            </div>
+            <div id="seguridad-alta" style="margin-top: 1rem;"></div>
+            <div id="seguridad-codigos" style="margin-top: 1rem;"></div>
         </div>
 
         <div class="recent-section" style="margin-top: 2rem;">

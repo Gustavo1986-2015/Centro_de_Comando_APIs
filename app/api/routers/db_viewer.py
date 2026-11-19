@@ -207,8 +207,13 @@ def _validar_tabla(conn: sqlite3.Connection, tabla: str) -> str:
     return tabla
 
 
+# v1.9.12: los hash de los códigos de recuperación (seguridad_codigos_recuperacion)
+# tampoco se muestran: no son el código, pero no hay motivo para exponerlos.
+SUFIJO_HASH = "_pbkdf2"
+
+
 def _es_cifrada(columna: str) -> bool:
-    return columna.endswith(SUFIJO_CIFRADO)
+    return columna.endswith(SUFIJO_CIFRADO) or columna.endswith(SUFIJO_HASH)
 
 
 def _ocultar(columnas: list[str], fila) -> list:

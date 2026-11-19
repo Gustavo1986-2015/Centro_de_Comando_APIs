@@ -2,7 +2,10 @@
 import os
 import secrets
 import logging
-from fastapi import Depends, HTTPException
+import threading
+import time
+from collections import deque
+from fastapi import Depends, HTTPException, Request
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 
 logger = logging.getLogger(__name__)
@@ -72,8 +75,45 @@ def verificar_credenciales_al_arrancar():
         )
 
 
-def verify_dashboard_auth(credentials: HTTPBasicCredentials = Depends(security)):
-    """Valida HTTP Basic Auth con secrets.compare_digest (anti timing attack)."""
+# ── Ingresos fallidos (v1.9.12, D) ───────────────────────────────────────────
+# Cada contraseña incorrecta queda en el log (sin la contraseña) y la respuesta
+# se demora un segundo. NO se bloquea por IP: en el servidor todas las
+# peticiones llegan desde la IP del proxy (172.18.0.x), así que bloquear la IP
+# dejaría afuera a todos, operador incluido. La demora corre en el threadpool
+# (estas dependencias son `def`, no `async def`): no frena el bucle de eventos
+# ni la ingesta.
+DEMORA_FALLO_SEG = 1.0
+VENTANA_FALLOS_SEG = 600
+_fallos_recientes: deque = deque()
+_fallos_lock = threading.Lock()
+
+
+def _contar_fallo() -> int:
+    ahora = time.monotonic()
+    with _fallos_lock:
+        _fallos_recientes.append(ahora)
+        while _fallos_recientes and ahora - _fallos_recientes[0] > VENTANA_FALLOS_SEG:
+            _fallos_recientes.popleft()
+        return len(_fallos_recientes)
+
+
+def registrar_ingreso_fallido(request: Request | None, usuario: str, que: str = "credenciales") -> None:
+    """WARNING con ruta, IP de conexión, X-Forwarded-For (solo informativo),
+    el usuario intentado (32 caracteres como mucho) y los fallos de los
+    últimos 10 minutos. Nunca la contraseña. Después, la demora."""
+    fallos = _contar_fallo()
+    ruta = request.url.path if request is not None else "-"
+    ip = (request.client.host if request is not None and request.client else None) or "-"
+    xff = request.headers.get("x-forwarded-for") if request is not None else None
+    logger.warning(
+        "Ingreso fallido al panel (%s): ruta=%s ip=%s x-forwarded-for=%s usuario=%r "
+        "fallos_ultimos_10_min=%d",
+        que, ruta, ip, (xff or "-")[:200], (usuario or "")[:32], fallos,
+    )
+    time.sleep(DEMORA_FALLO_SEG)
+
+
+def _credenciales_correctas(credentials: HTTPBasicCredentials) -> bool:
     correct_user = get_dashboard_user()
     correct_pass = get_dashboard_password()
 
@@ -83,10 +123,49 @@ def verify_dashboard_auth(credentials: HTTPBasicCredentials = Depends(security))
     # Sin contraseña configurada no hay acceso posible: compare_digest contra
     # cadena vacía es False para cualquier entrada no vacía, y una contraseña
     # vacía tampoco debe habilitar el ingreso.
-    if not correct_pass or not (user_ok and pass_ok):
+    return bool(correct_pass) and user_ok and pass_ok
+
+
+def _comprobar_credenciales(credentials: HTTPBasicCredentials, request: Request | None):
+    if not _credenciales_correctas(credentials):
+        registrar_ingreso_fallido(request, credentials.username)
         raise HTTPException(
             status_code=401,
             detail="Credenciales incorrectas",
             headers={"WWW-Authenticate": "Basic"},
         )
+
+
+def contrasena_correcta(request: Request | None, contrasena: str | None) -> bool:
+    """Revalidación de la contraseña del panel dentro de una acción (alta y baja
+    de la verificación en dos pasos). Un fallo cuenta como ingreso fallido."""
+    esperada = get_dashboard_password()
+    ok = bool(esperada) and secrets.compare_digest((contrasena or "").encode(), esperada.encode())
+    if not ok:
+        registrar_ingreso_fallido(request, get_dashboard_user(), que="revalidación de contraseña")
+    return ok
+
+
+def verify_dashboard_auth(credentials: HTTPBasicCredentials = Depends(security),
+                          request: Request = None):
+    """
+    Valida HTTP Basic Auth con secrets.compare_digest (anti timing attack) y,
+    si la verificación en dos pasos está activa, la sesión verificada
+    (app/core/dos_pasos.py). Apagada, se comporta como en la v1.9.11.
+
+    `request` va segundo y con valor por defecto: hay código y tests que la
+    llaman directo con las credenciales.
+    """
+    _comprobar_credenciales(credentials, request)
+    if request is not None:
+        from app.core import dos_pasos
+        dos_pasos.exigir(request)
+    return credentials
+
+
+def verify_dashboard_password(credentials: HTTPBasicCredentials = Depends(security),
+                              request: Request = None):
+    """Solo la contraseña, sin la verificación en dos pasos: la usan la página
+    que la pide (/auth/verificar) y la salida (/auth/salir)."""
+    _comprobar_credenciales(credentials, request)
     return credentials
