@@ -122,3 +122,48 @@ class SystemSettings(Base):
     # panel. NULL = la de siempre (app/core/descartes.py: 7 días, 50.000 filas).
     descartes_retencion_dias = Column(Integer, nullable=True)
     descartes_max_filas = Column(Integer, nullable=True)
+
+
+# ── Verificación en dos pasos del panel (v1.9.12) ────────────────────────────
+# Tablas nuevas: una base de la v1.9.11 las recibe al arrancar (create_all solo
+# crea lo que falta) y la imagen v1.9.11 las ignora si se vuelve atrás.
+
+class SeguridadDosPasos(Base):
+    """
+    Una sola fila (id=1) con el estado de la verificación en dos pasos.
+
+    Los secretos van cifrados con app/core/crypto.py (MASTER_ENC_KEY): el
+    secreto TOTP, el pendiente de confirmar y la llave que firma las cookies
+    de sesión. Esa llave NO es MASTER_ENC_KEY: se genera al activar, y
+    regenerarla solo cierra las sesiones abiertas.
+    """
+    __tablename__ = "seguridad_dos_pasos"
+    id = Column(Integer, primary_key=True)
+    activo = Column(Boolean, default=False, nullable=False)
+    secreto_enc = Column(String, nullable=True)
+    secreto_pendiente_enc = Column(String, nullable=True)
+    pendiente_creado = Column(Float, nullable=True)       # epoch, para que venza
+    activado_en = Column(String, nullable=True)           # ISO 8601 UTC
+    ultimo_paso = Column(Integer, nullable=True)          # anti-repetición TOTP
+    generacion_sesion = Column(Integer, default=1, nullable=False)
+    duracion_sesion_horas = Column(Integer, default=12, nullable=False)
+    clave_firma_enc = Column(String, nullable=True)
+    fallos_json = Column(String, nullable=True)           # lista de epoch de códigos incorrectos
+    bloqueado_hasta = Column(Float, nullable=True)        # epoch
+    actualizado_en = Column(String, nullable=True)
+
+
+class CodigoRecuperacion(Base):
+    """
+    Códigos de recuperación de un solo uso. Solo se guarda el PBKDF2-SHA256
+    (sal propia por código): el código en claro se muestra una vez al crearlo.
+    El visor de base de datos oculta las columnas *_pbkdf2.
+    """
+    __tablename__ = "seguridad_codigos_recuperacion"
+    id = Column(Integer, primary_key=True)
+    sal = Column(String, nullable=False)                  # hex
+    hash_pbkdf2 = Column(String, nullable=False)          # hex
+    iteraciones = Column(Integer, nullable=False)
+    usado = Column(Boolean, default=False, nullable=False)
+    usado_en = Column(String, nullable=True)
+    creado_en = Column(String, nullable=True)

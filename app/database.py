@@ -454,8 +454,11 @@ def get_engine(provider: str, env: str = "prod"):
         
         # Asegurar que los modelos estén registrados en Base.metadata
         if provider == "system_config":
-            from app.models.config_models import ProviderConfig, DailyStat, SystemSettings, ProviderDictionary
-            target_tables = [ProviderConfig.__table__, DailyStat.__table__, SystemSettings.__table__, ProviderDictionary.__table__]
+            from app.models.config_models import (ProviderConfig, DailyStat, SystemSettings, ProviderDictionary,
+                                                  SeguridadDosPasos, CodigoRecuperacion)
+            target_tables = [ProviderConfig.__table__, DailyStat.__table__, SystemSettings.__table__, ProviderDictionary.__table__,
+                             # v1.9.12: verificación en dos pasos (tablas nuevas, solo agregan)
+                             SeguridadDosPasos.__table__, CodigoRecuperacion.__table__]
         else:
             from app.models.db_models import NormalizedRCEvent
             target_tables = [NormalizedRCEvent.__table__]

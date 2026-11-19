@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Verificación en dos pasos | HUB Telematico Assistcargo</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🔐</text></svg>">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/dashboard.css?v={{ css_v }}">
+    <script>
+        (function() {
+            var theme = localStorage.getItem('ac-theme');
+            if (theme) document.documentElement.setAttribute('data-theme', theme);
+        })();
+    </script>
+    <style>
+        body { align-items: center; padding: 0 16px; }
+        .verif-caja { width: 100%; max-width: 420px; margin: 12vh auto 2rem; box-sizing: border-box; }
+        .verif-caja h1 { font-size: 1.25rem; margin: 0 0 0.75rem; color: var(--color-green-bright); }
+        .verif-caja p { font-size: 0.9rem; line-height: 1.45; color: var(--color-gray-label); margin: 0 0 1rem; }
+        .verif-caja input { width: 100%; box-sizing: border-box; padding: 0.75rem; font-size: 1.4rem;
+                            letter-spacing: 0.25em; text-align: center; border-radius: 8px; border: none;
+                            background: var(--color-gray); color: white; font-family: monospace; }
+        .verif-caja button { width: 100%; margin-top: 1rem; }
+        .verif-error { border-left: 3px solid var(--color-red); background: rgba(239, 68, 68, 0.12);
+                       border-radius: 4px; padding: 0.6rem 0.8rem; font-size: 0.85rem; margin-bottom: 1rem; }
+        .verif-pie { font-size: 0.75rem; color: var(--color-gray-label); text-align: center; margin-top: 1.25rem; opacity: 0.8; }
+    </style>
+</head>
+<body>
+    <main class="recent-section verif-caja">
+        <h1>🔐 Verificación en dos pasos</h1>
+        <p>
+            La contraseña es correcta. Para entrar al panel escribí el código de 6 dígitos que
+            muestra la aplicación de autenticación del teléfono.
+        </p>
+        {% if error %}<div class="verif-error" role="alert">{{ error }}</div>{% endif %}
+        <form method="post" action="/auth/verificar" autocomplete="off">
+            <label for="codigo" style="display:block; font-size:0.8rem; margin-bottom:0.35rem;">Código</label>
+            <input id="codigo" name="codigo" type="text" inputmode="text" autocomplete="one-time-code"
+                   maxlength="12" required autofocus placeholder="123456">
+            <button type="submit" class="btn-save">Verificar</button>
+        </form>
+        <p style="margin-top:1.25rem;">
+            ¿No tenés el teléfono? También se acepta uno de los <strong>códigos de recuperación</strong>
+            (formato <code>XXXX-XXXX</code>); cada uno sirve una sola vez.
+        </p>
+        <div class="verif-pie">Usuario: {{ usuario }} · v{{ app_version }}</div>
+    </main>
+</body>
+</html>

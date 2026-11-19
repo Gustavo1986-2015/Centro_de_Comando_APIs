@@ -13,6 +13,7 @@ logger = logging.getLogger(__name__)
 from app.api.routers import schmitz, dashboard, health, inspector, dynamic_webhook, db_viewer, vehicles, audit_logs, admin_config, exports, config_backup
 from app.api.routers import reintentos  # v1.9.9 (3.8): reintento manual de fallidos
 from app.api.routers import descartes_api  # v1.9.10: consulta y exportación de descartes
+from app.api.routers import seguridad  # v1.9.12: verificación en dos pasos y documentación protegida
 from app.api.routers.schmitz import start_webhook_batch_processor, router_spec as schmitz_router_spec
 from app.api.routers.dashboard import broadcast_loop, record_push_latency
 from app.worker.processor import worker_loop
@@ -72,7 +73,11 @@ async def lifespan(app: FastAPI):
         except asyncio.CancelledError:
             pass
 
-app = FastAPI(title="Centro de Comando en Vivo - Telemática", lifespan=lifespan)
+# v1.9.12 (C): /docs, /redoc y /openapi.json eran públicos y listaban todas las
+# rutas del panel. Se apagan las rutas por defecto y las sirve
+# app/api/routers/seguridad.py con el mismo acceso que el panel.
+app = FastAPI(title="Centro de Comando en Vivo - Telemática", lifespan=lifespan,
+              docs_url=None, redoc_url=None, openapi_url=None)
 
 # Incluir routers
 app.include_router(schmitz.router)
@@ -89,6 +94,12 @@ app.include_router(exports.router)
 app.include_router(config_backup.router)
 app.include_router(reintentos.router)
 app.include_router(descartes_api.router)
+app.include_router(seguridad.router)
+
+# v1.9.12 (E): sin sesión verificada, GET /dashboard muestra la página que pide
+# el código; el resto, 403 {"detail": "verificacion_requerida"}.
+from app.core.dos_pasos import VerificacionRequerida
+app.add_exception_handler(VerificacionRequerida, seguridad.manejar_verificacion_requerida)
 
 app.mount("/static", StaticFiles(directory="frontend/static"), name="static")
 
@@ -131,6 +142,13 @@ async def measure_push_latency(request: Request, call_next):
             
     return response
 
+
+# v1.9.12 (A y B): CSRF por Sec-Fetch-Site y encabezados de seguridad. Se
+# agregan después del middleware de latencia, así que quedan por fuera: los
+# encabezados llegan también a los 403 de CSRF. Ver app/core/seguridad_http.py.
+from app.core.seguridad_http import ProteccionCSRF, EncabezadosDeSeguridad
+app.add_middleware(ProteccionCSRF)
+app.add_middleware(EncabezadosDeSeguridad)
 
 
 if __name__ == "__main__":

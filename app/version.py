@@ -17,7 +17,7 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-__version__ = "1.9.11"
+__version__ = "1.9.12"
 
 _STATIC_DIR = os.path.join("frontend", "static")
 _hash_cache: dict[str, str] = {}

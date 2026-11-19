@@ -236,6 +236,11 @@ def _detalle_velocidad(ev) -> dict | None:
         return None
 
 
+def _dos_pasos_activo() -> bool:
+    from app.core import dos_pasos
+    return dos_pasos.estado().activo
+
+
 @router.get("/dashboard", response_class=HTMLResponse)
 async def get_dashboard(request: Request, _: None = Depends(verify_dashboard_auth)):
     """Renderiza el Centro de Comando en Vivo."""
@@ -248,6 +253,9 @@ async def get_dashboard(request: Request, _: None = Depends(verify_dashboard_aut
             "css_v": static_version("dashboard.css"),
             "js_v":  static_version("dashboard.js"),
             "app_version": __version__,
+            # v1.9.12: el panel solo sondea la sesión al cortarse un stream
+            # si la verificación en dos pasos está activa.
+            "dos_pasos_activo": _dos_pasos_activo(),
         },
     )
     response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate, max-age=0"
